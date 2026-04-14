@@ -26,8 +26,8 @@ class StateStore(Protocol):
         """Update a task's status and phase, then commit."""
         ...
 
-    def store_findings(self, task_id: str, data: str) -> None:
-        """Append findings to the task file's Findings section on trunk."""
+    def store_findings(self, task_id: str, detail: str) -> None:
+        """Append findings detail text to the task file's Findings section on trunk."""
         ...
 
     def clear_findings(self, task_id: str) -> None:

@@ -29,12 +29,13 @@ class TestTaskStatus:
     def test_enum_values(self):
         assert TaskStatus.NOT_STARTED.value == "not_started"
         assert TaskStatus.IN_PROGRESS.value == "in_progress"
+        assert TaskStatus.NEEDS_REBASE.value == "needs_rebase"
         assert TaskStatus.COMPLETE.value == "complete"
         assert TaskStatus.FAILED.value == "failed"
 
     def test_all_members(self):
         members = {s.name for s in TaskStatus}
-        assert members == {"NOT_STARTED", "IN_PROGRESS", "COMPLETE", "FAILED"}
+        assert members == {"NOT_STARTED", "IN_PROGRESS", "NEEDS_REBASE", "COMPLETE", "FAILED"}
 
 
 class TestVerdict:
@@ -57,7 +58,7 @@ class TestTask:
             spec_ref="specs/persistence.md",
             status=TaskStatus.NOT_STARTED,
             phase=Phase("implement"),
-            deps=["task-004"],
+            deps=("task-004",),
             round=0,
             branch="worker/task-027",
             pr="https://github.com/org/repo/pull/42",
@@ -67,7 +68,7 @@ class TestTask:
         assert task.spec_ref == "specs/persistence.md"
         assert task.status == TaskStatus.NOT_STARTED
         assert task.phase == Phase("implement")
-        assert task.deps == ["task-004"]
+        assert task.deps == ("task-004",)
         assert task.round == 0
         assert task.branch == "worker/task-027"
         assert task.pr == "https://github.com/org/repo/pull/42"
@@ -79,7 +80,7 @@ class TestTask:
             spec_ref="specs/foo.md",
             status=TaskStatus.NOT_STARTED,
             phase=None,
-            deps=[],
+            deps=(),
             round=0,
             branch=None,
             pr=None,
@@ -87,6 +88,39 @@ class TestTask:
         assert task.phase is None
         assert task.branch is None
         assert task.pr is None
+
+
+class TestTaskImmutability:
+    def test_frozen_task_rejects_mutation(self):
+        task = Task(
+            id="task-001",
+            title="A task",
+            spec_ref="specs/foo.md",
+            status=TaskStatus.NOT_STARTED,
+            phase=None,
+            deps=(),
+            round=0,
+            branch=None,
+            pr=None,
+        )
+        import pytest
+
+        with pytest.raises(AttributeError):
+            task.status = TaskStatus.IN_PROGRESS  # type: ignore[misc]
+
+    def test_deps_is_tuple_not_list(self):
+        task = Task(
+            id="task-001",
+            title="A task",
+            spec_ref="specs/foo.md",
+            status=TaskStatus.NOT_STARTED,
+            phase=None,
+            deps=("task-002",),
+            round=0,
+            branch=None,
+            pr=None,
+        )
+        assert isinstance(task.deps, tuple)
 
 
 class TestWorkerResult:
@@ -157,7 +191,7 @@ class TestPipelineStep:
     def test_loop_step_with_nested_roles(self):
         impl = RoleStep(role="implementer", on_pass=None, on_fail=None)
         verify = RoleStep(role="verifier", on_pass=None, on_fail=None)
-        loop = LoopStep(steps=[impl, verify])
+        loop = LoopStep(steps=(impl, verify))
         assert len(loop.steps) == 2
         assert isinstance(loop.steps[0], RoleStep)
         assert isinstance(loop.steps[1], RoleStep)
@@ -167,7 +201,7 @@ class TestPipelineStep:
         steps: list[PipelineStep] = [
             RoleStep(role="implementer", on_pass=None, on_fail=None),
             GateStep(gate="approval"),
-            LoopStep(steps=[]),
+            LoopStep(steps=()),
             ActionStep(action="merge-pr"),
         ]
         for step in steps:
@@ -178,16 +212,16 @@ class TestWorkflow:
     def test_creation(self):
         workflow = Workflow(
             name="default",
-            intake=[RoleStep(role="pm", on_pass=None, on_fail=None)],
-            pipeline=[
+            intake=(RoleStep(role="pm", on_pass=None, on_fail=None),),
+            pipeline=(
                 LoopStep(
-                    steps=[
+                    steps=(
                         RoleStep(role="implementer", on_pass=None, on_fail=None),
                         RoleStep(role="verifier", on_pass=None, on_fail=None),
-                    ]
+                    )
                 ),
                 ActionStep(action="merge-pr"),
-            ],
+            ),
         )
         assert workflow.name == "default"
         assert len(workflow.intake) == 1
@@ -198,15 +232,15 @@ class TestWorkflow:
     def test_nested_loop_structure(self):
         """Workflow with a loop containing role steps matches the spec example."""
         inner_loop = LoopStep(
-            steps=[
+            steps=(
                 RoleStep(role="implementer", on_pass=None, on_fail=None),
                 RoleStep(role="verifier", on_pass=None, on_fail=None),
-            ]
+            )
         )
         workflow = Workflow(
             name="complex",
-            intake=[],
-            pipeline=[inner_loop, ActionStep(action="merge-pr")],
+            intake=(),
+            pipeline=(inner_loop, ActionStep(action="merge-pr")),
         )
         loop = workflow.pipeline[0]
         assert isinstance(loop, LoopStep)
@@ -230,7 +264,7 @@ class TestWorld:
             spec_ref="specs/test.md",
             status=TaskStatus.NOT_STARTED,
             phase=None,
-            deps=[],
+            deps=(),
             round=0,
             branch=None,
             pr=None,

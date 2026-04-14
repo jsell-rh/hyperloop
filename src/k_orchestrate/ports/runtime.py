@@ -5,10 +5,12 @@ Implementations: LocalRuntime (worktrees + CLI), AmbientRuntime (platform API).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 if TYPE_CHECKING:
     from k_orchestrate.domain.model import WorkerHandle, WorkerResult
+
+WorkerPollStatus = Literal["running", "done", "failed"]
 
 
 class Runtime(Protocol):
@@ -18,7 +20,7 @@ class Runtime(Protocol):
         """Start a worker agent session on the given branch."""
         ...
 
-    def poll(self, handle: WorkerHandle) -> str:
+    def poll(self, handle: WorkerHandle) -> WorkerPollStatus:
         """Check worker status. Returns 'running', 'done', or 'failed'."""
         ...
 

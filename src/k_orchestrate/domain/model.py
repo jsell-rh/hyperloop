@@ -19,6 +19,7 @@ class TaskStatus(Enum):
 
     NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"
+    NEEDS_REBASE = "needs_rebase"
     COMPLETE = "complete"
     FAILED = "failed"
 
@@ -53,7 +54,7 @@ class Task:
     spec_ref: str
     status: TaskStatus
     phase: Phase | None
-    deps: list[str]
+    deps: tuple[str, ...]
     round: int
     branch: str | None
     pr: str | None
@@ -103,7 +104,7 @@ class GateStep:
 class LoopStep:
     """Wrap steps — on fail retry from top, on pass continue."""
 
-    steps: list[PipelineStep]
+    steps: tuple[PipelineStep, ...]
 
 
 @dataclass(frozen=True)
@@ -118,12 +119,24 @@ PipelineStep = RoleStep | GateStep | LoopStep | ActionStep
 
 
 @dataclass(frozen=True)
+class PipelinePosition:
+    """Path through a nested pipeline structure.
+
+    Each element in `path` is an index into a list of steps at that nesting level.
+    Example: path=[0, 1] means "first step in pipeline (a LoopStep), second step within
+    that loop."
+    """
+
+    path: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class Workflow:
     """A named workflow with intake and per-task pipelines."""
 
     name: str
-    intake: list[PipelineStep]
-    pipeline: list[PipelineStep]
+    intake: tuple[PipelineStep, ...]
+    pipeline: tuple[PipelineStep, ...]
 
 
 # ---------------------------------------------------------------------------
