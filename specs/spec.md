@@ -1,6 +1,6 @@
 # k-orchestrate
 
-An orchestrator that turns a backlog of tasks into completed, merged work using AI agents.
+A deterministic orchestrator that turns a backlog of tasks into completed, merged work using AI agents.
 
 ## Core Concepts
 
@@ -27,6 +27,7 @@ Lives in the target repo at `specs/tasks/task-{id}.md`. Written only by the orch
 id: task-027
 title: Implement Places DB persistent storage
 status: not-started    # not-started | in-progress | complete
+target_spec: /path/to/spec.md
 deps: [task-004]
 round: 0
 branch: null
