@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Orchestrator that walks tasks through composable workflow pipelines using AI agents"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pyyaml>=6.0.3",
+]
 
 [project.optional-dependencies]
 dev = [
