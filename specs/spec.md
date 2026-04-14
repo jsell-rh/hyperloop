@@ -247,18 +247,18 @@ PRs are the integration mechanism between workers and trunk.
 
 When multiple tasks run in parallel, their PRs can conflict. Task A merges, trunk moves, Task B's branch now conflicts.
 
-The orchestrator handles this during the serial phase, before merging:
+The orchestrator handles this during the serial phase as an internal concern, not a pipeline failure:
 
 1. **Rebase** — orchestrator rebases the branch onto current trunk HEAD.
-2. **Clean rebase** — no conflicts, proceed with merge.
-3. **Conflict** — orchestrator aborts the rebase and treats it as a pipeline failure:
-   - Store conflict details as findings (which files conflict, what changed on trunk).
-   - Send the task back through the loop (restart enclosing loop).
-   - The implementer receives the conflict details in its prompt and resolves them on the next round.
+2. **Clean rebase** — proceed with merge.
+3. **Conflict** — orchestrator aborts the rebase and spawns a **rebase-resolver** agent:
+   - Rebase-resolver is a lightweight, orchestrator-internal agent (like process-improver). Not a pipeline step.
+   - It receives: the branch, the conflicting files, and what changed on trunk.
+   - Its job is narrow: resolve conflict markers, run tests, push. Not a full implementation round.
+   - After resolution, orchestrator re-attempts the rebase + merge.
+4. **Resolution failed** — if the rebase-resolver can't produce a clean merge (e.g. deep semantic conflicts), only then does the orchestrator treat it as a pipeline failure and send the task back through the loop.
 
-Merge order matters. The serial phase merges PRs one at a time, rebasing each onto the new HEAD after the previous merge. Earlier merges succeed; later ones are more likely to conflict. The orchestrator merges in task dependency order when possible, falling back to completion order.
-
-A merge conflict is not special — it's just another kind of failure. The existing loop retry handles it naturally.
+Merge order: the serial phase merges PRs one at a time, rebasing each onto the new HEAD after the previous merge. Merges in task dependency order when possible, falling back to completion order.
 
 ## Findings Flow
 
@@ -350,8 +350,9 @@ while true:
     │                                                         │
     │  merge ready PRs (one at a time, in dependency order):   │
     │      rebase branch onto HEAD                            │
-    │      if conflict: store as findings, loop task back     │
-    │      if clean: squash-merge, preserve trailers          │
+    │      if conflict: spawn rebase-resolver, re-attempt     │
+    │      if resolved: squash-merge, preserve trailers       │
+    │      if unresolvable: store as findings, loop task back │
     │  transition task statuses + phases                      │
     │  commit all state changes                               │
     │                                                         │
@@ -413,6 +414,7 @@ k-orchestrate/
 │   ├── implementer.yaml
 │   ├── verifier.yaml
 │   ├── process-improver.yaml
+│   ├── rebase-resolver.yaml
 │   └── pm.yaml
 ├── src/                 ← orchestrator code
 │   ├── loop.py          ← main loop (serial/parallel phases) + recovery
