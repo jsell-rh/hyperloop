@@ -27,7 +27,7 @@ Lives in the target repo at `specs/tasks/task-{id}.md`. Written only by the orch
 id: task-027
 title: Implement Places DB persistent storage
 spec_ref: specs/persistence.md    # traceable link to the originating spec
-status: not-started               # not-started | in-progress | complete
+status: not-started               # not-started | in-progress | complete | failed
 phase: null                       # current pipeline step (for crash recovery)
 deps: [task-004]
 round: 0                          # incremented each time the loop restarts
@@ -42,7 +42,7 @@ pr: null                          # set by orchestrator when draft PR created
 (appended by orchestrator after each failed round, cleared on completion)
 ```
 
-Status is deliberately minimal: not started, being worked on, or done. `phase` tracks where the task is in the pipeline so the orchestrator can resume after a crash. `spec_ref` traces this task back to the spec that originated it.
+Status is deliberately minimal: not started, being worked on, done, or failed. `phase` tracks where the task is in the pipeline so the orchestrator can resume after a crash. `spec_ref` traces this task back to the spec that originated it. `failed` is a terminal state — the task hit `max_rounds` without completing. The orchestrator halts when any task enters `failed`.
 
 ### Worker Result
 
@@ -94,6 +94,20 @@ Four primitives:
 | `action: X` | Terminal operation (merge-pr, mark-pr-ready). |
 
 Convention: `on_pass` = next step in list. `on_fail` = restart enclosing loop. These can be explicitly overridden per-step for non-standard routing.
+
+### Gates
+
+Gates block a task's pipeline until an external signal is received. The orchestrator polls for the signal each cycle. Tasks at a gate do not consume a worker slot.
+
+The gate interface is transparent to the signal source, but v1 supports only **PR labels**:
+
+| Gate | Signal | Mechanism |
+|---|---|---|
+| `human-pr-approval` | `lgtm` label on the task's PR | Orchestrator checks `gh pr view --json labels` each cycle |
+
+When the orchestrator sees the `lgtm` label, the gate clears and the task advances to the next pipeline step. The label is then removed to prevent re-triggering.
+
+Future signal sources (webhooks, CI status, ambient annotations) can be added behind the same interface without changing the workflow yaml.
 
 ### Agent Definition
 
@@ -185,45 +199,38 @@ Task context (spec + findings + traceability refs) is injected per-spawn. Findin
 
 ## Concurrency Model
 
-The orchestrator loop has two phases per cycle: a serial phase and a parallel phase. This eliminates races on trunk.
+Each orchestrator cycle has a single serial section where all trunk mutations and decisions happen, followed by workers running independently on branches between cycles.
 
-### Serial Phase (trunk writes)
+### Serial Section
 
-All trunk mutations happen here, sequentially. No workers are running against trunk during this phase.
+The orchestrator does all its work sequentially in one pass. No concurrent trunk writers.
 
 1. **Reap** — collect results from finished workers.
 2. **Store findings** — append to task files on trunk for all failed tasks.
 3. **Process-improver** — runs once, serially, on trunk. Reads ALL findings from the current cycle. Improves prompts/checklists/check-scripts in `specs/prompts/`. One agent, one pass, consolidated.
-4. **Intake** — PM runs on trunk if new specs exist. Creates task files.
-5. **Merge PRs** — squash-merge any ready PRs. Trunk HEAD advances.
-6. **Transition tasks** — update status/phase fields in task files.
-7. **Commit** — single commit for all orchestrator state changes.
+4. **Intake** — PM runs on trunk if new specs exist. Creates task files. Rejects dependency cycles.
+5. **Merge PRs** — squash-merge any ready PRs. Rebase, resolve conflicts, merge one at a time (see Merge Conflict Handling).
+6. **Decide** — determine which tasks to spawn. Create branches from the now-stable HEAD. Compose prompts.
+7. **Update state** — transition task statuses and phases on trunk. Commit all state changes.
+8. **Spawn** — hand workers to the runtime. From this point, workers run independently on their own branches.
 
-After this phase, trunk HEAD is stable and known.
+After spawning, the orchestrator sleeps until the next poll interval. Workers push to their own branches — no trunk writes until the next serial section.
 
-### Parallel Phase (branch writes only)
+### Why Serial
 
-Workers run in parallel, each on its own branch. No trunk writes happen during this phase.
-
-1. **Create branches** — from the now-stable trunk HEAD.
-2. **Compose prompts** — read templates + process overlay + task context from trunk.
-3. **Spawn workers** — hand to runtime. Workers push to their own branches only.
-4. **Poll** — wait for workers to complete (or until next cycle).
-
-### Why This Split
-
-Trunk is a shared mutable resource. The serial phase gives it a single writer. The parallel phase never touches it. This eliminates:
+Trunk is a shared mutable resource. Giving it a single writer eliminates:
 
 - Multiple process-improvers clobbering each other's commits.
 - Orchestrator commits racing with PR merges.
 - Intake creating tasks while findings are being written.
 - Workers spawning from a moving HEAD.
+- Task phase updates racing with trunk mutations.
 
 Process-improver is NOT a pipeline step — it's an orchestrator-internal serial operation. It runs between reap and spawn, sees all findings from the current cycle at once, and makes a single consolidated improvement pass. What it improves is defined by its agent definition, which projects can overlay.
 
 ## Branch Lifecycle
 
-1. Orchestrator creates the branch (`worker/task-{id}`) from trunk HEAD during the parallel phase.
+1. Orchestrator creates the branch (`worker/task-{id}`) from trunk HEAD during the serial section (after merging, before spawning).
 2. Worker receives the branch name and pushes commits to it.
 3. On subsequent rounds (loop retry), the same branch is reused with accumulated commits.
 4. Orchestrator creates a draft PR from the branch when the first verifier step begins.
@@ -247,18 +254,19 @@ PRs are the integration mechanism between workers and trunk.
 
 When multiple tasks run in parallel, their PRs can conflict. Task A merges, trunk moves, Task B's branch now conflicts.
 
-The orchestrator handles this during the serial phase as an internal concern, not a pipeline failure:
+The orchestrator handles this during the serial section:
 
 1. **Rebase** — orchestrator rebases the branch onto current trunk HEAD.
 2. **Clean rebase** — proceed with merge.
-3. **Conflict** — orchestrator aborts the rebase and spawns a **rebase-resolver** agent:
-   - Rebase-resolver is a lightweight, orchestrator-internal agent (like process-improver). Not a pipeline step.
+3. **Conflict** — orchestrator aborts the rebase, marks the task `needs-rebase`, and defers it. During the spawn step, a **rebase-resolver** agent is spawned for the task:
+   - Rebase-resolver is a lightweight, orchestrator-internal agent. Not a pipeline step.
    - It receives: the branch, the conflicting files, and what changed on trunk.
    - Its job is narrow: resolve conflict markers, run tests, push. Not a full implementation round.
-   - After resolution, orchestrator re-attempts the rebase + merge.
-4. **Resolution failed** — if the rebase-resolver can't produce a clean merge (e.g. deep semantic conflicts), only then does the orchestrator treat it as a pipeline failure and send the task back through the loop.
+   - It runs on the task's branch (not trunk), so it's safe to run in parallel with other workers.
+   - Next cycle's serial section re-attempts the rebase + merge.
+4. **Repeated conflicts** — if a task has been deferred for `max_rebase_attempts` (default: 3) consecutive cycles, the orchestrator treats it as a pipeline failure and sends the task back through the loop with conflict details as findings.
 
-Merge order: the serial phase merges PRs one at a time, rebasing each onto the new HEAD after the previous merge. Merges in task dependency order when possible, falling back to completion order.
+Merge order: the serial section merges PRs one at a time, rebasing each onto the new HEAD after the previous merge. Merges in task dependency order when possible, falling back to completion order.
 
 ## Findings Flow
 
@@ -290,12 +298,16 @@ The orchestrator can crash and restart without losing progress.
 
 1. Read `specs/tasks/*.md` from trunk → know all task statuses and phases.
 2. List open draft PRs with orchestrator labels → find in-flight work.
-3. For each task with `status: in-progress`:
-   a. Has a `phase` set? → resume from that phase.
-   b. Has a branch with commits but no PR? → worker died mid-work, re-spawn on same branch.
+3. **Check for orphaned workers** — before spawning, verify no worker is already active for a task:
+   - Local runtime: check if worktree/process exists for the branch.
+   - Ambient runtime: check if an agent with this task's label already exists.
+   - If an orphaned worker is found: cancel it via the runtime before re-spawning.
+4. For each task with `status: in-progress`:
+   a. Has a `phase` set? → resume from that phase (after clearing orphans).
+   b. Has a branch with commits but no PR? → re-spawn on same branch.
    c. Has an open draft PR? → re-run current phase (verifier, etc.).
    d. No branch? → start fresh.
-4. Resume normal loop.
+5. Resume normal loop.
 
 ## State Store Interface
 
@@ -320,6 +332,7 @@ spawn(task, role, prompt, branch)  → WorkerHandle
 poll(handle)                       → running | done | failed
 reap(handle)                       → WorkerResult
 cancel(handle)                     → void
+findOrphan(task, branch)           → WorkerHandle | null  (for crash recovery)
 ```
 
 Implementations: `LocalRuntime` (git worktrees + CLI), `AmbientRuntime` (ambient platform API — create agent, start session, poll annotations).
@@ -332,45 +345,51 @@ resolve templates (once at startup, re-resolve on gitops change)
 recovery:
     read task files → reconstruct in-flight state
     match open PRs to tasks → recover phase
+    check for orphaned workers → cancel before re-spawning
+    validate dependency graph → reject cycles
 
 while true:
-    ┌── serial phase (trunk writes) ──────────────────────────┐
+    ┌── serial (all orchestrator work) ───────────────────────┐
     │                                                         │
-    │  reap finished workers                                  │
-    │  for each result:                                       │
-    │      if pass: advance to next pipeline step             │
-    │      if fail: store findings on trunk                   │
+    │  1. reap finished workers                               │
+    │     for each result:                                    │
+    │         if pass: advance to next pipeline step          │
+    │         if fail: store findings on trunk                │
+    │         if task.round >= max_rounds: status → failed    │
     │                                                         │
-    │  if any failures this cycle:                            │
-    │      run process-improver ONCE on trunk                 │
-    │      (reads all findings, improves prompts)             │
+    │  2. if any task failed → halt (needs human attention)   │
     │                                                         │
-    │  run intake if configured + new specs exist             │
-    │      (creates task files on trunk)                      │
+    │  3. if any failures this cycle:                         │
+    │         run process-improver ONCE on trunk              │
+    │         (reads all findings, improves prompts)          │
     │                                                         │
-    │  merge ready PRs (one at a time, in dependency order):   │
-    │      rebase branch onto HEAD                            │
-    │      if conflict: spawn rebase-resolver, re-attempt     │
-    │      if resolved: squash-merge, preserve trailers       │
-    │      if unresolvable: store as findings, loop task back │
-    │  transition task statuses + phases                      │
-    │  commit all state changes                               │
+    │  4. run intake if configured + new specs exist          │
+    │         (creates task files, rejects dep cycles)        │
     │                                                         │
-    └─────────────────────────────────────────────────────────┘
-    trunk HEAD is now stable
-
-    ┌── parallel phase (branch writes only) ──────────────────┐
+    │  5. poll gates                                          │
+    │         for tasks at a gate: check PR labels            │
+    │         if lgtm label found: clear gate, advance task   │
     │                                                         │
-    │  decide what to spawn                                   │
-    │      priority: in-progress > not-started with deps met  │
-    │      limit: max_parallel workers                        │
+    │  6. merge ready PRs (one at a time, dep order):         │
+    │         rebase branch onto HEAD                         │
+    │         if clean: squash-merge, preserve trailers       │
+    │         if conflict: mark needs-rebase, defer           │
+    │         if deferred > max_rebase_attempts:              │
+    │             store as findings, loop task back            │
     │                                                         │
-    │  for each task to spawn:                                │
-    │      create branch from HEAD if needed                  │
-    │      compose prompt (template + overlay + context)      │
-    │      inject spec_ref + task_id for commit trailers      │
-    │      spawn via runtime                                  │
-    │      update task phase                                  │
+    │  7. decide what to spawn                                │
+    │         priority: in-progress > not-started w/ deps met │
+    │         include: needs-rebase tasks (rebase-resolver)   │
+    │         limit: max_workers                              │
+    │         create branches from stable HEAD                │
+    │         compose prompts (template + overlay + context)  │
+    │         inject spec_ref + task_id for trailers          │
+    │                                                         │
+    │  8. update state                                        │
+    │         transition task statuses + phases on trunk      │
+    │         commit all state changes                        │
+    │                                                         │
+    │  9. spawn workers (hand to runtime)                     │
     │                                                         │
     └─────────────────────────────────────────────────────────┘
 
@@ -378,6 +397,7 @@ while true:
         all tasks complete + no active workers → halt
 
     sleep(poll_interval)
+    (workers run independently on branches between cycles)
 ```
 
 ## Configuration
@@ -399,6 +419,7 @@ merge:
 
 poll_interval: 30
 max_rounds: 50
+max_rebase_attempts: 3
 ```
 
 ## Directory Structure
