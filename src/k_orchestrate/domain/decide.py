@@ -61,27 +61,38 @@ def decide(world: World, max_workers: int, max_rounds: int) -> list[Action]:
     active_count = sum(1 for ws in world.workers.values() if ws.status == "running")
 
     # ---- 4. Find eligible tasks to spawn -----------------------------------
-    # Priority: in-progress without a worker (crash recovery) first,
-    # then not-started with all deps met.
+    # Priority order:
+    #   1. needs-rebase tasks (rebase-resolver, from merge conflict handling)
+    #   2. in-progress without a worker (crash recovery / pipeline resume)
+    #   3. not-started with all deps met
+    #
+    # The role is a hint: "rebase-resolver" for needs-rebase tasks,
+    # "implementer" as a default for others. The loop overrides the role
+    # for in-progress tasks based on their pipeline position.
+    needs_rebase: list[Task] = []
     resuming: list[Task] = []
     ready: list[Task] = []
 
     for task in world.tasks.values():
-        if task.status == TaskStatus.IN_PROGRESS and not _task_has_worker(task.id, world):
+        if task.status == TaskStatus.NEEDS_REBASE and not _task_has_worker(task.id, world):
+            needs_rebase.append(task)
+        elif task.status == TaskStatus.IN_PROGRESS and not _task_has_worker(task.id, world):
             resuming.append(task)
         elif task.status == TaskStatus.NOT_STARTED and _deps_met(task, world.tasks):
             ready.append(task)
 
     # Stable sort by task id for determinism
+    needs_rebase.sort(key=lambda t: t.id)
     resuming.sort(key=lambda t: t.id)
     ready.sort(key=lambda t: t.id)
 
-    eligible = resuming + ready
+    eligible = needs_rebase + resuming + ready
     slots = max_workers - active_count
     to_spawn = eligible[:slots] if slots > 0 else []
 
     for task in to_spawn:
-        actions.append(SpawnWorker(task_id=task.id, role="implementer"))
+        role = "rebase-resolver" if task.status == TaskStatus.NEEDS_REBASE else "implementer"
+        actions.append(SpawnWorker(task_id=task.id, role=role))
 
     # ---- 5. Check convergence: all complete + no workers → Halt ------------
     all_complete = all(t.status == TaskStatus.COMPLETE for t in world.tasks.values())
