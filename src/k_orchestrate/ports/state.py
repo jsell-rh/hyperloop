@@ -22,8 +22,14 @@ class StateStore(Protocol):
         """Return a single task by ID."""
         ...
 
-    def transition_task(self, task_id: str, status: TaskStatus, phase: Phase | None) -> None:
-        """Update a task's status and phase, then commit."""
+    def transition_task(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        phase: Phase | None,
+        round: int | None = None,
+    ) -> None:
+        """Update a task's status, phase, and optionally round."""
         ...
 
     def store_findings(self, task_id: str, detail: str) -> None:

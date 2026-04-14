@@ -52,8 +52,14 @@ class InMemoryStateStore:
         """Return a single task by ID. Raises KeyError if not found."""
         return self._tasks[task_id]
 
-    def transition_task(self, task_id: str, status: TaskStatus, phase: Phase | None) -> None:
-        """Update a task's status and phase."""
+    def transition_task(
+        self,
+        task_id: str,
+        status: TaskStatus,
+        phase: Phase | None,
+        round: int | None = None,
+    ) -> None:
+        """Update a task's status, phase, and optionally round."""
         old = self._tasks[task_id]
         self._tasks[task_id] = Task(
             id=old.id,
@@ -62,7 +68,7 @@ class InMemoryStateStore:
             status=status,
             phase=phase,
             deps=old.deps,
-            round=old.round,
+            round=round if round is not None else old.round,
             branch=old.branch,
             pr=old.pr,
         )
