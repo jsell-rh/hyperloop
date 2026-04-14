@@ -110,7 +110,7 @@ Future signal sources (webhooks, CI status, ambient annotations) can be added be
 
 ### Agent Definition
 
-Follows the ambient platform resource model. Base definitions ship with the orchestrator. Projects overlay with personas and project-specific rules.
+Follows the ambient platform resource model. Base definitions live in the k-orchestrate repo, referenced by git URL. Projects overlay with personas and project-specific rules via kustomize patches in a gitops repo.
 
 ```yaml
 kind: Agent
@@ -188,13 +188,52 @@ Three layers, composed at spawn time:
 
 | Layer | Source | What it provides | Who writes it |
 |---|---|---|---|
-| Base | Orchestrator repo `base/` | Protocol (how to behave) | Orchestrator maintainers |
+| Base | k-orchestrate repo `base/` | Protocol (how to behave) | Orchestrator maintainers |
 | Project overlay | Project gitops repo `overlays/{project}/` | Persona (who you are) | Project team |
 | Process overlay | Target repo `specs/prompts/` | Learned rules (what to watch for) | Process-improver agent |
 
-Composition uses kustomize: `kustomize build overlays/{project}/` merges base + project overlay into resolved templates (done once at startup, re-resolved when gitops changes). The orchestrator injects process overlay + task context at spawn time.
+### Layer 1+2: Kustomize
 
-Task context (spec + findings + traceability refs) is injected per-spawn. Findings are read from the task file on trunk, not from the worker's branch. The worker never needs to read the task file — everything it needs arrives in its prompt.
+Layers 1 and 2 are composed via kustomize. The project gitops repo contains a `kustomization.yaml` that references the k-orchestrate base as a remote resource and applies project-specific patches:
+
+```yaml
+# project-gitops/overlays/api/kustomization.yaml
+resources:
+  - github.com/org/k-orchestrate//base?ref=v1.2.0    # remote base, pinned by ref
+
+patches:
+  - path: implementer-patch.yaml
+    target:
+      kind: Agent
+      name: implementer
+
+  - path: verifier-patch.yaml
+    target:
+      kind: Agent
+      name: verifier
+
+  - path: workflow-patch.yaml
+    target:
+      kind: Workflow
+      name: default
+```
+
+At startup, the orchestrator runs `kustomize build <overlay-path>` and parses the output into resolved templates. This decouples the base agent definitions from the tool release — teams pin a base version via `?ref=` and upgrade when ready.
+
+### Layer 3: Process Overlay
+
+Process overlays live in the target repo at `specs/prompts/`. They are injected at spawn time (not via kustomize) because they change during the loop as the process-improver writes to them.
+
+### Spawn-time Injection
+
+At spawn time, the orchestrator takes a resolved template (from kustomize) and injects:
+
+- Process overlay from `specs/prompts/` (layer 3)
+- Task spec content
+- Findings from prior rounds
+- Traceability refs (`spec_ref`, `task_id`) for commit trailers
+
+The worker never needs to read the task file — everything it needs arrives in its prompt.
 
 ## Concurrency Model
 
@@ -233,7 +272,7 @@ Process-improver is NOT a pipeline step — it's an orchestrator-internal serial
 2. Worker receives the branch name and pushes commits to it.
 3. On subsequent rounds (loop retry), the same branch is reused with accumulated commits.
 4. Orchestrator creates a draft PR from the branch when the first verifier step begins.
-5. On completion, the PR is merged during the serial phase.
+5. On completion, the PR is merged during the serial section.
 6. After merge, the branch is deleted.
 
 For local runtime: orchestrator creates a git worktree on the branch. For ambient runtime: orchestrator creates the branch via git/API, passes the branch name to the agent at spawn time.
@@ -246,7 +285,7 @@ PRs are the integration mechanism between workers and trunk.
 2. Orchestrator creates a **draft PR** before the first review step, with spec/task labels.
 3. The PR accumulates commits across rounds (every attempt, every fix).
 4. On review pass, orchestrator marks the PR **ready**.
-5. If `auto_merge: true`, orchestrator squash-merges during the serial phase and deletes the branch.
+5. If `auto_merge: true`, orchestrator squash-merges during the serial section and deletes the branch.
 6. If `auto_merge: false`, PR waits for human merge.
 
 ### Merge Conflict Handling
@@ -272,7 +311,7 @@ Merge order: the serial section merges PRs one at a time, rebasing each onto the
 Findings serve two purposes: persistent audit trail and worker context.
 
 1. Verifier fails and reports findings in its `WorkerResult`.
-2. Orchestrator appends findings to the task file's `## Findings` section on trunk during the serial phase.
+2. Orchestrator appends findings to the task file's `## Findings` section on trunk during the serial section.
 3. On next spawn, orchestrator reads findings from the task file and injects them into the worker's prompt context.
 4. Worker receives findings as prompt content — it never reads the task file or rebases to get them.
 5. On task completion, findings section is cleared.
@@ -339,13 +378,14 @@ Implementations: `LocalRuntime` (git worktrees + CLI), `AmbientRuntime` (ambient
 ## Orchestrator Loop
 
 ```
-resolve templates (once at startup, re-resolve on gitops change)
-
-recovery:
-    read task files → reconstruct in-flight state
-    match open PRs to tasks → recover phase
-    check for orphaned workers → cancel before re-spawning
-    validate dependency graph → reject cycles
+startup:
+    read .k-orchestrate.yaml from target repo
+    kustomize build <overlay-path> → resolved templates
+    recovery (if resuming):
+        read task files → reconstruct in-flight state
+        match open PRs to tasks → recover phase
+        check for orphaned workers → cancel before re-spawning
+        validate dependency graph → reject cycles
 
 while true:
     ┌── serial (all orchestrator work) ───────────────────────┐
@@ -401,10 +441,15 @@ while true:
 
 ## Configuration
 
+The target repo contains a `.k-orchestrate.yaml` file:
+
 ```yaml
+# Points to a kustomization directory — kustomize build resolves base + overlay
+overlay: git@gitlab.cee.redhat.com:hyperfleet/gitops//overlays/api
+
 target:
   repo: owner/repo
-  base_branch: dev
+  base_branch: main
   specs_dir: specs
 
 runtime:
@@ -421,6 +466,46 @@ max_rounds: 50
 max_rebase_attempts: 3
 ```
 
+### Adoption Levels
+
+**Level 0 — no config, all defaults:**
+
+```bash
+uvx k-orchestrate --repo owner/repo --branch main
+```
+
+Base prompts, default workflow, no overlay.
+
+**Level 1 — config file, no overlay:**
+
+```yaml
+# .k-orchestrate.yaml
+target:
+  base_branch: main
+merge:
+  auto_merge: false
+```
+
+Base prompts with tuned knobs.
+
+**Level 2 — in-repo overlay:**
+
+```yaml
+# .k-orchestrate.yaml
+overlay: .k-orchestrate/agents/
+```
+
+Agent patches live in the target repo itself. No separate gitops repo needed.
+
+**Level 3 — shared gitops overlay:**
+
+```yaml
+# .k-orchestrate.yaml
+overlay: git@gitlab.cee.redhat.com:hyperfleet/gitops//overlays/api
+```
+
+Agent definitions managed centrally across multiple target repos.
+
 ## Directory Structure
 
 ### Orchestrator repo (this repo)
@@ -428,19 +513,19 @@ max_rebase_attempts: 3
 ```
 k-orchestrate/
 ├── specs/
-│   └── spec.md          ← this file
-├── base/                ← base agent + workflow definitions
-│   ├── workflow.yaml
-│   ├── implementer.yaml
+│   └── spec.md              ← this file
+├── base/                    ← base agent + workflow definitions
+│   ├── workflow.yaml          referenced by gitops repos via kustomize remote resource
+│   ├── implementer.yaml       (github.com/org/k-orchestrate//base?ref=v1.2.0)
 │   ├── verifier.yaml
 │   ├── process-improver.yaml
 │   ├── rebase-resolver.yaml
 │   └── pm.yaml
-├── src/                 ← orchestrator code
-│   ├── loop.py          ← main loop (serial/parallel phases) + recovery
-│   ├── decide.py        ← pure decision function
-│   ├── compose.py       ← prompt composition (kustomize + injection)
-│   ├── pipeline.py      ← pipeline executor (recursive, handles loops)
+├── src/                     ← orchestrator engine (installed via pip/uvx)
+│   ├── loop.py              ← main loop (serial section) + recovery
+│   ├── decide.py            ← pure decision function
+│   ├── compose.py           ← spawn-time injection (layer 3 + task context)
+│   ├── pipeline.py          ← pipeline executor (recursive, handles loops)
 │   ├── state/
 │   │   ├── interface.py
 │   │   └── git.py
@@ -449,29 +534,36 @@ k-orchestrate/
 │       ├── local.py
 │       └── ambient.py
 └── tests/
-    ├── test_decide.py   ← decision function is pure, fully testable
-    └── test_pipeline.py ← pipeline execution against mock runtime
+    ├── test_decide.py       ← decision function is pure, fully testable
+    └── test_pipeline.py     ← pipeline execution against mock runtime
 ```
+
+The `base/` directory is not bundled into the pip package. It lives in the repo and is referenced by gitops repos via kustomize remote resources. This decouples prompt evolution from tool releases.
 
 ### Target repo (prescribed structure)
 
 ```
 target-repo/
+├── .k-orchestrate.yaml      ← orchestrator config (overlay ref, runtime settings)
+├── .k-orchestrate/           ← optional: in-repo overlay (level 2 adoption)
+│   └── agents/
+│       ├── implementer-patch.yaml
+│       └── workflow-patch.yaml
 └── specs/
-    ├── *.md             ← product specs (human-written, referenced by spec_ref)
-    ├── tasks/           ← task files (orchestrator writes status + findings)
-    ├── reviews/         ← review artifacts (verifier writes on branch)
-    └── prompts/         ← process overlays (process-improver writes on trunk)
+    ├── *.md                  ← product specs (human-written, referenced by spec_ref)
+    ├── tasks/                ← task files (orchestrator writes status + findings)
+    ├── reviews/              ← review artifacts (verifier writes on branch)
+    └── prompts/              ← process overlays (process-improver writes on trunk)
 ```
 
-### Project gitops repo (optional, for overlay)
+### Project gitops repo (level 3 adoption)
 
 ```
 project-gitops/
 └── overlays/{project}/
-    ├── kustomization.yaml
-    ├── workflow-patch.yaml         ← replaces pipeline list
-    ├── implementer-patch.yaml      ← injects persona
+    ├── kustomization.yaml            ← references k-orchestrate//base as remote resource
+    ├── workflow-patch.yaml           ← replaces pipeline list
+    ├── implementer-patch.yaml        ← injects persona
     ├── verifier-patch.yaml
     └── process-improver-patch.yaml
 ```
