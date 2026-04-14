@@ -29,7 +29,7 @@ cd your-repo
 k-orchestrate --repo owner/repo --branch main
 ```
 
-That's it. The orchestrator reads your specs, creates tasks, and starts running agents through the pipeline: implement, verify, merge.
+The orchestrator reads your specs, creates tasks, and starts running agents through the pipeline: implement, verify, merge.
 
 ## Configuration
 
