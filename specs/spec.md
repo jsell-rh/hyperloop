@@ -243,6 +243,23 @@ PRs are the integration mechanism between workers and trunk.
 5. If `auto_merge: true`, orchestrator squash-merges during the serial phase and deletes the branch.
 6. If `auto_merge: false`, PR waits for human merge.
 
+### Merge Conflict Handling
+
+When multiple tasks run in parallel, their PRs can conflict. Task A merges, trunk moves, Task B's branch now conflicts.
+
+The orchestrator handles this during the serial phase, before merging:
+
+1. **Rebase** — orchestrator rebases the branch onto current trunk HEAD.
+2. **Clean rebase** — no conflicts, proceed with merge.
+3. **Conflict** — orchestrator aborts the rebase and treats it as a pipeline failure:
+   - Store conflict details as findings (which files conflict, what changed on trunk).
+   - Send the task back through the loop (restart enclosing loop).
+   - The implementer receives the conflict details in its prompt and resolves them on the next round.
+
+Merge order matters. The serial phase merges PRs one at a time, rebasing each onto the new HEAD after the previous merge. Earlier merges succeed; later ones are more likely to conflict. The orchestrator merges in task dependency order when possible, falling back to completion order.
+
+A merge conflict is not special — it's just another kind of failure. The existing loop retry handles it naturally.
+
 ## Findings Flow
 
 Findings serve two purposes: persistent audit trail and worker context.
@@ -331,7 +348,10 @@ while true:
     │  run intake if configured + new specs exist             │
     │      (creates task files on trunk)                      │
     │                                                         │
-    │  merge any ready PRs (squash, preserve trailers)        │
+    │  merge ready PRs (one at a time, in dependency order):   │
+    │      rebase branch onto HEAD                            │
+    │      if conflict: store as findings, loop task back     │
+    │      if clean: squash-merge, preserve trailers          │
     │  transition task statuses + phases                      │
     │  commit all state changes                               │
     │                                                         │
