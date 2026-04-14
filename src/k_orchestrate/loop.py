@@ -10,19 +10,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from k_orchestrate.domain.model import (
-    LoopStep,
     Phase,
     PipelinePosition,
-    PipelineStep,
     TaskStatus,
     Verdict,
     WorkerHandle,
 )
 from k_orchestrate.domain.pipeline import (
     PipelineComplete,
+    PipelineExecutor,
     PipelineFailed,
     SpawnRole,
-    next_action,
 )
 
 if TYPE_CHECKING:
@@ -68,7 +66,7 @@ class Orchestrator:
 
         Returns a halt reason string if the loop should stop, or None to continue.
         """
-        pipeline = self._workflow.pipeline
+        executor = PipelineExecutor(self._workflow.pipeline)
 
         # ---- 1. Reap finished workers ----------------------------------------
         reaped: dict[str, WorkerResult] = {}
@@ -92,7 +90,7 @@ class Orchestrator:
             _handle, position = self._workers.pop(task_id)
             task = self._state.get_task(task_id)
 
-            action, new_pos = next_action(pipeline, position, result)
+            action, new_pos = executor.next_action(position, result)
 
             if isinstance(action, PipelineComplete):
                 # Task completed the pipeline successfully
@@ -159,8 +157,8 @@ class Orchestrator:
             eligible = [tid for tid in self._find_eligible_tasks() if tid not in already_spawning]
             for task_id in eligible[:slots]:
                 # Find the first leaf position in the pipeline
-                pos = _find_initial_position(pipeline)
-                action, pos = next_action(pipeline, pos, result=None)
+                pos = executor.initial_position()
+                action, pos = executor.next_action(pos, result=None)
 
                 if isinstance(action, SpawnRole):
                     self._state.transition_task(
@@ -237,19 +235,3 @@ def _phase_for_action(action: object) -> str | None:
     if isinstance(action, PerformAction):
         return action.action
     return None
-
-
-def _find_initial_position(
-    steps: tuple[PipelineStep, ...],
-) -> PipelinePosition:
-    """Find the position of the first leaf step, descending into LoopSteps.
-
-    For a pipeline like (LoopStep((impl, verifier)),), returns pos(0, 0)
-    pointing to the implementer inside the loop.
-    """
-    path: list[int] = [0]
-    step: PipelineStep = steps[0]
-    while isinstance(step, LoopStep):
-        path.append(0)
-        step = step.steps[0]
-    return PipelinePosition(path=tuple(path))
