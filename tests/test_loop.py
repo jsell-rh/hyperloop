@@ -421,3 +421,206 @@ class TestRunCycleStepByStep:
         result = orch.run_cycle()
         assert result is not None
         assert "all tasks complete" in result.lower()
+
+
+class TestNeedsRebaseSpawning:
+    """NEEDS_REBASE tasks get a rebase-resolver worker spawned."""
+
+    def test_needs_rebase_task_spawns_rebase_resolver(self) -> None:
+        """A task in NEEDS_REBASE status should spawn a rebase-resolver worker."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.NEEDS_REBASE,
+                phase=Phase("verifier"),
+                branch="worker/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.phase == Phase("rebase-resolver")
+
+    def test_needs_rebase_spawns_with_correct_role(self) -> None:
+        """The spawned worker should have role='rebase-resolver'."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.NEEDS_REBASE,
+                branch="worker/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime)
+        orch.run_cycle()
+
+        # Check the runtime received a spawn with rebase-resolver role
+        handle = runtime._handles.get("task-001")
+        assert handle is not None
+        assert handle.role == "rebase-resolver"
+
+    def test_needs_rebase_prioritized_over_not_started(self) -> None:
+        """NEEDS_REBASE tasks should spawn before NOT_STARTED tasks when slots are limited."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.NOT_STARTED,
+            )
+        )
+        state.add_task(
+            _task(
+                id="task-002",
+                status=TaskStatus.NEEDS_REBASE,
+                branch="worker/task-002",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime, max_workers=1)
+        orch.run_cycle()
+
+        # task-002 (needs_rebase) should have gotten the single slot
+        assert state.get_task("task-002").status == TaskStatus.IN_PROGRESS
+        assert state.get_task("task-001").status == TaskStatus.NOT_STARTED
+
+
+class TestRecovery:
+    """Crash recovery: orphaned workers are cancelled, in-progress tasks are re-spawned."""
+
+    def test_recover_cancels_orphaned_worker(self) -> None:
+        """An orphaned worker found by the runtime should be cancelled during recovery."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+
+        # Simulate a task that was in progress when the orchestrator crashed
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("implementer"),
+                branch="worker/task-001",
+            )
+        )
+
+        # Simulate an orphaned worker left in the runtime
+        runtime.spawn("task-001", "implementer", "", "worker/task-001")
+
+        orch = _make_orchestrator(state, runtime)
+        orch.recover()
+
+        # The orphan should have been cancelled
+        assert "task-001" in runtime._cancelled
+
+    def test_recover_respawns_in_progress_task_next_cycle(self) -> None:
+        """After recovery, the next cycle should spawn a worker for the in-progress task."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("implementer"),
+                branch="worker/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime)
+        orch.recover()
+
+        # Next cycle should spawn a worker for this task
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+        # Should have spawned a fresh worker
+        handle = runtime._handles.get("task-001")
+        assert handle is not None
+
+    def test_recover_ignores_non_in_progress_tasks(self) -> None:
+        """Recovery should only process IN_PROGRESS tasks."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+
+        state.add_task(_task(id="task-001", status=TaskStatus.NOT_STARTED))
+        state.add_task(_task(id="task-002", status=TaskStatus.COMPLETE))
+        state.add_task(_task(id="task-003", status=TaskStatus.FAILED))
+
+        orch = _make_orchestrator(state, runtime)
+        orch.recover()
+
+        # No orphan checks for these tasks
+        assert "task-001" not in runtime._cancelled
+        assert "task-002" not in runtime._cancelled
+        assert "task-003" not in runtime._cancelled
+
+    def test_recover_handles_no_orphan(self) -> None:
+        """When runtime finds no orphan, recovery proceeds without cancellation."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("implementer"),
+                branch="worker/task-001",
+            )
+        )
+
+        # No orphan in runtime — the worker process already exited
+        orch = _make_orchestrator(state, runtime)
+        orch.recover()
+
+        # No cancellation should have happened
+        assert "task-001" not in runtime._cancelled
+
+        # But the task should still be re-spawned on next cycle
+        orch.run_cycle()
+        handle = runtime._handles.get("task-001")
+        assert handle is not None
+
+
+class TestGateStub:
+    """Gate polling is currently a stub — tasks at gates are not blocked from decide()."""
+
+    def test_gate_stub_does_not_crash(self) -> None:
+        """Running a cycle with the gate stub should not raise."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task())
+
+        orch = _make_orchestrator(state, runtime)
+        # This should succeed without errors — the stub just logs
+        result = orch.run_cycle()
+        assert result is None
+
+
+class TestDecideIntegration:
+    """The loop uses decide() for eligibility, not ad-hoc logic."""
+
+    def test_decide_controls_spawning(self) -> None:
+        """Spawning decisions flow through decide(), not internal _find_eligible_tasks."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task(id="task-001"))
+        state.add_task(_task(id="task-002", deps=("task-001",)))
+
+        orch = _make_orchestrator(state, runtime)
+
+        # Verify the orchestrator no longer has _find_eligible_tasks
+        assert not hasattr(orch, "_find_eligible_tasks")
+        assert not hasattr(orch, "_deps_met")
+
+        # Cycle 1: only task-001 should spawn (task-002 dep unmet per decide())
+        orch.run_cycle()
+        assert state.get_task("task-001").status == TaskStatus.IN_PROGRESS
+        assert state.get_task("task-002").status == TaskStatus.NOT_STARTED
