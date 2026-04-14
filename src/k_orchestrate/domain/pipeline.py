@@ -76,6 +76,11 @@ class PipelineExecutor:
     def __init__(self, pipeline: tuple[PipelineStep, ...]) -> None:
         self._pipeline = pipeline
 
+    @property
+    def pipeline(self) -> tuple[PipelineStep, ...]:
+        """The pipeline steps this executor walks."""
+        return self._pipeline
+
     def next_action(
         self, position: PipelinePosition, result: WorkerResult | None
     ) -> tuple[PipelineAction, PipelinePosition]:

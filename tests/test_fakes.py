@@ -30,7 +30,7 @@ class TestStateStoreGetTask:
             spec_ref="specs/widget.md",
             status=TaskStatus.NOT_STARTED,
             phase=None,
-            deps=[],
+            deps=(),
             round=0,
             branch=None,
             pr=None,
@@ -43,7 +43,7 @@ class TestStateStoreGetTask:
         assert retrieved.spec_ref == "specs/widget.md"
         assert retrieved.status == TaskStatus.NOT_STARTED
         assert retrieved.phase is None
-        assert retrieved.deps == []
+        assert retrieved.deps == ()
         assert retrieved.round == 0
         assert retrieved.branch is None
         assert retrieved.pr is None
@@ -66,7 +66,7 @@ class TestStateStoreTransition:
             spec_ref="specs/widget.md",
             status=TaskStatus.NOT_STARTED,
             phase=None,
-            deps=[],
+            deps=(),
             round=0,
             branch=None,
             pr=None,
@@ -87,7 +87,7 @@ class TestStateStoreTransition:
             spec_ref="specs/api.md",
             status=TaskStatus.NOT_STARTED,
             phase=None,
-            deps=["task-001"],
+            deps=("task-001",),
             round=3,
             branch="worker/task-002",
             pr="https://github.com/org/repo/pull/42",
@@ -99,7 +99,7 @@ class TestStateStoreTransition:
         updated = store.get_task("task-002")
         assert updated.title == "Build API"
         assert updated.spec_ref == "specs/api.md"
-        assert updated.deps == ["task-001"]
+        assert updated.deps == ("task-001",)
         assert updated.round == 3
         assert updated.branch == "worker/task-002"
         assert updated.pr == "https://github.com/org/repo/pull/42"
@@ -114,7 +114,7 @@ class TestStateStoreFindings:
             spec_ref="specs/widget.md",
             status=TaskStatus.IN_PROGRESS,
             phase=Phase("verifier"),
-            deps=[],
+            deps=(),
             round=1,
             branch=None,
             pr=None,
@@ -136,7 +136,7 @@ class TestStateStoreFindings:
             spec_ref="specs/widget.md",
             status=TaskStatus.IN_PROGRESS,
             phase=Phase("verifier"),
-            deps=[],
+            deps=(),
             round=1,
             branch=None,
             pr=None,
@@ -157,7 +157,7 @@ class TestStateStoreFindings:
             spec_ref="specs/widget.md",
             status=TaskStatus.NOT_STARTED,
             phase=None,
-            deps=[],
+            deps=(),
             round=0,
             branch=None,
             pr=None,
@@ -216,7 +216,7 @@ class TestStateStoreGetWorld:
             spec_ref="specs/widget.md",
             status=TaskStatus.NOT_STARTED,
             phase=None,
-            deps=[],
+            deps=(),
             round=0,
             branch=None,
             pr=None,
@@ -227,7 +227,7 @@ class TestStateStoreGetWorld:
             spec_ref="specs/api.md",
             status=TaskStatus.IN_PROGRESS,
             phase=Phase("implementer"),
-            deps=["task-001"],
+            deps=("task-001",),
             round=1,
             branch="worker/task-002",
             pr=None,

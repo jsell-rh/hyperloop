@@ -340,7 +340,7 @@ class Orchestrator:
                         return found
             return None
 
-        return _search(executor._pipeline, ())
+        return _search(executor.pipeline, ())
 
 
 def _phase_for_action(action: object) -> str | None:

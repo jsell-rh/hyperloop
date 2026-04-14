@@ -11,8 +11,12 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from k_orchestrate.domain.model import Verdict, WorkerHandle, WorkerResult
+
+if TYPE_CHECKING:
+    from k_orchestrate.ports.runtime import WorkerPollStatus
 
 
 def _clean_git_env() -> dict[str, str]:
@@ -95,7 +99,7 @@ class LocalRuntime:
             session_id=None,
         )
 
-    def poll(self, handle: WorkerHandle) -> str:
+    def poll(self, handle: WorkerHandle) -> WorkerPollStatus:
         """Check subprocess status. Returns 'running', 'done', or 'failed'."""
         task_id = handle.task_id
         proc = self._processes.get(task_id)
