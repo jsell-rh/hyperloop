@@ -66,7 +66,6 @@ name: default
 
 intake:
   - role: pm
-    input: specs
 
 pipeline:
   - loop:
