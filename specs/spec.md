@@ -26,12 +26,13 @@ Lives in the target repo at `specs/tasks/task-{id}.md`. Written only by the orch
 ---
 id: task-027
 title: Implement Places DB persistent storage
-status: not-started    # not-started | in-progress | complete
-phase: null            # current pipeline step name (for crash recovery)
+spec_ref: specs/persistence.md    # traceable link to the originating spec
+status: not-started               # not-started | in-progress | complete
+phase: null                       # current pipeline step (for crash recovery)
 deps: [task-004]
-round: 0               # incremented each time the loop restarts
-branch: null            # set by orchestrator before first spawn
-pr: null                # set by orchestrator when draft PR created
+round: 0                          # incremented each time the loop restarts
+branch: null                      # set by orchestrator before first spawn
+pr: null                          # set by orchestrator when draft PR created
 ---
 
 ## Spec
@@ -41,7 +42,7 @@ pr: null                # set by orchestrator when draft PR created
 (appended by orchestrator after each failed round, cleared on completion)
 ```
 
-Status is deliberately minimal: not started, being worked on, or done. `phase` tracks where the task is in the pipeline so the orchestrator can resume after a crash.
+Status is deliberately minimal: not started, being worked on, or done. `phase` tracks where the task is in the pipeline so the orchestrator can resume after a crash. `spec_ref` traces this task back to the spec that originated it.
 
 ### Worker Result
 
@@ -57,7 +58,7 @@ Written by the worker on its branch (local) or via annotations (ambient). The on
 
 ### Workflow
 
-Defines the pipelines a task moves through. Ships with a default; projects overlay it.
+Defines the pipelines work moves through. Ships with a default; projects overlay it.
 
 ```yaml
 kind: Workflow
@@ -69,8 +70,6 @@ intake:
 
 pipeline:
   - loop:
-      - role: process-improver
-        target: trunk
       - role: implementer
       - role: verifier
   - action: merge-pr
@@ -78,14 +77,14 @@ pipeline:
 
 Two pipelines in one workflow:
 
-- **intake** runs at project level. Creates tasks from specs (or Jira, or whatever the intake role does). Runs periodically or on-demand, not per-task.
-- **pipeline** runs per-task. Processes each task through implementation, review, and merge.
+- **intake** runs at project level, serially on trunk. Creates tasks from specs (or Jira, or whatever the intake role does). Runs periodically or on-demand, not per-task.
+- **pipeline** runs per-task. Workers run in parallel on branches. Processes each task through implementation, review, and merge.
 
 Both use the same primitives.
 
 ### Pipeline Primitives
 
-Five primitives:
+Four primitives:
 
 | Primitive | Behavior |
 |---|---|
@@ -93,7 +92,6 @@ Five primitives:
 | `gate: X` | Block until external signal (e.g. human PR approval). |
 | `loop` | Wrap steps. On fail, retry from top. On pass, continue. |
 | `action: X` | Terminal operation (merge-pr, mark-pr-ready). |
-| `target: trunk` | Step modifier. Run this step against trunk instead of the task branch. Default is task branch. |
 
 Convention: `on_pass` = next step in list. `on_fail` = restart enclosing loop. These can be explicitly overridden per-step for non-standard routing.
 
@@ -119,6 +117,58 @@ annotations:
   ambient.io/findings: ""
 ```
 
+## Traceability
+
+Every artifact traces back to its originating spec through an unbroken chain:
+
+```
+spec (specs/*.md)
+  └── task (specs/tasks/task-{id}.md)     spec_ref: specs/persistence.md
+       └── commits (on worker branch)     Spec-Ref: specs/persistence.md
+            │                             Task-Ref: task-027
+            └── PR                        labels: spec/persistence, task/task-027
+                 └── merged to trunk      trailers preserved in squash commit
+```
+
+### Commit Trailers
+
+Every commit produced by a worker must include git trailers linking back to the spec and task:
+
+```
+feat: implement Places DB schema and migration
+
+Spec-Ref: specs/persistence.md
+Task-Ref: task-027
+```
+
+The orchestrator injects `spec_ref` and `task_id` into the worker's prompt context. The worker's agent definition instructs it to include these as trailers in every commit. The base implementer prompt includes:
+
+```
+Include these trailers in every commit message:
+  Spec-Ref: {spec_ref}
+  Task-Ref: {task_id}
+```
+
+### PR Labels
+
+The orchestrator adds labels to the draft PR for traceability:
+
+- `spec/{spec_name}` — derived from `spec_ref` (e.g. `spec/persistence`)
+- `task/{task_id}` — the task ID (e.g. `task/task-027`)
+
+### Squash Merge
+
+When using `strategy: squash`, the squash commit message preserves the trailers:
+
+```
+feat: implement Places DB persistent storage (#42)
+
+Spec-Ref: specs/persistence.md
+Task-Ref: task-027
+```
+
+This means `git log --grep="Spec-Ref: specs/persistence.md"` returns every commit that implemented any part of that spec.
+
 ## Prompt Composition
 
 Three layers, composed at spawn time:
@@ -131,15 +181,53 @@ Three layers, composed at spawn time:
 
 Composition uses kustomize: `kustomize build overlays/{project}/` merges base + project overlay into resolved templates (done once at startup, re-resolved when gitops changes). The orchestrator injects process overlay + task context at spawn time.
 
-Task context (spec + findings) is injected per-spawn. Findings are read from the task file on trunk, not from the worker's branch. The worker never needs to read the task file — everything it needs arrives in its prompt.
+Task context (spec + findings + traceability refs) is injected per-spawn. Findings are read from the task file on trunk, not from the worker's branch. The worker never needs to read the task file — everything it needs arrives in its prompt.
+
+## Concurrency Model
+
+The orchestrator loop has two phases per cycle: a serial phase and a parallel phase. This eliminates races on trunk.
+
+### Serial Phase (trunk writes)
+
+All trunk mutations happen here, sequentially. No workers are running against trunk during this phase.
+
+1. **Reap** — collect results from finished workers.
+2. **Store findings** — append to task files on trunk for all failed tasks.
+3. **Process-improver** — runs once, serially, on trunk. Reads ALL findings from the current cycle. Improves prompts/checklists/check-scripts in `specs/prompts/`. One agent, one pass, consolidated.
+4. **Intake** — PM runs on trunk if new specs exist. Creates task files.
+5. **Merge PRs** — squash-merge any ready PRs. Trunk HEAD advances.
+6. **Transition tasks** — update status/phase fields in task files.
+7. **Commit** — single commit for all orchestrator state changes.
+
+After this phase, trunk HEAD is stable and known.
+
+### Parallel Phase (branch writes only)
+
+Workers run in parallel, each on its own branch. No trunk writes happen during this phase.
+
+1. **Create branches** — from the now-stable trunk HEAD.
+2. **Compose prompts** — read templates + process overlay + task context from trunk.
+3. **Spawn workers** — hand to runtime. Workers push to their own branches only.
+4. **Poll** — wait for workers to complete (or until next cycle).
+
+### Why This Split
+
+Trunk is a shared mutable resource. The serial phase gives it a single writer. The parallel phase never touches it. This eliminates:
+
+- Multiple process-improvers clobbering each other's commits.
+- Orchestrator commits racing with PR merges.
+- Intake creating tasks while findings are being written.
+- Workers spawning from a moving HEAD.
+
+Process-improver is NOT a pipeline step — it's an orchestrator-internal serial operation. It runs between reap and spawn, sees all findings from the current cycle at once, and makes a single consolidated improvement pass. What it improves is defined by its agent definition, which projects can overlay.
 
 ## Branch Lifecycle
 
-1. Orchestrator creates the branch (`worker/task-{id}`) from trunk HEAD before the first spawn.
+1. Orchestrator creates the branch (`worker/task-{id}`) from trunk HEAD during the parallel phase.
 2. Worker receives the branch name and pushes commits to it.
 3. On subsequent rounds (loop retry), the same branch is reused with accumulated commits.
 4. Orchestrator creates a draft PR from the branch when the first verifier step begins.
-5. On completion, the PR is merged (or marked ready for human merge).
+5. On completion, the PR is merged during the serial phase.
 6. After merge, the branch is deleted.
 
 For local runtime: orchestrator creates a git worktree on the branch. For ambient runtime: orchestrator creates the branch via git/API, passes the branch name to the agent at spawn time.
@@ -148,11 +236,11 @@ For local runtime: orchestrator creates a git worktree on the branch. For ambien
 
 PRs are the integration mechanism between workers and trunk.
 
-1. Worker pushes commits to its branch.
-2. Orchestrator creates a **draft PR** before the first review step.
+1. Worker pushes commits to its branch (with `Spec-Ref` and `Task-Ref` trailers).
+2. Orchestrator creates a **draft PR** before the first review step, with spec/task labels.
 3. The PR accumulates commits across rounds (every attempt, every fix).
 4. On review pass, orchestrator marks the PR **ready**.
-5. If `auto_merge: true`, orchestrator squash-merges and deletes the branch.
+5. If `auto_merge: true`, orchestrator squash-merges during the serial phase and deletes the branch.
 6. If `auto_merge: false`, PR waits for human merge.
 
 ## Findings Flow
@@ -160,7 +248,7 @@ PRs are the integration mechanism between workers and trunk.
 Findings serve two purposes: persistent audit trail and worker context.
 
 1. Verifier fails and reports findings in its `WorkerResult`.
-2. Orchestrator appends findings to the task file's `## Findings` section on trunk (persisted in git, human-readable).
+2. Orchestrator appends findings to the task file's `## Findings` section on trunk during the serial phase.
 3. On next spawn, orchestrator reads findings from the task file and injects them into the worker's prompt context.
 4. Worker receives findings as prompt content — it never reads the task file or rebases to get them.
 5. On task completion, findings section is cleared.
@@ -174,8 +262,9 @@ The orchestrator can crash and restart without losing progress.
 **What is persisted (survives crash):**
 - Task status and phase — in task file on trunk
 - Branch with accumulated commits — in git
-- Draft PR — on GitHub
+- Draft PR with labels — on GitHub
 - Findings — in task file on trunk
+- Traceability (spec_ref, trailers, labels) — in git + GitHub
 
 **What is ephemeral (lost on crash, reconstructed):**
 - Worker handles (process IDs, agent IDs)
@@ -195,7 +284,7 @@ The orchestrator can crash and restart without losing progress.
 
 ```
 getWorld()                → tasks, workers, epoch
-getTask(id)               → single task with status, phase, findings
+getTask(id)               → single task with status, phase, spec_ref, findings
 transitionTask(id, status, phase) → update status + phase, commit
 storeFindings(id, data)   → append findings to task file on trunk
 clearFindings(id)         → clear findings section on completion
@@ -225,28 +314,44 @@ resolve templates (once at startup, re-resolve on gitops change)
 
 recovery:
     read task files → reconstruct in-flight state
-    match open PRs to tasks
+    match open PRs to tasks → recover phase
 
 while true:
-    reap finished workers
-    for each result:
-        if pass: advance to next pipeline step
-        if fail: store findings, restart enclosing loop
-        update task phase
+    ┌── serial phase (trunk writes) ──────────────────────────┐
+    │                                                         │
+    │  reap finished workers                                  │
+    │  for each result:                                       │
+    │      if pass: advance to next pipeline step             │
+    │      if fail: store findings on trunk                   │
+    │                                                         │
+    │  if any failures this cycle:                            │
+    │      run process-improver ONCE on trunk                 │
+    │      (reads all findings, improves prompts)             │
+    │                                                         │
+    │  run intake if configured + new specs exist             │
+    │      (creates task files on trunk)                      │
+    │                                                         │
+    │  merge any ready PRs (squash, preserve trailers)        │
+    │  transition task statuses + phases                      │
+    │  commit all state changes                               │
+    │                                                         │
+    └─────────────────────────────────────────────────────────┘
+    trunk HEAD is now stable
 
-    run intake (if configured, skip if no new specs)
-        creates new task files on trunk
-
-    decide what to spawn (per-task pipeline)
-        gate: skip tasks whose world hasn't changed
-        priority: in-progress > not-started with deps satisfied
-        limit: max_parallel workers
-
-    spawn workers
-        create branch if needed
-        compose prompt: template + process overlay + task context + findings
-        hand to runtime
-        update task phase
+    ┌── parallel phase (branch writes only) ──────────────────┐
+    │                                                         │
+    │  decide what to spawn                                   │
+    │      priority: in-progress > not-started with deps met  │
+    │      limit: max_parallel workers                        │
+    │                                                         │
+    │  for each task to spawn:                                │
+    │      create branch from HEAD if needed                  │
+    │      compose prompt (template + overlay + context)      │
+    │      inject spec_ref + task_id for commit trailers      │
+    │      spawn via runtime                                  │
+    │      update task phase                                  │
+    │                                                         │
+    └─────────────────────────────────────────────────────────┘
 
     check convergence
         all tasks complete + no active workers → halt
@@ -290,7 +395,7 @@ k-orchestrate/
 │   ├── process-improver.yaml
 │   └── pm.yaml
 ├── src/                 ← orchestrator code
-│   ├── loop.py          ← main loop + recovery
+│   ├── loop.py          ← main loop (serial/parallel phases) + recovery
 │   ├── decide.py        ← pure decision function
 │   ├── compose.py       ← prompt composition (kustomize + injection)
 │   ├── pipeline.py      ← pipeline executor (recursive, handles loops)
@@ -311,6 +416,7 @@ k-orchestrate/
 ```
 target-repo/
 └── specs/
+    ├── *.md             ← product specs (human-written, referenced by spec_ref)
     ├── tasks/           ← task files (orchestrator writes status + findings)
     ├── reviews/         ← review artifacts (verifier writes on branch)
     └── prompts/         ← process overlays (process-improver writes on trunk)
