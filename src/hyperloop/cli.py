@@ -52,6 +52,10 @@ def _config_table(cfg: Config) -> Table:
 
 @app.command()
 def run(
+    path: Path = typer.Option(
+        Path.cwd(),
+        help="Path to the target repo. Default: current directory.",
+    ),
     repo: str | None = typer.Option(
         None,
         help="GitHub repo (owner/repo). Inferred from git remote if not set.",
@@ -64,7 +68,7 @@ def run(
         None,
         "--config",
         "-c",
-        help="Config file path. Default: .hyperloop.yaml",
+        help="Config file path. Default: .hyperloop.yaml in the target repo.",
     ),
     max_workers: int | None = typer.Option(
         None,
@@ -78,7 +82,8 @@ def run(
 ) -> None:
     """Run the orchestrator loop."""
     # 1. Load config (file + CLI overrides)
-    config_path = config_file or Path(".hyperloop.yaml")
+    repo_path = path.resolve()
+    config_path = config_file or (repo_path / ".hyperloop.yaml")
     try:
         cfg = load_config(
             config_path,
@@ -99,7 +104,9 @@ def run(
             style="blue",
         )
     )
-    console.print(_config_table(cfg))
+    table = _config_table(cfg)
+    table.add_row("path", str(repo_path))
+    console.print(table)
     console.print()
 
     # 3. Dry run — show config and exit
@@ -107,13 +114,15 @@ def run(
         console.print("[bold yellow]Dry run[/bold yellow] -- exiting without executing.")
         return
 
-    # 4. Validate repo is set (required for actual run)
+    # 4. Validate repo path exists and is a git repo
+    if not (repo_path / ".git").exists():
+        console.print(f"[bold red]Error:[/bold red] {repo_path} is not a git repository.")
+        raise typer.Exit(code=1)
+
     if cfg.repo is None:
         console.print(
-            "[bold red]Error:[/bold red] No repo specified. "
-            "Use --repo owner/repo or set target.repo in .hyperloop.yaml"
+            "[dim]No --repo set. PR operations (draft, merge, gate) will be skipped.[/dim]"
         )
-        raise typer.Exit(code=1)
 
     # 5. Construct runtime and state store, run loop
     from hyperloop.adapters.git_state import GitStateStore
@@ -136,7 +145,6 @@ def run(
         ),
     )
 
-    repo_path = Path.cwd()
     state = GitStateStore(repo_path, specs_dir=cfg.specs_dir)
     runtime = LocalRuntime(repo_path=str(repo_path))
 
