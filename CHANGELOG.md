@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.9.1 (2026-04-15)
+
+### Bug Fixes
+
+- **matrix**: Proper UIA two-step registration flow
+  ([`97080f9`](https://github.com/jsell-rh/hyperloop/commit/97080f9d6980e914451a59d4b2453c7b5294ed30))
+
+
 ## v0.9.0 (2026-04-15)
 
 
