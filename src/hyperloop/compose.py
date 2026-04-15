@@ -119,7 +119,7 @@ class PromptComposer:
             overlay_text = self._extract_overlay_prompt(overlay_content)
 
         # Layer 3: Task context — spec content
-        spec_content = self._state.read_file(spec_ref)
+        spec_content = self._state.read_file(spec_ref) if spec_ref else None
 
         # Assemble the final prompt
         sections: list[str] = [prompt.rstrip()]
