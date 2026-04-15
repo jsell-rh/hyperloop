@@ -547,10 +547,10 @@ class Orchestrator:
         prompt = self._composer.compose(
             role="pm",
             task_id="intake",
-            spec_ref="specs/",
+            spec_ref="",
             findings="",
         )
-        prompt += f"\n## Specs to Process\n{spec_list}\n"
+        prompt += f"\n\n## Specs to Process\n\n{spec_list}\n"
 
         success = self._serial_runner.run("pm", prompt)
         if success:
@@ -574,7 +574,7 @@ class Orchestrator:
         prompt = self._composer.compose(
             role="process-improver",
             task_id="process-improvement",
-            spec_ref="specs/prompts",
+            spec_ref="",
             findings=findings_text,
         )
 
