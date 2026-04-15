@@ -36,6 +36,7 @@ jobs:
         uses: python-semantic-release/python-semantic-release@v9
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          build: "false"
 
       - name: Build package
         if: steps.release.outputs.released == 'true'
@@ -45,8 +46,6 @@ jobs:
         if: steps.release.outputs.released == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          # Uses trusted publishing (OIDC) - configure at pypi.org/manage/project/hyperloop/settings/publishing/
-          # Add publisher: GitHub, owner: <your-org>, repo: <this-repo>, workflow: release.yaml, environment: (blank)
           print-hash: true
 
       - name: Publish GitHub Release
