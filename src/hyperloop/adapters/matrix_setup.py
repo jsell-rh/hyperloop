@@ -11,18 +11,18 @@ auto-setup and cache.
 from __future__ import annotations
 
 import json
-import logging
 import secrets
 from typing import TYPE_CHECKING, cast
 
 import httpx
+import structlog
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from hyperloop.config import MatrixConfig
 
-_log = logging.getLogger(__name__)
+_log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 _CACHE_FILE = ".hyperloop/matrix-state.json"
 
@@ -53,6 +53,8 @@ def _ensure_gitignored(repo_path: Path) -> None:
     """Ensure .hyperloop/ is in the target repo's .gitignore."""
     gitignore = repo_path / ".gitignore"
     entry = ".hyperloop/"
+    if not repo_path.is_dir():
+        return
     if gitignore.is_file():
         content = gitignore.read_text()
         if entry in content.splitlines():
@@ -104,55 +106,52 @@ def _register_bot(
     username: str,
     password: str,
 ) -> tuple[str, str]:
-    """Register a bot user. Returns (user_id, access_token).
+    """Register a bot user via UIA flow. Returns (user_id, access_token).
 
-    Uses Synapse's shared-secret registration flow. If the user already
-    exists (HTTP 400), falls back to login with the given password.
+    Matrix UIA (User-Interactive Authentication) registration:
+    1. POST /register without auth → server returns 401 with session + flows.
+    2. POST /register with auth (type + token + session) → 200 with credentials.
+
+    If the user already exists (HTTP 400), falls back to login.
     """
     url = f"{homeserver}/_matrix/client/v3/register"
-    body = {
+    base_body: dict[str, object] = {
         "username": username,
         "password": password,
-        "auth": {
-            "type": "m.login.registration_token",
-            "token": registration_token,
-        },
         "initial_device_display_name": "hyperloop",
         "inhibit_login": False,
     }
 
-    resp = client.post(url, json=body)
+    # Step 1: request without auth to get session
+    resp = client.post(url, json=base_body)
 
     if resp.status_code == 200:
+        # Some servers accept registration without UIA
         data = resp.json()
         return str(data["user_id"]), str(data["access_token"])
 
-    if resp.status_code == 401:
-        # Server requires a different auth flow — try the flows it offers
-        data = resp.json()
-        flows = data.get("flows", [])
-        session = data.get("session", "")
-
-        # Check if m.login.registration_token is among the available flows
-        for flow in flows:
-            stages = flow.get("stages", [])
-            if "m.login.registration_token" in stages:
-                body["auth"] = {
-                    "type": "m.login.registration_token",
-                    "token": registration_token,
-                    "session": session,
-                }
-                resp = client.post(url, json=body)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return str(data["user_id"]), str(data["access_token"])
-
     if resp.status_code == 400:
-        # User likely already exists — try login
         return _login(client, homeserver, username, password)
 
+    # Step 2: server should return 401 with session + flows
+    if resp.status_code in (401, 403):
+        data = resp.json()
+        session = data.get("session", "")
+        if session:
+            base_body["auth"] = {
+                "type": "m.login.registration_token",
+                "token": registration_token,
+                "session": session,
+            }
+            resp = client.post(url, json=base_body)
+            if resp.status_code == 200:
+                data = resp.json()
+                return str(data["user_id"]), str(data["access_token"])
+            if resp.status_code == 400:
+                return _login(client, homeserver, username, password)
+
     resp.raise_for_status()
-    msg = f"Unexpected registration response: {resp.status_code}"
+    msg = f"Registration failed: {resp.status_code} {resp.text}"
     raise RuntimeError(msg)
 
 
@@ -249,9 +248,9 @@ def ensure_matrix_ready(
                     config, repo_path, homeserver, registration_token, cache
                 )
             except Exception:
-                _log.exception("Matrix bot registration failed")
+                _log.exception("matrix_bot_registration_failed")
         else:
-            _log.warning("Matrix: no access token and no registration token — skipping")
+            _log.warning("matrix_skipped", reason="no access token and no registration token")
             return "", ""
 
     if not access_token:
@@ -262,20 +261,20 @@ def ensure_matrix_ready(
     room_id = config.room_id or cached_room
 
     if not room_id:
-        _log.info("Matrix: no room_id configured or cached — creating room")
+        _log.info("matrix_room_creating")
         try:
             room_id = _auto_create_room(config, repo_path, homeserver, access_token)
         except Exception:
-            _log.exception("Matrix room creation failed")
+            _log.exception("matrix_room_creation_failed")
             return access_token, ""
 
     # Ensure the bot has joined the room (it's a new user each run)
     if access_token != explicit_token and room_id:
-        _log.info("Matrix: joining room %s", room_id)
+        _log.info("matrix_room_joining", room_id=room_id)
         try:
             _join_room(httpx.Client(timeout=10.0), homeserver, access_token, room_id)
         except Exception:
-            _log.exception("Matrix room join failed for room %s", room_id)
+            _log.exception("matrix_room_join_failed", room_id=room_id)
 
     return access_token, room_id
 
@@ -320,7 +319,7 @@ def _register_disposable_bot(
             password=password,
         )
 
-        _log.info("Matrix bot registered: %s", user_id)
+        _log.info("matrix_bot_registered", user_id=user_id)
         return access_token
     finally:
         client.close()
@@ -375,7 +374,7 @@ def _auto_create_room(
             password=cache.get("password", ""),
         )
 
-        _log.info("Matrix room created: %s", room_id)
+        _log.info("matrix_room_created", room_id=room_id)
         return room_id
     finally:
         client.close()
