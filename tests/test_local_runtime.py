@@ -229,7 +229,7 @@ class TestReap:
         worktree_path = tmp_path / "worktrees" / "workers" / "task-022"
         assert not worktree_path.exists()
 
-    def test_cleans_up_branch_after_reap(self, tmp_path: Path) -> None:
+    def test_preserves_branch_after_reap(self, tmp_path: Path) -> None:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=PASS_COMMAND)
 
@@ -243,7 +243,7 @@ class TestReap:
 
         rt.reap(handle)
 
-        # Branch should be deleted
+        # Branch should be preserved for later pipeline steps (e.g. merge-pr)
         result = subprocess.run(
             ["git", "-C", str(tmp_path), "branch", "--list", "worker/task-023"],
             check=True,
@@ -251,7 +251,7 @@ class TestReap:
             text=True,
             env=_clean_git_env(),
         )
-        assert result.stdout.strip() == ""
+        assert "worker/task-023" in result.stdout.strip()
 
     def test_returns_error_result_when_no_result_file(self, tmp_path: Path) -> None:
         _init_repo(tmp_path)

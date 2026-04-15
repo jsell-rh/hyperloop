@@ -71,6 +71,7 @@ class Orchestrator:
         max_rounds: int = 50,
         pr_manager: PRPort | None = None,
         composer: PromptComposer | None = None,
+        repo_path: str | None = None,
     ) -> None:
         self._state = state
         self._runtime = runtime
@@ -79,6 +80,7 @@ class Orchestrator:
         self._max_rounds = max_rounds
         self._pr_manager = pr_manager
         self._composer = composer
+        self._repo_path = repo_path
 
         # Active worker tracking: task_id -> (handle, pipeline_position)
         self._workers: dict[str, tuple[WorkerHandle, PipelinePosition]] = {}
@@ -382,9 +384,13 @@ class Orchestrator:
         """Merge worker branch into base branch locally (no PR)."""
         import subprocess
 
+        git_cmd = ["git"]
+        if self._repo_path is not None:
+            git_cmd = ["git", "-C", self._repo_path]
+
         try:
             subprocess.run(
-                ["git", "merge", branch, "--no-edit", "-m", f"merge: {task_id}"],
+                [*git_cmd, "merge", branch, "--no-edit", "-m", f"merge: {task_id}"],
                 check=True,
                 capture_output=True,
             )
@@ -393,7 +399,7 @@ class Orchestrator:
             logger.info("Local merge of %s into base branch", task_id)
         except subprocess.CalledProcessError:
             logger.warning("Local merge conflict for task %s, marking NEEDS_REBASE", task_id)
-            subprocess.run(["git", "merge", "--abort"], capture_output=True, check=False)
+            subprocess.run([*git_cmd, "merge", "--abort"], capture_output=True, check=False)
             self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
 
     # -----------------------------------------------------------------------

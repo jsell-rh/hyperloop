@@ -56,8 +56,10 @@ class LocalRuntime:
         # Ensure the parent directory exists
         os.makedirs(self._worktree_base, exist_ok=True)
 
-        # Create the git worktree on a new branch
-        subprocess.run(
+        # Create the git worktree — reuse existing branch if it survived
+        # a previous pipeline step, otherwise create a new one.
+        env = _clean_git_env()
+        result = subprocess.run(
             [
                 "git",
                 "-C",
@@ -65,14 +67,29 @@ class LocalRuntime:
                 "worktree",
                 "add",
                 worktree_path,
-                "-b",
                 branch,
-                "HEAD",
             ],
-            check=True,
             capture_output=True,
-            env=_clean_git_env(),
+            env=env,
         )
+        if result.returncode != 0:
+            # Branch doesn't exist yet — create it
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    self._repo_path,
+                    "worktree",
+                    "add",
+                    worktree_path,
+                    "-b",
+                    branch,
+                    "HEAD",
+                ],
+                check=True,
+                capture_output=True,
+                env=env,
+            )
 
         # Write the prompt file
         prompt_path = os.path.join(worktree_path, "prompt.md")
@@ -120,7 +137,10 @@ class LocalRuntime:
         return "failed"
 
     def reap(self, handle: WorkerHandle) -> WorkerResult:
-        """Read the result file, clean up worktree and branch, return WorkerResult."""
+        """Read the result file, clean up worktree, return WorkerResult.
+
+        Preserves the branch so later pipeline steps (e.g. merge-pr) can use it.
+        """
         task_id = handle.task_id
         worktree_path = self._worktrees.get(task_id)
 
@@ -152,6 +172,7 @@ class LocalRuntime:
 
         branch = self._get_worktree_branch(worktree_path)
         self._cleanup_worktree(task_id, worktree_path, branch)
+        self._delete_branch(branch)
 
     def find_orphan(self, task_id: str, branch: str) -> WorkerHandle | None:
         """Check if a worktree exists for the given branch. Return a handle if so."""
@@ -229,7 +250,7 @@ class LocalRuntime:
             return None
 
     def _cleanup_worktree(self, task_id: str, worktree_path: str, branch: str | None) -> None:
-        """Remove the worktree directory and delete the branch."""
+        """Remove the worktree directory. Preserves the branch for later pipeline steps."""
         # Remove from internal tracking
         self._processes.pop(task_id, None)
         self._worktrees.pop(task_id, None)
@@ -264,10 +285,11 @@ class LocalRuntime:
                 env=env,
             )
 
-        # Delete the branch
+    def _delete_branch(self, branch: str | None) -> None:
+        """Delete a branch from the repo (best-effort, used by cancel)."""
         if branch:
             subprocess.run(
                 ["git", "-C", self._repo_path, "branch", "-D", branch],
                 capture_output=True,
-                env=env,
+                env=_clean_git_env(),
             )
