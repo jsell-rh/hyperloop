@@ -37,6 +37,15 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           build: "false"
+          push: "false"
+          commit: "false"
+          tag: "true"
+          changelog: "false"
+          vcs_release: "false"
+
+      - name: Push tag
+        if: steps.release.outputs.released == 'true'
+        run: git push origin "v${{ steps.release.outputs.version }}"
 
       - name: Build package
         if: steps.release.outputs.released == 'true'
@@ -48,8 +57,12 @@ jobs:
         with:
           print-hash: true
 
-      - name: Publish GitHub Release
+      - name: Create GitHub Release
         if: steps.release.outputs.released == 'true'
-        uses: python-semantic-release/publish-action@v9
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.release.outputs.version }}" \
+            --title "v${{ steps.release.outputs.version }}" \
+            --generate-notes \
+            dist/*
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
