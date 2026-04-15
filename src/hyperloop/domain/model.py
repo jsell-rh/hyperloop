@@ -131,8 +131,8 @@ class PipelinePosition:
 
 
 @dataclass(frozen=True)
-class Workflow:
-    """A named workflow with intake and per-task pipelines."""
+class Process:
+    """A named process with intake and per-task pipelines."""
 
     name: str
     intake: tuple[PipelineStep, ...]

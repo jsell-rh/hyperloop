@@ -13,12 +13,12 @@ from hyperloop.domain.model import (
     GateStep,
     LoopStep,
     Phase,
+    Process,
     RoleStep,
     Task,
     TaskStatus,
     Verdict,
     WorkerResult,
-    Workflow,
 )
 from hyperloop.loop import Orchestrator
 from tests.fakes.pr import FakePRManager
@@ -32,7 +32,7 @@ from tests.fakes.state import InMemoryStateStore
 PASS_RESULT = WorkerResult(verdict=Verdict.PASS, findings=0, detail="All tests pass")
 FAIL_RESULT = WorkerResult(verdict=Verdict.FAIL, findings=1, detail="Tests failed")
 
-DEFAULT_WORKFLOW = Workflow(
+DEFAULT_PROCESS = Process(
     name="default",
     intake=(),
     pipeline=(
@@ -70,7 +70,7 @@ def _task(
 def _make_orchestrator(
     state: InMemoryStateStore,
     runtime: InMemoryRuntime,
-    workflow: Workflow = DEFAULT_WORKFLOW,
+    process: Process = DEFAULT_PROCESS,
     max_workers: int = 6,
     max_rounds: int = 50,
     pr_manager: FakePRManager | None = None,
@@ -79,7 +79,7 @@ def _make_orchestrator(
     return Orchestrator(
         state=state,
         runtime=runtime,
-        workflow=workflow,
+        process=process,
         max_workers=max_workers,
         max_rounds=max_rounds,
         pr_manager=pr_manager,
@@ -399,7 +399,7 @@ class TestConvergence:
         reason = orch.run_loop(max_cycles=3)
         assert "max_cycles" in reason.lower()
 
-    def test_empty_workflow_halts_immediately(self) -> None:
+    def test_empty_process_halts_immediately(self) -> None:
         """If all tasks are already complete, the loop halts immediately."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
@@ -639,8 +639,8 @@ class TestDecideIntegration:
 class TestGatePolling:
     """Gate polling with PRManager: tasks at a gate advance when lgtm label is present."""
 
-    GATE_WORKFLOW = Workflow(
-        name="gate-workflow",
+    GATE_PROCESS = Process(
+        name="gate-process",
         intake=(),
         pipeline=(
             LoopStep(
@@ -678,7 +678,7 @@ class TestGatePolling:
         # Human adds lgtm label
         pr_mgr.add_label(pr_url, "lgtm")
 
-        orch = _make_orchestrator(state, runtime, workflow=self.GATE_WORKFLOW, pr_manager=pr_mgr)
+        orch = _make_orchestrator(state, runtime, process=self.GATE_PROCESS, pr_manager=pr_mgr)
         orch.run_cycle()
 
         # Gate should have cleared, task should advance past the gate
@@ -703,7 +703,7 @@ class TestGatePolling:
         )
         state.set_task_pr("task-001", pr_url)
 
-        orch = _make_orchestrator(state, runtime, workflow=self.GATE_WORKFLOW, pr_manager=pr_mgr)
+        orch = _make_orchestrator(state, runtime, process=self.GATE_PROCESS, pr_manager=pr_mgr)
         orch.run_cycle()
 
         task = state.get_task("task-001")
@@ -723,7 +723,7 @@ class TestGatePolling:
             )
         )
 
-        orch = _make_orchestrator(state, runtime, workflow=self.GATE_WORKFLOW, pr_manager=None)
+        orch = _make_orchestrator(state, runtime, process=self.GATE_PROCESS, pr_manager=None)
         # Should not crash
         orch.run_cycle()
         task = state.get_task("task-001")
@@ -733,8 +733,8 @@ class TestGatePolling:
 class TestMergeWithPRManager:
     """Merge step with PRManager: rebase, then squash-merge."""
 
-    MERGE_WORKFLOW = Workflow(
-        name="merge-workflow",
+    MERGE_PROCESS = Process(
+        name="merge-process",
         intake=(),
         pipeline=(
             LoopStep(
@@ -765,7 +765,7 @@ class TestMergeWithPRManager:
         )
         state.set_task_pr("task-001", pr_url)
 
-        orch = _make_orchestrator(state, runtime, workflow=self.MERGE_WORKFLOW, pr_manager=pr_mgr)
+        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
         orch.run_cycle()
 
         task = state.get_task("task-001")
@@ -790,7 +790,7 @@ class TestMergeWithPRManager:
         )
         state.set_task_pr("task-001", pr_url)
 
-        orch = _make_orchestrator(state, runtime, workflow=self.MERGE_WORKFLOW, pr_manager=pr_mgr)
+        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
         orch.run_cycle()
 
         task = state.get_task("task-001")
@@ -816,7 +816,7 @@ class TestMergeWithPRManager:
         )
         state.set_task_pr("task-001", pr_url)
 
-        orch = _make_orchestrator(state, runtime, workflow=self.MERGE_WORKFLOW, pr_manager=pr_mgr)
+        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
         orch.run_cycle()
 
         task = state.get_task("task-001")
@@ -837,7 +837,7 @@ class TestMergeWithPRManager:
             )
         )
 
-        orch = _make_orchestrator(state, runtime, workflow=self.MERGE_WORKFLOW, pr_manager=None)
+        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=None)
         # Should not crash — merge is a no-op
         orch.run_cycle()
         # Task stays in its current state since merge was a no-op

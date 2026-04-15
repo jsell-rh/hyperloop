@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from typer.testing import CliRunner
@@ -12,6 +13,13 @@ if TYPE_CHECKING:
 from hyperloop.cli import app
 
 runner = CliRunner()
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes so assertions match regardless of color env."""
+    return _ANSI_RE.sub("", text)
 
 
 class TestHelpCommand:
@@ -27,10 +35,11 @@ class TestHelpCommand:
 
     def test_run_help_shows_options(self) -> None:
         result = runner.invoke(app, ["run", "--help"])
+        output = _strip_ansi(result.output)
         assert result.exit_code == 0
-        assert "--repo" in result.output
-        assert "--dry-run" in result.output
-        assert "--config" in result.output
+        assert "--repo" in output
+        assert "--dry-run" in output
+        assert "--config" in output
 
 
 class TestDryRun:

@@ -38,7 +38,7 @@ from hyperloop.domain.pipeline import (
 
 if TYPE_CHECKING:
     from hyperloop.compose import PromptComposer
-    from hyperloop.domain.model import PipelineStep, Task, WorkerResult, Workflow
+    from hyperloop.domain.model import PipelineStep, Process, Task, WorkerResult
     from hyperloop.ports.pr import PRPort
     from hyperloop.ports.runtime import Runtime
     from hyperloop.ports.state import StateStore
@@ -66,7 +66,7 @@ class Orchestrator:
         self,
         state: StateStore,
         runtime: Runtime,
-        workflow: Workflow,
+        process: Process,
         max_workers: int = 6,
         max_rounds: int = 50,
         pr_manager: PRPort | None = None,
@@ -74,7 +74,7 @@ class Orchestrator:
     ) -> None:
         self._state = state
         self._runtime = runtime
-        self._workflow = workflow
+        self._process = process
         self._max_workers = max_workers
         self._max_rounds = max_rounds
         self._pr_manager = pr_manager
@@ -126,7 +126,7 @@ class Orchestrator:
 
         Returns a halt reason string if the loop should stop, or None to continue.
         """
-        executor = PipelineExecutor(self._workflow.pipeline)
+        executor = PipelineExecutor(self._process.pipeline)
 
         # Cache world snapshot once per cycle — augmented with worker state
         world = self._build_world()

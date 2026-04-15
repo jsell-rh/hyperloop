@@ -9,6 +9,7 @@ from hyperloop.domain.model import (
     MergePR,
     Phase,
     PipelineStep,
+    Process,
     ReapWorker,
     RoleStep,
     RunPM,
@@ -20,7 +21,6 @@ from hyperloop.domain.model import (
     WorkerHandle,
     WorkerResult,
     WorkerState,
-    Workflow,
     World,
 )
 
@@ -208,9 +208,9 @@ class TestPipelineStep:
             assert isinstance(step, RoleStep | GateStep | LoopStep | ActionStep)
 
 
-class TestWorkflow:
+class TestProcess:
     def test_creation(self):
-        workflow = Workflow(
+        process = Process(
             name="default",
             intake=(RoleStep(role="pm", on_pass=None, on_fail=None),),
             pipeline=(
@@ -223,26 +223,26 @@ class TestWorkflow:
                 ActionStep(action="merge-pr"),
             ),
         )
-        assert workflow.name == "default"
-        assert len(workflow.intake) == 1
-        assert len(workflow.pipeline) == 2
-        assert isinstance(workflow.pipeline[0], LoopStep)
-        assert isinstance(workflow.pipeline[1], ActionStep)
+        assert process.name == "default"
+        assert len(process.intake) == 1
+        assert len(process.pipeline) == 2
+        assert isinstance(process.pipeline[0], LoopStep)
+        assert isinstance(process.pipeline[1], ActionStep)
 
     def test_nested_loop_structure(self):
-        """Workflow with a loop containing role steps matches the spec example."""
+        """Process with a loop containing role steps matches the spec example."""
         inner_loop = LoopStep(
             steps=(
                 RoleStep(role="implementer", on_pass=None, on_fail=None),
                 RoleStep(role="verifier", on_pass=None, on_fail=None),
             )
         )
-        workflow = Workflow(
+        process = Process(
             name="complex",
             intake=(),
             pipeline=(inner_loop, ActionStep(action="merge-pr")),
         )
-        loop = workflow.pipeline[0]
+        loop = process.pipeline[0]
         assert isinstance(loop, LoopStep)
         assert loop.steps[0] == RoleStep(role="implementer", on_pass=None, on_fail=None)
         assert loop.steps[1] == RoleStep(role="verifier", on_pass=None, on_fail=None)

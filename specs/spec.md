@@ -56,12 +56,12 @@ Written by the worker on its branch (local) or via annotations (ambient). The on
 }
 ```
 
-### Workflow
+### Process
 
 Defines the pipelines work moves through. Ships with a default; projects overlay it.
 
 ```yaml
-kind: Workflow
+kind: Process
 name: default
 
 intake:
@@ -74,7 +74,7 @@ pipeline:
   - action: merge-pr
 ```
 
-Two pipelines in one workflow:
+Two pipelines in one process:
 
 - **intake** runs at project level, serially on trunk. Creates tasks from specs (or Jira, or whatever the intake role does). Runs periodically or on-demand, not per-task.
 - **pipeline** runs per-task. Workers run in parallel on branches. Processes each task through implementation, review, and merge.
@@ -106,7 +106,7 @@ The gate interface is transparent to the signal source, but v1 supports only **P
 
 When the orchestrator sees the `lgtm` label, the gate clears and the task advances to the next pipeline step. The label is then removed to prevent re-triggering.
 
-Future signal sources (webhooks, CI status, ambient annotations) can be added behind the same interface without changing the workflow yaml.
+Future signal sources (webhooks, CI status, ambient annotations) can be added behind the same interface without changing the process yaml.
 
 ### Agent Definition
 
@@ -212,9 +212,9 @@ patches:
       kind: Agent
       name: verifier
 
-  - path: workflow-patch.yaml
+  - path: process-patch.yaml
     target:
-      kind: Workflow
+      kind: Process
       name: default
 ```
 
@@ -474,7 +474,7 @@ max_rebase_attempts: 3
 uvx hyperloop --repo owner/repo --branch main
 ```
 
-Base prompts, default workflow, no overlay.
+Base prompts, default process, no overlay.
 
 **Level 1 — config file, no overlay:**
 
@@ -514,8 +514,8 @@ Agent definitions managed centrally across multiple target repos.
 hyperloop/
 ├── specs/
 │   └── spec.md              ← this file
-├── base/                    ← base agent + workflow definitions
-│   ├── workflow.yaml          referenced by gitops repos via kustomize remote resource
+├── base/                    ← base agent + process definitions
+│   ├── process.yaml           referenced by gitops repos via kustomize remote resource
 │   ├── implementer.yaml       (github.com/org/hyperloop//base?ref=v1.2.0)
 │   ├── verifier.yaml
 │   ├── process-improver.yaml
@@ -548,7 +548,7 @@ target-repo/
 ├── .hyperloop/           ← optional: in-repo overlay (level 2 adoption)
 │   └── agents/
 │       ├── implementer-patch.yaml
-│       └── workflow-patch.yaml
+│       └── process-patch.yaml
 └── specs/
     ├── *.md                  ← product specs (human-written, referenced by spec_ref)
     ├── tasks/                ← task files (orchestrator writes status + findings)
@@ -562,7 +562,7 @@ target-repo/
 project-gitops/
 └── overlays/{project}/
     ├── kustomization.yaml            ← references hyperloop//base as remote resource
-    ├── workflow-patch.yaml           ← replaces pipeline list
+    ├── process-patch.yaml            ← replaces pipeline list
     ├── implementer-patch.yaml        ← injects persona
     ├── verifier-patch.yaml
     └── process-improver-patch.yaml

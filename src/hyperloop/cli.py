@@ -25,7 +25,7 @@ console = Console()
 
 @app.callback()
 def main() -> None:
-    """AI agent orchestrator for composable workflow pipelines."""
+    """AI agent orchestrator for composable process pipelines."""
 
 
 def _config_table(cfg: Config) -> Table:
@@ -118,11 +118,11 @@ def run(
     # 5. Construct runtime and state store, run loop
     from hyperloop.adapters.git_state import GitStateStore
     from hyperloop.adapters.local import LocalRuntime
-    from hyperloop.domain.model import ActionStep, LoopStep, RoleStep, Workflow
+    from hyperloop.domain.model import ActionStep, LoopStep, Process, RoleStep
     from hyperloop.loop import Orchestrator
 
-    # Default workflow: loop(implementer, verifier) -> merge-pr
-    default_workflow = Workflow(
+    # Default process: loop(implementer, verifier) -> merge-pr
+    default_process = Process(
         name="default",
         intake=(),
         pipeline=(
@@ -143,7 +143,7 @@ def run(
     orchestrator = Orchestrator(
         state=state,
         runtime=runtime,
-        workflow=default_workflow,
+        process=default_process,
         max_workers=cfg.max_workers,
         max_rounds=cfg.max_rounds,
     )

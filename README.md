@@ -1,6 +1,6 @@
 # hyperloop
 
-Walks tasks through composable workflow pipelines using AI agents. You write specs, it creates tasks, implements them, verifies the work, and merges PRs.
+Walks tasks through composable process pipelines using AI agents. You write specs, it creates tasks, implements them, verifies the work, and merges PRs.
 
 ## Prerequisites
 
@@ -113,7 +113,7 @@ your-repo/
 ├── .hyperloop/
 │   └── agents/
 │       ├── implementer-patch.yaml
-│       └── workflow-patch.yaml
+│       └── process-patch.yaml
 └── specs/
 ```
 
@@ -149,21 +149,21 @@ patches:
     target:
       kind: Agent
       name: implementer
-  - path: workflow-patch.yaml
+  - path: process-patch.yaml
     target:
-      kind: Workflow
+      kind: Process
       name: default
 ```
 
 This pins the base version and lets you upgrade across all repos by bumping the ref.
 
-## Custom Workflows
+## Custom Processes
 
-The default pipeline is: implement, verify, merge. Override it by patching the workflow:
+The default pipeline is: implement, verify, merge. Override it by patching the process:
 
 ```yaml
-# workflow-patch.yaml
-kind: Workflow
+# process-patch.yaml
+kind: Process
 name: default
 
 pipeline:

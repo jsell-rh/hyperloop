@@ -1,6 +1,6 @@
 # hyperloop
 
-An orchestrator that walks tasks through composable workflow pipelines using AI agents.
+An orchestrator that walks tasks through composable process pipelines using AI agents.
 
 ## Quick Start
 
@@ -18,7 +18,7 @@ Hexagonal (ports & adapters). Domain logic has zero I/O dependencies.
 ```
 src/hyperloop/
 ├── domain/           ← pure logic, no I/O, no framework imports
-│   ├── model.py      ← Task, WorkerResult, Workflow, Pipeline (value objects/entities)
+│   ├── model.py      ← Task, WorkerResult, Process, Pipeline (value objects/entities)
 │   ├── decide.py     ← decide(world) → Action[] (pure function)
 │   └── pipeline.py   ← pipeline executor (recursive, handles loops)
 ├── ports/            ← interfaces only (Protocol classes)
@@ -76,7 +76,7 @@ Every function signature, every variable where the type isn't obvious. Use `Prot
 
 The domain model (`domain/`) is the heart. It contains:
 - **Value objects**: `TaskStatus`, `Phase`, `Verdict`, `WorkerResult`
-- **Entities**: `Task`, `Workflow`
+- **Entities**: `Task`, `Process`
 - **Pure functions**: `decide()`, `run_pipeline()`
 
 These have no dependencies on frameworks, I/O, or infrastructure. They are tested directly, without fakes, because they are pure.
