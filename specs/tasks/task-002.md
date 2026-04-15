@@ -5,7 +5,7 @@ spec_ref: specs/spec.md
 status: in-progress
 phase: implementer
 deps: []
-round: 0
+round: 1
 branch: null
 pr: null
 ---
@@ -78,3 +78,4 @@ TDD: write failing tests first.
 Do not use mocks; use `InMemoryStateStore` and `FakeRuntime` as appropriate.
 
 ## Findings
+Worker result file not found

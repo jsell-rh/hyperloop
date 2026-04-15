@@ -5,7 +5,7 @@ spec_ref: specs/spec.md
 status: in-progress
 phase: implementer
 deps: []
-round: 0
+round: 1
 branch: null
 pr: null
 ---
@@ -83,3 +83,4 @@ TDD. The fake runtime must be tested via the same contract tests that cover `Loc
 Do not mock the ambient platform SDK in unit tests; use the fake instead.
 
 ## Findings
+Worker result file not found
