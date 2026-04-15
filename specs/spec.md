@@ -4,7 +4,7 @@ An orchestrator that turns a backlog of tasks into completed, merged work using 
 
 ## Core Concepts
 
-**The orchestrator has one job:** walk each task through a workflow pipeline until it reaches a terminal action (e.g. merge). It does not implement, review, or fix code. It spawns agents that do, reads their verdicts, and advances the pipeline.
+**The orchestrator has one job:** walk each task through a process pipeline until it reaches a terminal action (e.g. merge). It does not implement, review, or fix code. It spawns agents that do, reads their verdicts, and advances the pipeline.
 
 **Three concerns, separated:**
 
