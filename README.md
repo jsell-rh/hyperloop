@@ -234,8 +234,10 @@ observability:
 
   matrix:                          # optional — omit entire section to disable
     homeserver: https://matrix.example.com
-    room_id: "!abc123:example.com"
-    token_env: MATRIX_ACCESS_TOKEN  # env var holding the access token
+    registration_token_env: MATRIX_REGISTRATION_TOKEN  # env var — auto-registers bot + creates room
+    # bot_username: hyperloop-bot  # override default (hyperloop-{repo_name})
+    # room_id: "!abc123:example.com"   # override auto-created room
+    # token_env: MATRIX_ACCESS_TOKEN   # override auto-registered token
     verbose: false                 # true: send worker_spawned, cycle_completed, etc.
 ```
 
@@ -260,19 +262,33 @@ JSON mode (`log_format: json`):
 
 Send real-time status updates to a [Matrix](https://matrix.org/) room. Each task's messages are threaded together.
 
-1. Create a Matrix access token for a bot account on your homeserver.
-2. Set the token in an environment variable:
-   ```bash
-   export MATRIX_ACCESS_TOKEN=syt_your_token_here
-   ```
-3. Add the Matrix section to `.hyperloop.yaml`:
-   ```yaml
-   observability:
-     matrix:
-       homeserver: https://matrix.example.com
-       room_id: "!roomid:example.com"
-       token_env: MATRIX_ACCESS_TOKEN
-   ```
+**Quickstart (auto-setup):** Just provide a homeserver and a registration token. Hyperloop registers a bot user and creates a room automatically:
+
+```bash
+export MATRIX_REGISTRATION_TOKEN=your_synapse_registration_token
+```
+```yaml
+# .hyperloop.yaml
+observability:
+  matrix:
+    homeserver: https://matrix.example.com
+    registration_token_env: MATRIX_REGISTRATION_TOKEN
+```
+
+Credentials and room ID are cached in `.hyperloop/matrix-state.json` (gitignored) so registration only happens once.
+
+**Manual setup:** If you already have a bot account and room, provide them directly:
+
+```bash
+export MATRIX_ACCESS_TOKEN=syt_your_token_here
+```
+```yaml
+observability:
+  matrix:
+    homeserver: https://matrix.example.com
+    room_id: "!abc123:example.com"
+    token_env: MATRIX_ACCESS_TOKEN
+```
 
 High-signal events are always sent (worker results, task completions/failures, merge outcomes, orchestrator halt). Set `verbose: true` to also see worker spawns, cycle completions, and intake runs. Noisy events (cycle starts, gate polls, phase transitions) are never sent to Matrix.
 

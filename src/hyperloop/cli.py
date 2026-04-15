@@ -95,11 +95,12 @@ def _make_composer(cfg: Config, state: StateStore) -> tuple[PromptComposer, Proc
     return PromptComposer.load_from_kustomize(cfg.overlay, state, base_ref=cfg.base_ref)
 
 
-def _build_probe(obs_cfg: ObservabilityConfig) -> OrchestratorProbe:
+def _build_probe(obs_cfg: ObservabilityConfig, repo_path: Path) -> OrchestratorProbe:
     """Construct an OrchestratorProbe from observability config.
 
     Always includes a StructlogProbe. Optionally adds a MatrixProbe if
-    Matrix config is present and the access token is set.
+    Matrix config is present and credentials can be resolved (explicit
+    token, cached credentials, or auto-registration).
     """
     from hyperloop.adapters.probe import MultiProbe
     from hyperloop.adapters.structlog_probe import StructlogProbe
@@ -110,17 +111,16 @@ def _build_probe(obs_cfg: ObservabilityConfig) -> OrchestratorProbe:
     probes: list[OrchestratorProbe] = [StructlogProbe()]
 
     if obs_cfg.matrix is not None:
-        import os
-
         from hyperloop.adapters.matrix_probe import MatrixProbe
+        from hyperloop.adapters.matrix_setup import ensure_matrix_ready
 
-        token = os.environ.get(obs_cfg.matrix.token_env)
-        if token:
+        access_token, room_id = ensure_matrix_ready(obs_cfg.matrix, repo_path)
+        if access_token and room_id:
             probes.append(
                 MatrixProbe(
                     homeserver=obs_cfg.matrix.homeserver,
-                    room_id=obs_cfg.matrix.room_id,
-                    access_token=token,
+                    room_id=room_id,
+                    access_token=access_token,
                     verbose=obs_cfg.matrix.verbose,
                 )
             )
@@ -246,7 +246,7 @@ def run(
     # Build observability probe
     obs_cfg = getattr(cfg, "observability", None)
     if obs_cfg is not None:
-        probe = _build_probe(obs_cfg)
+        probe = _build_probe(obs_cfg, repo_path)
     else:
         from hyperloop.adapters.probe import NullProbe
 

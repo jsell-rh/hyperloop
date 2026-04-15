@@ -30,6 +30,8 @@ class MatrixConfig:
     room_id: str
     token_env: str
     verbose: bool
+    registration_token_env: str  # env var holding the registration token
+    bot_username: str
 
 
 @dataclass(frozen=True)
@@ -141,6 +143,8 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
             flat["matrix_room_id"] = mx.get("room_id", "")
             flat["matrix_token_env"] = mx.get("token_env", "")
             flat["matrix_verbose"] = mx.get("verbose", False)
+            flat["matrix_registration_token_env"] = mx.get("registration_token_env", "")
+            flat["matrix_bot_username"] = mx.get("bot_username", "")
 
     return flat
 
@@ -195,14 +199,16 @@ def load_config(
     # Build ObservabilityConfig
     matrix_cfg: MatrixConfig | None = None
     homeserver = str(values.get("matrix_homeserver", ""))
-    room_id = str(values.get("matrix_room_id", ""))
     token_env = str(values.get("matrix_token_env", ""))
-    if homeserver and room_id and token_env:
+    registration_token_env = str(values.get("matrix_registration_token_env", ""))
+    if homeserver and (token_env or registration_token_env):
         matrix_cfg = MatrixConfig(
             homeserver=homeserver,
-            room_id=room_id,
+            room_id=str(values.get("matrix_room_id", "")),
             token_env=token_env,
             verbose=bool(values.get("matrix_verbose", False)),
+            registration_token_env=registration_token_env,
+            bot_username=str(values.get("matrix_bot_username", "")),
         )
 
     obs_cfg = ObservabilityConfig(
