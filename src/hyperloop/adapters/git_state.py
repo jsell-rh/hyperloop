@@ -208,10 +208,18 @@ class GitStateStore:
 
     def read_file(self, path: str) -> str | None:
         """Read a file from the repo. Returns None if it does not exist."""
+        if not path:
+            return None
         file_path = self._repo / path
-        if not file_path.exists():
+        if not file_path.is_file():
             return None
         return file_path.read_text()
+
+    def set_task_branch(self, task_id: str, branch: str) -> None:
+        """Set the branch name on a task file."""
+        fm, body = self._read_task_file(task_id)
+        fm["branch"] = branch
+        self._write_task_file(task_id, fm, body)
 
     def set_task_pr(self, task_id: str, pr_url: str) -> None:
         """Set the PR URL on a task file."""

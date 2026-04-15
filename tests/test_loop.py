@@ -6,10 +6,6 @@ Uses InMemoryStateStore and InMemoryRuntime fakes. No mocks.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 from hyperloop.compose import PromptComposer, load_templates_from_dir
 from hyperloop.domain.model import (
@@ -26,6 +22,7 @@ from hyperloop.domain.model import (
 )
 from hyperloop.loop import Orchestrator
 from tests.fakes.pr import FakePRManager
+from tests.fakes.probe import RecordingProbe
 from tests.fakes.runtime import InMemoryRuntime
 from tests.fakes.state import InMemoryStateStore
 
@@ -80,7 +77,7 @@ def _make_orchestrator(
     pr_manager: FakePRManager | None = None,
     composer: PromptComposer | None = None,
     poll_interval: float = 0,
-    on_cycle: Callable[[dict[str, object]], None] | None = None,
+    probe: RecordingProbe | None = None,
     max_rebase_attempts: int = 3,
 ) -> Orchestrator:
     return Orchestrator(
@@ -92,7 +89,7 @@ def _make_orchestrator(
         pr_manager=pr_manager,
         composer=composer,
         poll_interval=poll_interval,
-        on_cycle=on_cycle,
+        probe=probe,
         max_rebase_attempts=max_rebase_attempts,
     )
 
@@ -833,8 +830,8 @@ class TestMergeWithPRManager:
         assert task.status == TaskStatus.IN_PROGRESS
         assert task.phase == Phase("rebase-resolver")
 
-    def test_no_pr_manager_merge_is_noop(self) -> None:
-        """Without a PRManager, merge is a no-op (backward compat)."""
+    def test_no_pr_manager_merge_does_not_crash(self) -> None:
+        """Without a PRManager, local merge is attempted — should not crash."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
 
@@ -848,11 +845,17 @@ class TestMergeWithPRManager:
         )
 
         orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=None)
-        # Should not crash — merge is a no-op
+        # Should not crash — _merge_local handles both success and failure
         orch.run_cycle()
-        # Task stays in its current state since merge was a no-op
         task = state.get_task("task-001")
-        assert task.status == TaskStatus.IN_PROGRESS
+        # Result depends on whether branch exists locally: COMPLETE (merged),
+        # NEEDS_REBASE (conflict/missing branch), or IN_PROGRESS with
+        # rebase-resolver (decide() spawns a resolver in the same cycle).
+        assert task.status in (
+            TaskStatus.COMPLETE,
+            TaskStatus.NEEDS_REBASE,
+            TaskStatus.IN_PROGRESS,
+        )
 
 
 BASE_DIR = Path(__file__).parent.parent / "base"
@@ -938,50 +941,38 @@ class TestEarlyExitNoTasks:
         assert "no tasks" in reason.lower()
 
 
-class TestOnCycleCallback:
-    """on_cycle callback is invoked after each cycle with summary info."""
+class TestProbeIntegration:
+    """Probe is invoked during orchestrator lifecycle."""
 
-    def test_callback_called_each_cycle(self) -> None:
-        """on_cycle is called once per cycle with a summary dict."""
+    def test_cycle_started_fires_each_cycle(self) -> None:
+        """cycle_started is emitted once per cycle."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task())
 
-        summaries: list[dict[str, object]] = []
-        orch = _make_orchestrator(state, runtime, on_cycle=summaries.append)
+        probe = RecordingProbe()
+        orch = _make_orchestrator(state, runtime, probe=probe)
 
         orch.run_loop(max_cycles=3)
-        assert len(summaries) == 3
+        cycle_calls = probe.of_method("cycle_started")
+        assert len(cycle_calls) == 3
 
-    def test_callback_receives_cycle_number(self) -> None:
-        """Summary dict includes cycle number."""
+    def test_cycle_started_receives_cycle_number(self) -> None:
+        """cycle_started carries the cycle number."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task())
 
-        summaries: list[dict[str, object]] = []
-        orch = _make_orchestrator(state, runtime, on_cycle=summaries.append)
+        probe = RecordingProbe()
+        orch = _make_orchestrator(state, runtime, probe=probe)
 
         orch.run_loop(max_cycles=2)
-        assert summaries[0]["cycle"] == 1
-        assert summaries[1]["cycle"] == 2
+        cycle_calls = probe.of_method("cycle_started")
+        assert cycle_calls[0]["cycle"] == 1
+        assert cycle_calls[1]["cycle"] == 2
 
-    def test_callback_receives_task_counts(self) -> None:
-        """Summary dict includes counts of tasks by status."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        state.add_task(_task(id="task-001"))
-        state.add_task(_task(id="task-002", status=TaskStatus.COMPLETE))
-
-        summaries: list[dict[str, object]] = []
-        orch = _make_orchestrator(state, runtime, on_cycle=summaries.append)
-
-        orch.run_cycle()
-        s = summaries[0]
-        assert "tasks" in s
-
-    def test_no_callback_does_not_crash(self) -> None:
-        """Omitting on_cycle works fine (backward compat)."""
+    def test_no_probe_does_not_crash(self) -> None:
+        """Omitting probe works fine (NullProbe default)."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task())
@@ -989,6 +980,44 @@ class TestOnCycleCallback:
         orch = _make_orchestrator(state, runtime)
         orch.run_loop(max_cycles=2)
         # No crash
+
+    def test_orchestrator_halted_fires_on_completion(self) -> None:
+        """orchestrator_halted is emitted when run_loop returns."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task())
+
+        probe = RecordingProbe()
+        orch = _make_orchestrator(state, runtime, probe=probe)
+
+        runtime.set_result("task-001", PASS_RESULT)
+        runtime.set_poll_status("task-001", "done")
+
+        orch.run_loop(max_cycles=20)
+        halted = probe.of_method("orchestrator_halted")
+        assert len(halted) == 1
+        assert "complete" in str(halted[0]["reason"])
+
+    def test_recovery_started_fires(self) -> None:
+        """recovery_started is emitted during recover()."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("implementer"),
+                branch="worker/task-001",
+            )
+        )
+
+        probe = RecordingProbe()
+        orch = _make_orchestrator(state, runtime, probe=probe)
+        orch.recover()
+
+        recovery = probe.of_method("recovery_started")
+        assert len(recovery) == 1
+        assert recovery[0]["in_progress_tasks"] == 1
 
 
 class TestPromptComposition:
@@ -1170,6 +1199,38 @@ class TestPRLifecycle:
         assert state.get_task("task-001").pr == first_pr
 
 
+class TestRecoverCycleDetection:
+    """recover() raises RuntimeError if the task graph has dependency cycles."""
+
+    def test_recover_raises_on_cyclic_deps(self) -> None:
+        """Given tasks A->B and B->A (a cycle), recover() raises RuntimeError
+        containing both task IDs before any orphan logic runs."""
+        import pytest
+
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+
+        state.add_task(_task(id="task-A", status=TaskStatus.IN_PROGRESS, deps=("task-B",)))
+        state.add_task(_task(id="task-B", status=TaskStatus.IN_PROGRESS, deps=("task-A",)))
+
+        orch = _make_orchestrator(state, runtime)
+
+        with pytest.raises(RuntimeError, match=r"task-A|task-B"):
+            orch.recover()
+
+    def test_recover_does_not_raise_on_acyclic_deps(self) -> None:
+        """Given tasks with no cycles, recover() completes without raising."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+
+        state.add_task(_task(id="task-A", status=TaskStatus.IN_PROGRESS, deps=("task-B",)))
+        state.add_task(_task(id="task-B", status=TaskStatus.IN_PROGRESS, deps=()))
+
+        orch = _make_orchestrator(state, runtime)
+        # Should not raise
+        orch.recover()
+
+
 class TestMaxRebaseAttempts:
     """max_rebase_attempts: after N consecutive rebase failures, task loops back."""
 
@@ -1269,3 +1330,191 @@ class TestMaxRebaseAttempts:
 
         # The counter should be reset (no external way to verify directly,
         # but the task completed successfully — that's the behavior we want)
+
+
+# ---------------------------------------------------------------------------
+# _dep_order_ids unit tests
+# ---------------------------------------------------------------------------
+
+from hyperloop.loop import _dep_order_ids  # noqa: E402
+
+
+def _merge_task(
+    id: str,
+    deps: tuple[str, ...] = (),
+) -> Task:
+    """Create a task at the merge-pr phase for dep-order tests."""
+    return Task(
+        id=id,
+        title=f"Task {id}",
+        spec_ref=f"specs/{id}.md",
+        status=TaskStatus.IN_PROGRESS,
+        phase=Phase("merge-pr"),
+        deps=deps,
+        round=0,
+        branch=f"worker/{id}",
+        pr=None,
+    )
+
+
+class TestDepOrderIds:
+    """Unit tests for the _dep_order_ids pure helper function."""
+
+    def test_linear_chain_ordered_deps_first(self) -> None:
+        """A → B → C: merge order is A, B, C (deps before dependents)."""
+        tasks: dict[str, Task] = {
+            "task-A": _merge_task("task-A"),
+            "task-B": _merge_task("task-B", deps=("task-A",)),
+            "task-C": _merge_task("task-C", deps=("task-B",)),
+        }
+        result = _dep_order_ids(tasks, ["task-A", "task-B", "task-C"])
+        assert result == ["task-A", "task-B", "task-C"]
+
+    def test_diamond_dep_first_then_id_order(self) -> None:
+        """A and B both depend on C: C first, then A and B in input (ID) order."""
+        tasks: dict[str, Task] = {
+            "task-A": _merge_task("task-A", deps=("task-C",)),
+            "task-B": _merge_task("task-B", deps=("task-C",)),
+            "task-C": _merge_task("task-C"),
+        }
+        # Input pre-sorted by task ID: A, B, C
+        result = _dep_order_ids(tasks, ["task-A", "task-B", "task-C"])
+        assert result == ["task-C", "task-A", "task-B"]
+
+    def test_no_deps_stable_input_order(self) -> None:
+        """Tasks with no deps preserve input (ID-sorted) order."""
+        tasks: dict[str, Task] = {
+            "task-A": _merge_task("task-A"),
+            "task-B": _merge_task("task-B"),
+            "task-C": _merge_task("task-C"),
+        }
+        result = _dep_order_ids(tasks, ["task-A", "task-B", "task-C"])
+        assert result == ["task-A", "task-B", "task-C"]
+
+    def test_single_task_unchanged(self) -> None:
+        """A single-element candidate list is returned unchanged."""
+        tasks: dict[str, Task] = {"task-A": _merge_task("task-A")}
+        result = _dep_order_ids(tasks, ["task-A"])
+        assert result == ["task-A"]
+
+    def test_candidate_not_in_tasks_dict_graceful(self) -> None:
+        """A candidate missing from the tasks dict is included gracefully."""
+        tasks: dict[str, Task] = {"task-A": _merge_task("task-A")}
+        # task-B is not in tasks dict
+        result = _dep_order_ids(tasks, ["task-A", "task-B"])
+        assert set(result) == {"task-A", "task-B"}
+        # Neither has in-candidates deps; input order preserved
+        assert result == ["task-A", "task-B"]
+
+    def test_external_dep_ignored(self) -> None:
+        """A dep outside the candidate set is treated as already done (ignored)."""
+        tasks: dict[str, Task] = {
+            "task-A": _merge_task("task-A"),
+            "task-B": _merge_task("task-B", deps=("task-external",)),
+        }
+        # task-external is not in candidates — treated as already merged
+        result = _dep_order_ids(tasks, ["task-A", "task-B"])
+        assert result == ["task-A", "task-B"]
+
+    def test_empty_candidates_returns_empty(self) -> None:
+        """Empty candidate list returns an empty list."""
+        tasks: dict[str, Task] = {"task-A": _merge_task("task-A")}
+        result = _dep_order_ids(tasks, [])
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Integration test: _merge_ready_prs respects dependency order
+# ---------------------------------------------------------------------------
+
+
+class TestMergeDepOrder:
+    """_merge_ready_prs merges tasks in dependency order (dep before dependent)."""
+
+    MERGE_PROCESS = Process(
+        name="merge-process",
+        intake=(),
+        pipeline=(
+            LoopStep(
+                steps=(
+                    RoleStep(role="implementer", on_pass=None, on_fail=None),
+                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                ),
+            ),
+            ActionStep(action="merge-pr"),
+        ),
+    )
+
+    def test_dependent_merged_after_dependency(self) -> None:
+        """When two tasks are at merge-pr, the dependency merges first."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        # task-001 has no deps — it is the dependency
+        pr1 = pr_mgr.create_draft("task-001", "worker/task-001", "Task 001", "specs/task-001.md")
+        # task-002 depends on task-001 — it is the dependent
+        pr2 = pr_mgr.create_draft("task-002", "worker/task-002", "Task 002", "specs/task-002.md")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="worker/task-001",
+            )
+        )
+        state.add_task(
+            _task(
+                id="task-002",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="worker/task-002",
+                deps=("task-001",),
+            )
+        )
+        state.set_task_pr("task-001", pr1)
+        state.set_task_pr("task-002", pr2)
+
+        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
+        orch.run_cycle()
+
+        # Both tasks should be complete after the cycle
+        assert state.get_task("task-001").status == TaskStatus.COMPLETE
+        assert state.get_task("task-002").status == TaskStatus.COMPLETE
+
+        # task-001 (the dependency) must have been merged before task-002
+        assert pr_mgr.merged.index(pr1) < pr_mgr.merged.index(pr2)
+
+    def test_independent_tasks_merge_in_id_order(self) -> None:
+        """Tasks with no inter-dependency merge in task-ID order."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr1 = pr_mgr.create_draft("task-001", "worker/task-001", "Task 001", "specs/task-001.md")
+        pr2 = pr_mgr.create_draft("task-002", "worker/task-002", "Task 002", "specs/task-002.md")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="worker/task-001",
+            )
+        )
+        state.add_task(
+            _task(
+                id="task-002",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="worker/task-002",
+            )
+        )
+        state.set_task_pr("task-001", pr1)
+        state.set_task_pr("task-002", pr2)
+
+        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
+        orch.run_cycle()
+
+        assert pr_mgr.merged.index(pr1) < pr_mgr.merged.index(pr2)

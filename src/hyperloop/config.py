@@ -23,6 +23,25 @@ class ConfigError(Exception):
 
 
 @dataclass(frozen=True)
+class MatrixConfig:
+    """Matrix notification sink configuration."""
+
+    homeserver: str
+    room_id: str
+    token_env: str
+    verbose: bool
+
+
+@dataclass(frozen=True)
+class ObservabilityConfig:
+    """Observability configuration — log format/level and optional Matrix sink."""
+
+    log_format: str  # "console" | "json"
+    log_level: str  # "debug" | "info" | "warning" | "error"
+    matrix: MatrixConfig | None
+
+
+@dataclass(frozen=True)
 class Config:
     """Typed, immutable configuration for the orchestrator."""
 
@@ -39,6 +58,9 @@ class Config:
     poll_interval: int  # default: 30
     max_rounds: int  # default: 50
     max_rebase_attempts: int  # default: 3
+    observability: ObservabilityConfig = ObservabilityConfig(
+        log_format="console", log_level="info", matrix=None
+    )
 
 
 def _defaults() -> dict[str, object]:
@@ -57,6 +79,8 @@ def _defaults() -> dict[str, object]:
         "poll_interval": 30,
         "max_rounds": 50,
         "max_rebase_attempts": 3,
+        "log_format": "console",
+        "log_level": "info",
     }
 
 
@@ -99,6 +123,22 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
             flat["merge_strategy"] = merge["strategy"]
         if "delete_branch" in merge:
             flat["delete_branch"] = merge["delete_branch"]
+
+    # observability section
+    obs = raw.get("observability")
+    if isinstance(obs, dict):
+        obs_dict = cast("dict[str, object]", obs)
+        if "log_format" in obs_dict:
+            flat["log_format"] = obs_dict["log_format"]
+        if "log_level" in obs_dict:
+            flat["log_level"] = obs_dict["log_level"]
+        matrix_raw = obs_dict.get("matrix")
+        if isinstance(matrix_raw, dict):
+            mx = cast("dict[str, object]", matrix_raw)
+            flat["matrix_homeserver"] = mx.get("homeserver", "")
+            flat["matrix_room_id"] = mx.get("room_id", "")
+            flat["matrix_token_env"] = mx.get("token_env", "")
+            flat["matrix_verbose"] = mx.get("verbose", False)
 
     return flat
 
@@ -150,6 +190,22 @@ def load_config(
     if max_workers is not None:
         values["max_workers"] = max_workers
 
+    # Build ObservabilityConfig
+    matrix_cfg: MatrixConfig | None = None
+    if "matrix_homeserver" in values:
+        matrix_cfg = MatrixConfig(
+            homeserver=str(values["matrix_homeserver"]),
+            room_id=str(values["matrix_room_id"]),
+            token_env=str(values["matrix_token_env"]),
+            verbose=bool(values.get("matrix_verbose", False)),
+        )
+
+    obs_cfg = ObservabilityConfig(
+        log_format=str(values["log_format"]),
+        log_level=str(values["log_level"]),
+        matrix=matrix_cfg,
+    )
+
     return Config(
         repo=values["repo"],  # type: ignore[arg-type]
         base_branch=str(values["base_branch"]),
@@ -164,4 +220,5 @@ def load_config(
         poll_interval=int(values["poll_interval"]),  # type: ignore[arg-type]
         max_rounds=int(values["max_rounds"]),  # type: ignore[arg-type]
         max_rebase_attempts=int(values["max_rebase_attempts"]),  # type: ignore[arg-type]
+        observability=obs_cfg,
     )

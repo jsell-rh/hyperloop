@@ -53,6 +53,21 @@ class InMemoryStateStore:
             pr=pr_url,
         )
 
+    def set_task_branch(self, task_id: str, branch: str) -> None:
+        """Set the branch name on a task."""
+        old = self._tasks[task_id]
+        self._tasks[task_id] = Task(
+            id=old.id,
+            title=old.title,
+            spec_ref=old.spec_ref,
+            status=old.status,
+            phase=old.phase,
+            deps=old.deps,
+            round=old.round,
+            branch=branch,
+            pr=old.pr,
+        )
+
     # -- StateStore protocol ------------------------------------------------
 
     def get_world(self) -> World:

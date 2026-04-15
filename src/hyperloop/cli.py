@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 from importlib.metadata import version as pkg_version
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
@@ -16,6 +17,13 @@ from rich.panel import Panel
 from rich.table import Table
 
 from hyperloop.config import Config, ConfigError, load_config
+
+if TYPE_CHECKING:
+    from hyperloop.compose import PromptComposer
+    from hyperloop.config import ObservabilityConfig
+    from hyperloop.domain.model import Process
+    from hyperloop.ports.probe import OrchestratorProbe
+    from hyperloop.ports.state import StateStore
 
 app = typer.Typer(
     name="hyperloop",
@@ -67,7 +75,7 @@ def _config_table(cfg: Config) -> Table:
     return table
 
 
-def _make_composer(cfg: object, state: object) -> object:
+def _make_composer(cfg: Config, state: StateStore) -> tuple[PromptComposer, Process | None]:
     """Construct a PromptComposer via kustomize build.
 
     Runs ``kustomize build`` on the configured overlay (or the default
@@ -78,15 +86,48 @@ def _make_composer(cfg: object, state: object) -> object:
         state: StateStore instance for reading process overlays at spawn time.
 
     Returns:
-        A PromptComposer with resolved templates.
+        A tuple of (PromptComposer, Process | None).
     """
     from hyperloop.compose import PromptComposer, check_kustomize_available
 
     check_kustomize_available()
 
-    overlay = getattr(cfg, "overlay", None)
-    base_ref = getattr(cfg, "base_ref", "github.com/jsell-rh/hyperloop//base?ref=main")
-    return PromptComposer.from_kustomize(overlay, state, base_ref=base_ref)  # type: ignore[arg-type]
+    return PromptComposer.load_from_kustomize(cfg.overlay, state, base_ref=cfg.base_ref)
+
+
+def _build_probe(obs_cfg: ObservabilityConfig) -> OrchestratorProbe:
+    """Construct an OrchestratorProbe from observability config.
+
+    Always includes a StructlogProbe. Optionally adds a MatrixProbe if
+    Matrix config is present and the access token is set.
+    """
+    from hyperloop.adapters.probe import MultiProbe
+    from hyperloop.adapters.structlog_probe import StructlogProbe
+    from hyperloop.logging import configure_logging
+
+    configure_logging(log_format=obs_cfg.log_format, log_level=obs_cfg.log_level)
+
+    probes: list[OrchestratorProbe] = [StructlogProbe()]
+
+    if obs_cfg.matrix is not None:
+        import os
+
+        from hyperloop.adapters.matrix_probe import MatrixProbe
+
+        token = os.environ.get(obs_cfg.matrix.token_env)
+        if token:
+            probes.append(
+                MatrixProbe(
+                    homeserver=obs_cfg.matrix.homeserver,
+                    room_id=obs_cfg.matrix.room_id,
+                    access_token=token,
+                    verbose=obs_cfg.matrix.verbose,
+                )
+            )
+
+    if len(probes) == 1:
+        return probes[0]
+    return MultiProbe(tuple(probes))
 
 
 @app.command()
@@ -189,46 +230,42 @@ def run(
     runtime = LocalRuntime(repo_path=str(repo_path))
     serial_runner = SubprocessSerialRunner(repo_path=str(repo_path))
 
-    # Resolve agent definitions via kustomize build
-    composer = _make_composer(cfg, state)
+    pr_manager = None
+    if cfg.repo is not None:
+        from hyperloop.pr import PRManager
 
-    def _on_cycle(summary: dict[str, object]) -> None:
-        """Print a rich status line after each orchestrator cycle."""
-        cycle = summary.get("cycle", "?")
-        tasks = summary.get("tasks", {})
-        workers = summary.get("workers", 0)
-        halt = summary.get("halt_reason")
+        pr_manager = PRManager(
+            repo=cfg.repo,
+            delete_branch=cfg.delete_branch,
+        )
 
-        if isinstance(tasks, dict):
-            total = tasks.get("total", 0)
-            done = tasks.get("complete", 0)
-            in_prog = tasks.get("in_progress", 0)
-            failed = tasks.get("failed", 0)
-            task_str = (
-                f"[dim]{total} total[/dim]  "
-                f"[green]{done} done[/green]  "
-                f"[yellow]{in_prog} active[/yellow]  "
-                f"[red]{failed} failed[/red]"
-            )
-        else:
-            task_str = "[dim]unknown[/dim]"
+    # Resolve agent definitions and process via kustomize build
+    composer, parsed_process = _make_composer(cfg, state)
+    process = parsed_process if parsed_process is not None else default_process
 
-        status = f"[bold]cycle {cycle}[/bold]  tasks: {task_str}  workers: {workers}"
-        if halt:
-            status += f"  [bold]{halt}[/bold]"
-        console.print(status)
+    # Build observability probe
+    obs_cfg = getattr(cfg, "observability", None)
+    if obs_cfg is not None:
+        probe = _build_probe(obs_cfg)
+    else:
+        from hyperloop.adapters.probe import NullProbe
+
+        probe = NullProbe()
 
     orchestrator = Orchestrator(
         state=state,
         runtime=runtime,
-        process=default_process,
+        process=process,
         max_workers=cfg.max_workers,
         max_rounds=cfg.max_rounds,
+        pr_manager=pr_manager,
         composer=composer,
+        repo_path=str(repo_path),
         serial_runner=serial_runner,
         poll_interval=cfg.poll_interval,
-        on_cycle=_on_cycle,
+        probe=probe,
         max_rebase_attempts=cfg.max_rebase_attempts,
+        auto_merge=cfg.auto_merge,
     )
 
     # 6. Recover and run

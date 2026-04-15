@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from hyperloop.compose import AgentTemplate, PromptComposer, load_templates_from_dir
+from hyperloop.domain.model import ImprovementContext, IntakeContext, TaskContext
 from tests.fakes.state import InMemoryStateStore
 
 # The base/ dir lives at the repo root, adjacent to src/
@@ -49,12 +50,8 @@ class TestBasePromptOnly:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        result = composer.compose(
-            role="implementer",
-            task_id="task-001",
-            spec_ref="specs/widget.md",
-            findings="",
-        )
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        result = composer.compose(role="implementer", context=ctx)
 
         # Base prompt content should be present
         assert "You are a worker agent implementing a task" in result
@@ -63,12 +60,8 @@ class TestBasePromptOnly:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        result = composer.compose(
-            role="implementer",
-            task_id="task-001",
-            spec_ref="specs/widget.md",
-            findings="",
-        )
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        result = composer.compose(role="implementer", context=ctx)
 
         assert "Build a widget." in result
 
@@ -76,12 +69,8 @@ class TestBasePromptOnly:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        result = composer.compose(
-            role="implementer",
-            task_id="task-001",
-            spec_ref="specs/widget.md",
-            findings="",
-        )
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        result = composer.compose(role="implementer", context=ctx)
 
         # Should not have a findings section with content
         assert "## Findings" not in result or result.split("## Findings")[-1].strip() == ""
@@ -94,12 +83,8 @@ class TestTemplateVariables:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        result = composer.compose(
-            role="implementer",
-            task_id="task-027",
-            spec_ref="specs/persistence.md",
-            findings="",
-        )
+        ctx = TaskContext(task_id="task-027", spec_ref="specs/persistence.md", findings="")
+        result = composer.compose(role="implementer", context=ctx)
 
         assert "specs/persistence.md" in result
         assert "{spec_ref}" not in result
@@ -108,12 +93,8 @@ class TestTemplateVariables:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        result = composer.compose(
-            role="implementer",
-            task_id="task-027",
-            spec_ref="specs/persistence.md",
-            findings="",
-        )
+        ctx = TaskContext(task_id="task-027", spec_ref="specs/persistence.md", findings="")
+        result = composer.compose(role="implementer", context=ctx)
 
         assert "task-027" in result
         assert "{task_id}" not in result
@@ -129,12 +110,8 @@ class TestProcessOverlay:
 
         composer = PromptComposer(templates=_templates(), state=state)
 
-        result = composer.compose(
-            role="implementer",
-            task_id="task-001",
-            spec_ref="specs/widget.md",
-            findings="",
-        )
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        result = composer.compose(role="implementer", context=ctx)
 
         assert "Always run linter before submitting." in result
 
@@ -145,12 +122,8 @@ class TestProcessOverlay:
 
         composer = PromptComposer(templates=_templates(), state=state)
 
-        result = composer.compose(
-            role="implementer",
-            task_id="task-001",
-            spec_ref="specs/widget.md",
-            findings="",
-        )
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        result = composer.compose(role="implementer", context=ctx)
 
         # Should still have the base prompt
         assert "You are a worker agent implementing a task" in result
@@ -163,12 +136,12 @@ class TestFindings:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        result = composer.compose(
-            role="implementer",
+        ctx = TaskContext(
             task_id="task-001",
             spec_ref="specs/widget.md",
             findings="Test suite failed: missing null check in widget.py line 42",
         )
+        result = composer.compose(role="implementer", context=ctx)
 
         assert "Test suite failed: missing null check in widget.py line 42" in result
         assert "## Findings" in result
@@ -181,13 +154,9 @@ class TestUnknownRole:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
         with pytest.raises(ValueError, match=r"(?i)unknown.*role.*nonexistent"):
-            composer.compose(
-                role="nonexistent",
-                task_id="task-001",
-                spec_ref="specs/widget.md",
-                findings="",
-            )
+            composer.compose(role="nonexistent", context=ctx)
 
 
 class TestMissingSpecRef:
@@ -198,12 +167,8 @@ class TestMissingSpecRef:
         # No spec file set — spec_ref points to nothing
         composer = PromptComposer(templates=_templates(), state=state)
 
-        result = composer.compose(
-            role="implementer",
-            task_id="task-001",
-            spec_ref="specs/nonexistent.md",
-            findings="",
-        )
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/nonexistent.md", findings="")
+        result = composer.compose(role="implementer", context=ctx)
 
         # Should still compose with the base prompt
         assert "You are a worker agent implementing a task" in result
@@ -212,12 +177,8 @@ class TestMissingSpecRef:
         state = InMemoryStateStore()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        result = composer.compose(
-            role="implementer",
-            task_id="task-001",
-            spec_ref="specs/nonexistent.md",
-            findings="",
-        )
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/nonexistent.md", findings="")
+        result = composer.compose(role="implementer", context=ctx)
 
         # Should note that the spec file could not be read
         assert (
@@ -237,12 +198,16 @@ class TestAllRoles:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        result = composer.compose(
-            role=role,
-            task_id="task-001",
-            spec_ref="specs/widget.md",
-            findings="",
-        )
+        if role == "pm":
+            ctx: TaskContext | IntakeContext | ImprovementContext = IntakeContext(
+                unprocessed_specs=("specs/widget.md",)
+            )
+        elif role == "process-improver":
+            ctx = ImprovementContext(findings="Some findings")
+        else:
+            ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+
+        result = composer.compose(role=role, context=ctx)
 
         assert len(result) > 0
 
@@ -350,12 +315,8 @@ class TestKustomizeIntegration:
         state = _state_with_spec()
         composer = PromptComposer.from_kustomize(str(tmp_path), state)
 
-        result = composer.compose(
-            role="implementer",
-            task_id="task-001",
-            spec_ref="specs/widget.md",
-            findings="",
-        )
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        result = composer.compose(role="implementer", context=ctx)
         assert "You are a worker agent implementing a task" in result
 
     @pytest.mark.skipif(
@@ -371,12 +332,8 @@ class TestKustomizeIntegration:
         except RuntimeError:
             pytest.skip("Network unavailable — cannot fetch remote base")
 
-        result = composer.compose(
-            role="implementer",
-            task_id="task-001",
-            spec_ref="specs/widget.md",
-            findings="",
-        )
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        result = composer.compose(role="implementer", context=ctx)
         assert len(result) > 0
 
 
@@ -390,3 +347,276 @@ class TestCheckKustomize:
 
         with pytest.raises(SystemExit, match="kustomize CLI not found"):
             check_kustomize_available()
+
+
+class TestParseProcess:
+    """parse_process converts a multi-doc YAML string into Process domain objects."""
+
+    BASE_PROCESS_YAML = """\
+apiVersion: hyperloop.io/v1
+kind: Process
+metadata:
+  name: default
+
+intake:
+  - role: pm
+
+pipeline:
+  - loop:
+      - role: implementer
+      - role: verifier
+  - action: merge-pr
+"""
+
+    def test_base_process_yaml_produces_correct_process(self) -> None:
+        """parse_process on the base process.yaml produces correct Process with nested LoopStep."""
+        from hyperloop.compose import parse_process
+        from hyperloop.domain.model import ActionStep, LoopStep, Process, RoleStep
+
+        process = parse_process(self.BASE_PROCESS_YAML)
+
+        assert process is not None
+        assert isinstance(process, Process)
+        assert process.name == "default"
+
+        # intake: [role: pm]
+        assert len(process.intake) == 1
+        assert isinstance(process.intake[0], RoleStep)
+        assert process.intake[0].role == "pm"
+        assert process.intake[0].on_pass is None
+        assert process.intake[0].on_fail is None
+
+        # pipeline: [loop([implementer, verifier]), action(merge-pr)]
+        assert len(process.pipeline) == 2
+        loop = process.pipeline[0]
+        assert isinstance(loop, LoopStep)
+        assert len(loop.steps) == 2
+        assert isinstance(loop.steps[0], RoleStep)
+        assert loop.steps[0].role == "implementer"
+        assert isinstance(loop.steps[1], RoleStep)
+        assert loop.steps[1].role == "verifier"
+
+        action = process.pipeline[1]
+        assert isinstance(action, ActionStep)
+        assert action.action == "merge-pr"
+
+    def test_base_dir_process_yaml_matches(self) -> None:
+        """parse_process on the real base/process.yaml file produces the default Process."""
+        from hyperloop.compose import parse_process
+        from hyperloop.domain.model import ActionStep, LoopStep, RoleStep
+
+        process_yaml = (BASE_DIR / "process.yaml").read_text()
+        process = parse_process(process_yaml)
+
+        assert process is not None
+        assert process.name == "default"
+        assert len(process.intake) == 1
+        assert isinstance(process.intake[0], RoleStep)
+        assert process.intake[0].role == "pm"
+        assert len(process.pipeline) == 2
+        assert isinstance(process.pipeline[0], LoopStep)
+        assert isinstance(process.pipeline[1], ActionStep)
+
+    def test_overridden_pipeline_no_loop(self) -> None:
+        """parse_process with an overridden pipeline (no loop, just implementer + action)."""
+        from hyperloop.compose import parse_process
+        from hyperloop.domain.model import ActionStep, RoleStep
+
+        yaml_input = """\
+kind: Process
+metadata:
+  name: simple
+intake: []
+pipeline:
+  - role: implementer
+  - action: merge-pr
+"""
+        process = parse_process(yaml_input)
+
+        assert process is not None
+        assert process.name == "simple"
+        assert len(process.pipeline) == 2
+        assert isinstance(process.pipeline[0], RoleStep)
+        assert process.pipeline[0].role == "implementer"
+        assert isinstance(process.pipeline[1], ActionStep)
+        assert process.pipeline[1].action == "merge-pr"
+
+    def test_no_process_doc_returns_none(self) -> None:
+        """parse_process on YAML with no kind: Process doc returns None."""
+        from hyperloop.compose import parse_process
+
+        yaml_input = """\
+kind: Agent
+metadata:
+  name: implementer
+prompt: |
+  You are a worker.
+"""
+        result = parse_process(yaml_input)
+        assert result is None
+
+    def test_empty_yaml_returns_none(self) -> None:
+        """parse_process on empty string returns None."""
+        from hyperloop.compose import parse_process
+
+        result = parse_process("")
+        assert result is None
+
+    def test_unknown_primitive_key_raises_value_error(self) -> None:
+        """parse_process with an unknown primitive key raises ValueError."""
+        from hyperloop.compose import parse_process
+
+        yaml_input = """\
+kind: Process
+metadata:
+  name: bad
+pipeline:
+  - unknown_key: something
+"""
+        with pytest.raises(ValueError, match="unknown_key"):
+            parse_process(yaml_input)
+
+    def test_multi_doc_yaml_finds_process(self) -> None:
+        """parse_process finds the Process doc in multi-document YAML."""
+        from hyperloop.compose import parse_process
+        from hyperloop.domain.model import RoleStep
+
+        yaml_input = """\
+kind: Agent
+metadata:
+  name: implementer
+prompt: |
+  Worker prompt.
+---
+kind: Process
+metadata:
+  name: default
+intake: []
+pipeline:
+  - role: implementer
+"""
+        process = parse_process(yaml_input)
+        assert process is not None
+        assert process.name == "default"
+        assert len(process.pipeline) == 1
+        assert isinstance(process.pipeline[0], RoleStep)
+        assert process.pipeline[0].role == "implementer"
+
+    def test_nested_loops_parsed_recursively(self) -> None:
+        """parse_process handles nested loops (loop within loop)."""
+        from hyperloop.compose import parse_process
+        from hyperloop.domain.model import ActionStep, LoopStep, RoleStep
+
+        yaml_input = """\
+kind: Process
+metadata:
+  name: nested
+intake: []
+pipeline:
+  - loop:
+      - loop:
+          - role: implementer
+          - role: verifier
+      - role: reviewer
+  - action: merge-pr
+"""
+        process = parse_process(yaml_input)
+        assert process is not None
+        outer_loop = process.pipeline[0]
+        assert isinstance(outer_loop, LoopStep)
+        inner_loop = outer_loop.steps[0]
+        assert isinstance(inner_loop, LoopStep)
+        assert isinstance(inner_loop.steps[0], RoleStep)
+        assert inner_loop.steps[0].role == "implementer"
+        assert isinstance(outer_loop.steps[1], RoleStep)
+        assert outer_loop.steps[1].role == "reviewer"
+        assert isinstance(process.pipeline[1], ActionStep)
+
+    def test_gate_step_parsed(self) -> None:
+        """parse_process handles gate steps."""
+        from hyperloop.compose import parse_process
+        from hyperloop.domain.model import GateStep
+
+        yaml_input = """\
+kind: Process
+metadata:
+  name: gated
+intake: []
+pipeline:
+  - gate: human-pr-approval
+"""
+        process = parse_process(yaml_input)
+        assert process is not None
+        assert len(process.pipeline) == 1
+        assert isinstance(process.pipeline[0], GateStep)
+        assert process.pipeline[0].gate == "human-pr-approval"
+
+    def test_role_step_with_on_pass_on_fail(self) -> None:
+        """parse_process populates on_pass and on_fail when present."""
+        from hyperloop.compose import parse_process
+        from hyperloop.domain.model import RoleStep
+
+        yaml_input = """\
+kind: Process
+metadata:
+  name: routing
+intake: []
+pipeline:
+  - role: implementer
+    on_pass: next
+    on_fail: retry
+"""
+        process = parse_process(yaml_input)
+        assert process is not None
+        step = process.pipeline[0]
+        assert isinstance(step, RoleStep)
+        assert step.role == "implementer"
+        assert step.on_pass == "next"
+        assert step.on_fail == "retry"
+
+
+class TestLoadFromKustomize:
+    """load_from_kustomize returns (PromptComposer, Process | None)."""
+
+    @pytest.mark.skipif(
+        not shutil.which("kustomize"),
+        reason="kustomize CLI not available",
+    )
+    def test_returns_composer_and_process_when_process_doc_present(self, tmp_path: Path) -> None:
+        """load_from_kustomize returns (PromptComposer, Process) when Process doc present."""
+        import os
+
+        rel_base = os.path.relpath(BASE_DIR, tmp_path)
+        kustomization = tmp_path / "kustomization.yaml"
+        kustomization.write_text(f"resources:\n  - {rel_base}\n")
+
+        state = _state_with_spec()
+        composer, process = PromptComposer.load_from_kustomize(str(tmp_path), state)
+
+        assert isinstance(composer, PromptComposer)
+        assert process is not None
+        assert process.name == "default"
+        from hyperloop.domain.model import ActionStep, LoopStep
+
+        assert len(process.pipeline) == 2
+        assert isinstance(process.pipeline[0], LoopStep)
+        assert isinstance(process.pipeline[1], ActionStep)
+
+    @pytest.mark.skipif(
+        not shutil.which("kustomize"),
+        reason="kustomize CLI not available",
+    )
+    def test_returns_none_process_when_no_process_doc(self, tmp_path: Path) -> None:
+        """load_from_kustomize returns (PromptComposer, None) when no Process doc."""
+        agent_yaml = tmp_path / "agent.yaml"
+        agent_yaml.write_text(
+            "kind: Agent\nmetadata:\n  name: test\nprompt: hello\nannotations: {}\n"
+        )
+        kustomization = tmp_path / "kustomization.yaml"
+        kustomization.write_text("resources:\n  - agent.yaml\n")
+
+        state = _state_with_spec()
+        composer, process = PromptComposer.load_from_kustomize(str(tmp_path), state)
+
+        assert isinstance(composer, PromptComposer)
+        assert process is None

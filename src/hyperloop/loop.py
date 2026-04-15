@@ -11,17 +11,22 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from hyperloop.adapters.probe import NullProbe
 from hyperloop.domain.decide import decide
+from hyperloop.domain.deps import detect_cycles
 from hyperloop.domain.model import (
     ActionStep,
     GateStep,
     Halt,
+    ImprovementContext,
+    IntakeContext,
     LoopStep,
     Phase,
     PipelinePosition,
     ReapWorker,
     RoleStep,
     SpawnWorker,
+    TaskContext,
     TaskStatus,
     Verdict,
     WorkerHandle,
@@ -38,11 +43,10 @@ from hyperloop.domain.pipeline import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from hyperloop.compose import PromptComposer
     from hyperloop.domain.model import PipelineStep, Process, Task, WorkerResult
     from hyperloop.ports.pr import PRPort
+    from hyperloop.ports.probe import OrchestratorProbe
     from hyperloop.ports.runtime import Runtime
     from hyperloop.ports.serial import SerialRunner
     from hyperloop.ports.state import StateStore
@@ -77,9 +81,10 @@ class Orchestrator:
         composer: PromptComposer | None = None,
         repo_path: str | None = None,
         poll_interval: float = 30.0,
-        on_cycle: Callable[[dict[str, object]], None] | None = None,
+        probe: OrchestratorProbe | None = None,
         serial_runner: SerialRunner | None = None,
         max_rebase_attempts: int = 3,
+        auto_merge: bool = True,
     ) -> None:
         self._state = state
         self._runtime = runtime
@@ -90,24 +95,40 @@ class Orchestrator:
         self._composer = composer
         self._repo_path = repo_path
         self._poll_interval = poll_interval
-        self._on_cycle = on_cycle
+        self._probe = probe or NullProbe()
         self._serial_runner = serial_runner
         self._max_rebase_attempts = max_rebase_attempts
+        self._auto_merge = auto_merge
 
-        # Active worker tracking: task_id -> (handle, pipeline_position)
-        self._workers: dict[str, tuple[WorkerHandle, PipelinePosition]] = {}
+        # Active worker tracking: task_id -> (handle, pipeline_position, spawn_time)
+        self._workers: dict[str, tuple[WorkerHandle, PipelinePosition, float]] = {}
         # Consecutive rebase failure count per task
         self._rebase_attempts: dict[str, int] = {}
+        # Current cycle number — set at the start of each run_cycle
+        self._current_cycle: int = 0
 
     def run_loop(self, max_cycles: int = 1000) -> str:
         """Run the orchestrator loop until halt or max_cycles. Returns halt reason."""
         for cycle_num in range(max_cycles):
             reason = self.run_cycle(cycle_num=cycle_num + 1)
             if reason is not None:
+                self._emit_halted(reason, cycle_num + 1)
                 return reason
             if self._poll_interval > 0:
                 time.sleep(self._poll_interval)
-        return "max_cycles exhausted"
+        reason = "max_cycles exhausted"
+        self._emit_halted(reason, max_cycles)
+        return reason
+
+    def _emit_halted(self, reason: str, total_cycles: int) -> None:
+        """Emit orchestrator_halted probe event."""
+        world = self._state.get_world()
+        self._probe.orchestrator_halted(
+            reason=reason,
+            total_cycles=total_cycles,
+            completed_tasks=sum(1 for t in world.tasks.values() if t.status == TaskStatus.COMPLETE),
+            failed_tasks=sum(1 for t in world.tasks.values() if t.status == TaskStatus.FAILED),
+        )
 
     def recover(self) -> None:
         """Recover from a crash by reconciling persisted state with runtime.
@@ -117,6 +138,17 @@ class Orchestrator:
         them, then adds the task to internal tracking for re-spawn.
         """
         world = self._state.get_world()
+
+        cycles = detect_cycles(world.tasks)
+        if cycles:
+            formatted = "; ".join(" -> ".join(c) for c in cycles)
+            raise RuntimeError(f"Dependency cycle(s) detected in task graph: {formatted}")
+
+        self._probe.recovery_started(
+            in_progress_tasks=sum(
+                1 for t in world.tasks.values() if t.status == TaskStatus.IN_PROGRESS
+            ),
+        )
 
         for task in world.tasks.values():
             if task.status != TaskStatus.IN_PROGRESS:
@@ -130,6 +162,7 @@ class Orchestrator:
             orphan = self._runtime.find_orphan(task.id, branch)
             if orphan is not None:
                 self._runtime.cancel(orphan)
+                self._probe.orphan_found(task_id=task.id, branch=branch)
 
             # We don't add to _workers here — instead leave it workerless
             # so decide() will emit a SpawnWorker for it next cycle.
@@ -144,6 +177,8 @@ class Orchestrator:
 
         Returns a halt reason string if the loop should stop, or None to continue.
         """
+        self._current_cycle = cycle_num
+        cycle_start = time.monotonic()
         executor = PipelineExecutor(self._process.pipeline)
 
         # Cache world snapshot once per cycle — augmented with worker state
@@ -156,8 +191,16 @@ class Orchestrator:
             world = self._build_world()
             if not world.tasks and not self._workers:
                 reason = "no tasks found — nothing to do"
-                self._notify_cycle(cycle_num, world, reason=reason)
                 return reason
+
+        self._probe.cycle_started(
+            cycle=cycle_num,
+            active_workers=len(self._workers),
+            not_started=sum(1 for t in world.tasks.values() if t.status == TaskStatus.NOT_STARTED),
+            in_progress=sum(1 for t in world.tasks.values() if t.status == TaskStatus.IN_PROGRESS),
+            complete=sum(1 for t in world.tasks.values() if t.status == TaskStatus.COMPLETE),
+            failed=sum(1 for t in world.tasks.values() if t.status == TaskStatus.FAILED),
+        )
 
         # ---- 1. Reap finished workers ----------------------------------------
         reaped_results: dict[str, WorkerResult] = {}
@@ -170,7 +213,7 @@ class Orchestrator:
             if isinstance(action, ReapWorker):
                 task_id = action.task_id
                 if task_id in self._workers:
-                    handle, _pos = self._workers[task_id]
+                    handle, _pos, _spawn_time = self._workers[task_id]
                     result = self._runtime.reap(handle)
                     reaped_results[task_id] = result
 
@@ -179,8 +222,20 @@ class Orchestrator:
         halt_reason: str | None = None
 
         for task_id, result in reaped_results.items():
-            _handle, position = self._workers.pop(task_id)
+            _handle, position, spawn_time = self._workers.pop(task_id)
             task = self._state.get_task(task_id)
+
+            self._probe.worker_reaped(
+                task_id=task_id,
+                role=_handle.role,
+                verdict=result.verdict.value,
+                round=task.round,
+                cycle=cycle_num,
+                spec_ref=task.spec_ref,
+                findings_count=result.findings,
+                detail=result.detail,
+                duration_s=time.monotonic() - spawn_time,
+            )
 
             pipe_action, new_pos = executor.next_action(position, result)
 
@@ -190,12 +245,26 @@ class Orchestrator:
                     self._pr_manager.mark_ready(task.pr)
                 self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
                 self._state.clear_findings(task_id)
+                self._probe.task_completed(
+                    task_id=task_id,
+                    spec_ref=task.spec_ref,
+                    total_rounds=task.round,
+                    total_cycles=cycle_num,
+                    cycle=cycle_num,
+                )
 
             elif isinstance(pipe_action, PipelineFailed):
                 self._state.transition_task(task_id, TaskStatus.FAILED, phase=None)
                 self._state.store_findings(task_id, result.detail)
                 halt_reason = f"task {task_id} pipeline failed: {pipe_action.reason}"
                 had_failures_this_cycle = True
+                self._probe.task_failed(
+                    task_id=task_id,
+                    spec_ref=task.spec_ref,
+                    reason=pipe_action.reason,
+                    round=task.round,
+                    cycle=cycle_num,
+                )
 
             elif isinstance(pipe_action, SpawnRole):
                 if result.verdict in (Verdict.FAIL, Verdict.ERROR, Verdict.TIMEOUT):
@@ -209,6 +278,13 @@ class Orchestrator:
                             round=new_round,
                         )
                         halt_reason = f"task {task_id} exceeded max_rounds ({self._max_rounds})"
+                        self._probe.task_failed(
+                            task_id=task_id,
+                            spec_ref=task.spec_ref,
+                            reason=f"exceeded max_rounds ({self._max_rounds})",
+                            round=new_round,
+                            cycle=cycle_num,
+                        )
                         continue
                     self._state.store_findings(task_id, result.detail)
                     self._state.transition_task(
@@ -216,6 +292,14 @@ class Orchestrator:
                         TaskStatus.IN_PROGRESS,
                         phase=Phase(pipe_action.role),
                         round=new_round,
+                    )
+                    self._probe.task_looped_back(
+                        task_id=task_id,
+                        spec_ref=task.spec_ref,
+                        round=new_round,
+                        cycle=cycle_num,
+                        findings_preview=result.detail[:200],
+                        findings_count=result.findings,
                     )
                 else:
                     # Advancing forward on PASS — create draft PR if needed
@@ -307,14 +391,24 @@ class Orchestrator:
         for task_id, role, position in to_spawn:
             task = self._state.get_task(task_id)
             branch = task.branch or f"worker/{task_id}"
+            if task.branch is None:
+                self._state.set_task_branch(task_id, branch)
             prompt = self._compose_prompt(task, role)
             handle = self._runtime.spawn(task_id, role, prompt=prompt, branch=branch)
-            self._workers[task_id] = (handle, position)
+            self._workers[task_id] = (handle, position, time.monotonic())
+            self._probe.worker_spawned(
+                task_id=task_id,
+                role=role,
+                branch=branch,
+                round=task.round,
+                cycle=cycle_num,
+                spec_ref=task.spec_ref,
+            )
 
         # ---- Check convergence -----------------------------------------------
         all_tasks = self._state.get_world().tasks
         if not all_tasks:
-            self._notify_cycle(cycle_num, world)
+            self._emit_cycle_completed(cycle_num, cycle_start, to_spawn, reaped_results)
             return None
 
         all_complete = all(t.status == TaskStatus.COMPLETE for t in all_tasks.values())
@@ -322,11 +416,32 @@ class Orchestrator:
 
         if all_complete and no_workers:
             reason = "all tasks complete"
-            self._notify_cycle(cycle_num, world, reason=reason)
+            self._emit_cycle_completed(cycle_num, cycle_start, to_spawn, reaped_results)
             return reason
 
-        self._notify_cycle(cycle_num, world)
+        self._emit_cycle_completed(cycle_num, cycle_start, to_spawn, reaped_results)
         return None
+
+    def _emit_cycle_completed(
+        self,
+        cycle_num: int,
+        cycle_start: float,
+        to_spawn: list[tuple[str, str, PipelinePosition]],
+        reaped_results: dict[str, WorkerResult],
+    ) -> None:
+        """Emit cycle_completed probe event."""
+        all_tasks = self._state.get_world().tasks
+        self._probe.cycle_completed(
+            cycle=cycle_num,
+            active_workers=len(self._workers),
+            not_started=sum(1 for t in all_tasks.values() if t.status == TaskStatus.NOT_STARTED),
+            in_progress=sum(1 for t in all_tasks.values() if t.status == TaskStatus.IN_PROGRESS),
+            complete=sum(1 for t in all_tasks.values() if t.status == TaskStatus.COMPLETE),
+            failed=sum(1 for t in all_tasks.values() if t.status == TaskStatus.FAILED),
+            spawned_ids=tuple(tid for tid, _, _ in to_spawn),
+            reaped_ids=tuple(reaped_results.keys()),
+            duration_s=time.monotonic() - cycle_start,
+        )
 
     # -----------------------------------------------------------------------
     # Gate polling and merge
@@ -362,6 +477,12 @@ class Orchestrator:
 
             # Task is at a gate — poll it
             cleared = self._pr_manager.check_gate(task.pr, step.gate)
+            self._probe.gate_checked(
+                task_id=task.id,
+                gate=step.gate,
+                cleared=cleared,
+                cycle=self._current_cycle,
+            )
             if not cleared:
                 continue
 
@@ -385,17 +506,36 @@ class Orchestrator:
     def _merge_ready_prs(self) -> None:
         """Merge branches for tasks at the merge-pr action step.
 
+        Tasks are merged in dependency order (deps before dependents) to avoid
+        unnecessary rebase conflicts and produce a correct merge history.
+        Within the same dependency tier, tasks are merged in task-ID order for
+        determinism.
+
         With a PRManager: rebase + squash-merge the PR.
         Without a PRManager: local git merge of worker branch into base branch.
         On conflict, transitions to NEEDS_REBASE.
-        """
-        all_tasks = self._state.get_world().tasks
-        for task in all_tasks.values():
-            if task.status != TaskStatus.IN_PROGRESS:
-                continue
-            if task.phase != Phase("merge-pr"):
-                continue
 
+        If auto_merge is False, skip merging entirely — the PR stays ready
+        for human merge.
+        """
+        if not self._auto_merge:
+            logger.debug("auto_merge disabled — skipping merge step")
+            return
+
+        all_tasks = self._state.get_world().tasks
+
+        # Collect candidates at merge-pr, sorted by task ID for stable tiebreaking
+        candidate_ids = sorted(
+            task_id
+            for task_id, task in all_tasks.items()
+            if task.status == TaskStatus.IN_PROGRESS and task.phase == Phase("merge-pr")
+        )
+
+        # Apply topological ordering so dependencies merge before dependents
+        ordered_ids = _dep_order_ids(all_tasks, candidate_ids)
+
+        for task_id in ordered_ids:
+            task = all_tasks[task_id]
             branch = task.branch or f"worker/{task.id}"
 
             if self._pr_manager is not None and task.pr is not None:
@@ -413,7 +553,16 @@ class Orchestrator:
         if not self._pr_manager.rebase_branch(branch, "main"):
             logger.warning("Rebase conflict for task %s, marking NEEDS_REBASE", task_id)
             self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
-            if self._rebase_attempts[task_id] >= self._max_rebase_attempts:
+            looping_back = self._rebase_attempts[task_id] >= self._max_rebase_attempts
+            self._probe.rebase_conflict(
+                task_id=task_id,
+                branch=branch,
+                attempt=self._rebase_attempts[task_id],
+                max_attempts=self._max_rebase_attempts,
+                looping_back=looping_back,
+                cycle=self._current_cycle,
+            )
+            if looping_back:
                 logger.warning(
                     "Task %s exceeded max_rebase_attempts (%d), looping back",
                     task_id,
@@ -437,7 +586,16 @@ class Orchestrator:
         if not self._pr_manager.merge(pr_url, task_id, spec_ref):
             logger.warning("Merge conflict for task %s, marking NEEDS_REBASE", task_id)
             self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
-            if self._rebase_attempts[task_id] >= self._max_rebase_attempts:
+            looping_back = self._rebase_attempts[task_id] >= self._max_rebase_attempts
+            self._probe.rebase_conflict(
+                task_id=task_id,
+                branch=branch,
+                attempt=self._rebase_attempts[task_id],
+                max_attempts=self._max_rebase_attempts,
+                looping_back=looping_back,
+                cycle=self._current_cycle,
+            )
+            if looping_back:
                 logger.warning(
                     "Task %s exceeded max_rebase_attempts (%d), looping back",
                     task_id,
@@ -462,6 +620,14 @@ class Orchestrator:
         self._rebase_attempts.pop(task_id, None)
         self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
         self._state.clear_findings(task_id)
+        self._probe.merge_attempted(
+            task_id=task_id,
+            branch=branch,
+            spec_ref=spec_ref,
+            outcome="merged",
+            attempt=0,
+            cycle=self._current_cycle,
+        )
         logger.info("Merged PR for task %s", task_id)
 
     def _merge_local(self, task_id: str, branch: str) -> None:
@@ -481,12 +647,30 @@ class Orchestrator:
             self._rebase_attempts.pop(task_id, None)
             self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
             self._state.clear_findings(task_id)
+            self._delete_local_branch(branch)
+            self._probe.merge_attempted(
+                task_id=task_id,
+                branch=branch,
+                spec_ref="",
+                outcome="merged",
+                attempt=0,
+                cycle=self._current_cycle,
+            )
             logger.info("Local merge of %s into base branch", task_id)
         except subprocess.CalledProcessError:
             logger.warning("Local merge conflict for task %s, marking NEEDS_REBASE", task_id)
             subprocess.run([*git_cmd, "merge", "--abort"], capture_output=True, check=False)
             self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
-            if self._rebase_attempts[task_id] >= self._max_rebase_attempts:
+            looping_back = self._rebase_attempts[task_id] >= self._max_rebase_attempts
+            self._probe.rebase_conflict(
+                task_id=task_id,
+                branch=branch,
+                attempt=self._rebase_attempts[task_id],
+                max_attempts=self._max_rebase_attempts,
+                looping_back=looping_back,
+                cycle=self._current_cycle,
+            )
+            if looping_back:
                 logger.warning(
                     "Task %s exceeded max_rebase_attempts (%d), looping back",
                     task_id,
@@ -505,6 +689,15 @@ class Orchestrator:
                 )
                 return
             self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
+
+    def _delete_local_branch(self, branch: str) -> None:
+        """Delete a local branch after merge (best-effort)."""
+        import subprocess
+
+        git_cmd = ["git"]
+        if self._repo_path is not None:
+            git_cmd = ["git", "-C", self._repo_path]
+        subprocess.run([*git_cmd, "branch", "-D", branch], capture_output=True)
 
     # -----------------------------------------------------------------------
     # Serial agents (PM intake + process-improver)
@@ -543,16 +736,25 @@ class Orchestrator:
 
         logger.info("intake: %d unprocessed spec(s), running PM", len(unprocessed))
 
-        spec_list = "\n".join(f"- {s}" for s in unprocessed)
-        prompt = self._composer.compose(
-            role="pm",
-            task_id="intake",
-            spec_ref="",
-            findings="",
-        )
-        prompt += f"\n\n## Specs to Process\n\n{spec_list}\n"
+        context = IntakeContext(unprocessed_specs=tuple(unprocessed))
+        prompt = self._composer.compose(role="pm", context=context)
 
+        task_count_before = len(self._state.get_world().tasks)
+        intake_start = time.monotonic()
         success = self._serial_runner.run("pm", prompt)
+
+        # Count how many tasks were created by comparing before/after
+        task_count_after = len(self._state.get_world().tasks)
+        created_count = task_count_after - task_count_before
+
+        self._probe.intake_ran(
+            unprocessed_specs=len(unprocessed),
+            created_tasks=created_count,
+            success=success,
+            cycle=self._current_cycle,
+            duration_s=time.monotonic() - intake_start,
+        )
+
         if success:
             logger.info("intake: PM completed successfully")
         else:
@@ -571,14 +773,23 @@ class Orchestrator:
 
         logger.info("process-improver: running with this cycle's findings")
 
-        prompt = self._composer.compose(
-            role="process-improver",
-            task_id="process-improvement",
-            spec_ref="",
-            findings=findings_text,
+        context = ImprovementContext(findings=findings_text)
+        prompt = self._composer.compose(role="process-improver", context=context)
+
+        failed_ids = tuple(
+            task_id
+            for task_id, r in reaped_results.items()
+            if r.verdict in (Verdict.FAIL, Verdict.ERROR, Verdict.TIMEOUT)
         )
 
+        improver_start = time.monotonic()
         success = self._serial_runner.run("process-improver", prompt)
+        self._probe.process_improver_ran(
+            failed_task_ids=failed_ids,
+            success=success,
+            cycle=self._current_cycle,
+            duration_s=time.monotonic() - improver_start,
+        )
         if success:
             logger.info("process-improver: completed successfully")
         else:
@@ -592,7 +803,7 @@ class Orchestrator:
         """Build a World snapshot including current worker state from runtime."""
         base_world = self._state.get_world()
         workers: dict[str, WorkerState] = {}
-        for task_id, (handle, _pos) in self._workers.items():
+        for task_id, (handle, _pos, _spawn_time) in self._workers.items():
             poll_status = self._runtime.poll(handle)
             workers[task_id] = WorkerState(
                 task_id=task_id,
@@ -606,37 +817,6 @@ class Orchestrator:
         )
 
     # -----------------------------------------------------------------------
-    # Cycle notification
-    # -----------------------------------------------------------------------
-
-    def _notify_cycle(
-        self,
-        cycle_num: int,
-        world: World,
-        reason: str | None = None,
-    ) -> None:
-        """Invoke the on_cycle callback with a summary of this cycle."""
-        if self._on_cycle is None:
-            return
-
-        tasks = world.tasks
-        summary: dict[str, object] = {
-            "cycle": cycle_num,
-            "tasks": {
-                "total": len(tasks),
-                "not_started": sum(1 for t in tasks.values() if t.status == TaskStatus.NOT_STARTED),
-                "in_progress": sum(1 for t in tasks.values() if t.status == TaskStatus.IN_PROGRESS),
-                "complete": sum(1 for t in tasks.values() if t.status == TaskStatus.COMPLETE),
-                "failed": sum(1 for t in tasks.values() if t.status == TaskStatus.FAILED),
-            },
-            "workers": len(self._workers),
-        }
-        if reason is not None:
-            summary["halt_reason"] = reason
-
-        self._on_cycle(summary)
-
-    # -----------------------------------------------------------------------
     # Prompt composition
     # -----------------------------------------------------------------------
 
@@ -646,12 +826,8 @@ class Orchestrator:
             return ""
 
         findings = self._state.get_findings(task.id)
-        return self._composer.compose(
-            role=role,
-            task_id=task.id,
-            spec_ref=task.spec_ref,
-            findings=findings,
-        )
+        context = TaskContext(task_id=task.id, spec_ref=task.spec_ref, findings=findings)
+        return self._composer.compose(role=role, context=context)
 
     # -----------------------------------------------------------------------
     # Pipeline position helpers
@@ -743,3 +919,55 @@ def _phase_for_pipe_action(
     if isinstance(action, PerformAction):
         return action.action
     return None
+
+
+def _dep_order_ids(tasks: dict[str, Task], candidate_ids: list[str]) -> list[str]:
+    """Return candidate task IDs in topological order: dependencies before dependents.
+
+    Uses Kahn's algorithm (BFS topological sort).
+
+    - Only considers dependencies within the candidate set; tasks outside
+      candidates are treated as already merged/done.
+    - Preserves input order for tasks with no dependency relationship
+      (callers pre-sort by task ID for determinism).
+    - Falls back to input order for any cyclic group (cycle safety).
+    - Candidates missing from the tasks dict are included unchanged (graceful).
+    """
+    candidate_set = set(candidate_ids)
+    position: dict[str, int] = {cid: i for i, cid in enumerate(candidate_ids)}
+
+    # Build in-degree and adjacency list within the candidate set only
+    in_degree: dict[str, int] = {cid: 0 for cid in candidate_ids}
+    dependents: dict[str, list[str]] = {cid: [] for cid in candidate_ids}
+
+    for cid in candidate_ids:
+        task = tasks.get(cid)
+        if task is None:
+            continue
+        for dep in task.deps:
+            if dep in candidate_set:
+                in_degree[cid] += 1
+                dependents[dep].append(cid)
+
+    # Kahn's BFS: start with zero in-degree nodes in input order.
+    # list.pop(0) is O(n) but candidate counts are always tiny.
+    queue: list[str] = [cid for cid in candidate_ids if in_degree[cid] == 0]
+    result: list[str] = []
+
+    while queue:
+        node = queue.pop(0)
+        result.append(node)
+        # Collect newly-ready dependents and sort by input position for stability
+        newly_ready: list[str] = []
+        for dep in dependents[node]:
+            in_degree[dep] -= 1
+            if in_degree[dep] == 0:
+                newly_ready.append(dep)
+        newly_ready.sort(key=lambda x: position[x])
+        queue.extend(newly_ready)
+
+    # Append any remaining cyclic nodes in input order (cycle safety)
+    in_result = set(result)
+    result.extend(cid for cid in candidate_ids if cid not in in_result)
+
+    return result

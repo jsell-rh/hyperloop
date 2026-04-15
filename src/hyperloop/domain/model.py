@@ -219,3 +219,35 @@ class Halt:
 
 Action = SpawnWorker | ReapWorker | AdvanceTask | RunPM | RunProcessImprover | MergePR | Halt
 """Union of all action types emitted by the decide function."""
+
+
+# ---------------------------------------------------------------------------
+# Prompt composition context types
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TaskContext:
+    """Context for per-task workers (implementer, verifier, rebase-resolver)."""
+
+    task_id: str
+    spec_ref: str
+    findings: str
+
+
+@dataclass(frozen=True)
+class IntakeContext:
+    """Context for PM intake."""
+
+    unprocessed_specs: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ImprovementContext:
+    """Context for process-improver."""
+
+    findings: str
+
+
+AgentContext = TaskContext | IntakeContext | ImprovementContext
+"""Union of all context types for prompt composition."""
