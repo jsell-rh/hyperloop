@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.7.0 (2026-04-15)
+
+### Features
+
+- **observability**: Complete spec alignment
+  ([`510d01a`](https://github.com/jsell-rh/hyperloop/commit/510d01a65e61149b7a618464f9fcecb691c318fe))
+
+
 ## v0.6.1 (2026-04-15)
 
 
