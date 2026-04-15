@@ -49,6 +49,21 @@ def _load_cache(repo_path: Path, homeserver: str) -> dict[str, str] | None:
         return None
 
 
+def _ensure_gitignored(repo_path: Path) -> None:
+    """Ensure .hyperloop/ is in the target repo's .gitignore."""
+    gitignore = repo_path / ".gitignore"
+    entry = ".hyperloop/"
+    if gitignore.is_file():
+        content = gitignore.read_text()
+        if entry in content.splitlines():
+            return
+        if not content.endswith("\n"):
+            content += "\n"
+        gitignore.write_text(content + entry + "\n")
+    else:
+        gitignore.write_text(entry + "\n")
+
+
 def _save_cache(
     repo_path: Path,
     *,
@@ -59,6 +74,7 @@ def _save_cache(
     password: str,
 ) -> None:
     """Persist Matrix credentials to the cache file."""
+    _ensure_gitignored(repo_path)
     cache_path = repo_path / _CACHE_FILE
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
