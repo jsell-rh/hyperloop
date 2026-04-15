@@ -13,7 +13,7 @@ class RecordedCall:
     """A single recorded probe call."""
 
     method: str
-    kwargs: dict[str, object] = field(default_factory=dict)
+    kwargs: dict[str, object] = field(default_factory=lambda: {})
 
 
 class RecordingProbe:

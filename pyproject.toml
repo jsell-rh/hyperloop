@@ -57,6 +57,7 @@ ignore = []
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
+reportPrivateUsage = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

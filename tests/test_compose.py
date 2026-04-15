@@ -343,7 +343,7 @@ class TestCheckKustomize:
     def test_raises_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from hyperloop.compose import check_kustomize_available
 
-        monkeypatch.setattr(shutil, "which", lambda _name: None)
+        monkeypatch.setattr(shutil, "which", lambda _name: None)  # type: ignore[arg-type]
 
         with pytest.raises(SystemExit, match="kustomize CLI not found"):
             check_kustomize_available()
