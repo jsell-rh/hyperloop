@@ -104,6 +104,16 @@ class InMemoryStateStore:
         """Record a last-run marker."""
         self._epochs[key] = value
 
+    def list_files(self, pattern: str) -> list[str]:
+        """List file paths matching a glob pattern against in-memory files.
+
+        Uses PurePosixPath.match to respect directory boundaries (``*`` does
+        not cross ``/``), consistent with pathlib.Path.glob behaviour.
+        """
+        from pathlib import PurePosixPath
+
+        return sorted(p for p in self._files if PurePosixPath(p).match(pattern))
+
     def read_file(self, path: str) -> str | None:
         """Read a file from the in-memory filesystem. Returns None if not found."""
         return self._files.get(path)

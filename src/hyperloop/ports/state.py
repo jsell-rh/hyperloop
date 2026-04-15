@@ -52,6 +52,10 @@ class StateStore(Protocol):
         """Record a last-run marker."""
         ...
 
+    def list_files(self, pattern: str) -> list[str]:
+        """List file paths matching a glob pattern relative to the repo root."""
+        ...
+
     def read_file(self, path: str) -> str | None:
         """Read a file from trunk. Returns None if the file does not exist."""
         ...

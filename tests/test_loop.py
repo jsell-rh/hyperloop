@@ -6,6 +6,10 @@ Uses InMemoryStateStore and InMemoryRuntime fakes. No mocks.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from hyperloop.compose import PromptComposer
 from hyperloop.domain.model import (
@@ -75,6 +79,8 @@ def _make_orchestrator(
     max_rounds: int = 50,
     pr_manager: FakePRManager | None = None,
     composer: PromptComposer | None = None,
+    poll_interval: float = 0,
+    on_cycle: Callable[[dict[str, object]], None] | None = None,
 ) -> Orchestrator:
     return Orchestrator(
         state=state,
@@ -84,6 +90,8 @@ def _make_orchestrator(
         max_rounds=max_rounds,
         pr_manager=pr_manager,
         composer=composer,
+        poll_interval=poll_interval,
+        on_cycle=on_cycle,
     )
 
 
@@ -846,6 +854,139 @@ class TestMergeWithPRManager:
 
 
 BASE_DIR = Path(__file__).parent.parent / "base"
+
+
+class TestPollInterval:
+    """poll_interval causes a sleep between cycles."""
+
+    def test_run_loop_sleeps_between_cycles(self) -> None:
+        """run_loop sleeps poll_interval seconds between cycles."""
+        import time
+
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task())
+
+        orch = _make_orchestrator(state, runtime, poll_interval=0.05)
+
+        start = time.monotonic()
+        # Workers never finish, so 3 cycles means 3 sleeps
+        orch.run_loop(max_cycles=3)
+        elapsed = time.monotonic() - start
+
+        # 3 cycles * 0.05s = 0.15s minimum
+        assert elapsed >= 0.1
+
+    def test_run_loop_no_sleep_when_zero(self) -> None:
+        """poll_interval=0 means no sleep (for tests)."""
+        import time
+
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task())
+
+        orch = _make_orchestrator(state, runtime, poll_interval=0)
+
+        start = time.monotonic()
+        orch.run_loop(max_cycles=5)
+        elapsed = time.monotonic() - start
+
+        # Should be nearly instant
+        assert elapsed < 1.0
+
+    def test_no_sleep_after_halt(self) -> None:
+        """When the loop halts, it does not sleep after the final cycle."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task(status=TaskStatus.COMPLETE))
+
+        orch = _make_orchestrator(state, runtime, poll_interval=10.0)
+
+        import time
+
+        start = time.monotonic()
+        reason = orch.run_loop(max_cycles=100)
+        elapsed = time.monotonic() - start
+
+        assert "all tasks complete" in reason.lower()
+        # Should not have slept 10s
+        assert elapsed < 2.0
+
+
+class TestEarlyExitNoTasks:
+    """Loop halts immediately when there are no tasks and no intake."""
+
+    def test_empty_world_halts_immediately(self) -> None:
+        """No tasks at all -> immediate halt with clear message."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+
+        orch = _make_orchestrator(state, runtime)
+        reason = orch.run_loop(max_cycles=100)
+        assert "no tasks" in reason.lower()
+
+    def test_empty_world_single_cycle(self) -> None:
+        """run_cycle returns halt reason on empty world."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+
+        orch = _make_orchestrator(state, runtime)
+        reason = orch.run_cycle()
+        assert reason is not None
+        assert "no tasks" in reason.lower()
+
+
+class TestOnCycleCallback:
+    """on_cycle callback is invoked after each cycle with summary info."""
+
+    def test_callback_called_each_cycle(self) -> None:
+        """on_cycle is called once per cycle with a summary dict."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task())
+
+        summaries: list[dict[str, object]] = []
+        orch = _make_orchestrator(state, runtime, on_cycle=summaries.append)
+
+        orch.run_loop(max_cycles=3)
+        assert len(summaries) == 3
+
+    def test_callback_receives_cycle_number(self) -> None:
+        """Summary dict includes cycle number."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task())
+
+        summaries: list[dict[str, object]] = []
+        orch = _make_orchestrator(state, runtime, on_cycle=summaries.append)
+
+        orch.run_loop(max_cycles=2)
+        assert summaries[0]["cycle"] == 1
+        assert summaries[1]["cycle"] == 2
+
+    def test_callback_receives_task_counts(self) -> None:
+        """Summary dict includes counts of tasks by status."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task(id="task-001"))
+        state.add_task(_task(id="task-002", status=TaskStatus.COMPLETE))
+
+        summaries: list[dict[str, object]] = []
+        orch = _make_orchestrator(state, runtime, on_cycle=summaries.append)
+
+        orch.run_cycle()
+        s = summaries[0]
+        assert "tasks" in s
+
+    def test_no_callback_does_not_crash(self) -> None:
+        """Omitting on_cycle works fine (backward compat)."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task())
+
+        orch = _make_orchestrator(state, runtime)
+        orch.run_loop(max_cycles=2)
+        # No crash
 
 
 class TestPromptComposition:

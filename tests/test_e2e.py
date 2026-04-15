@@ -255,6 +255,7 @@ class TestSingleTaskCompletesE2E:
             process=E2E_PIPELINE,
             max_workers=2,
             max_rounds=10,
+            poll_interval=0,
         )
 
         reason = orch.run_loop(max_cycles=MAX_CYCLES)
@@ -322,6 +323,7 @@ fi
             process=E2E_PIPELINE,
             max_workers=2,
             max_rounds=10,
+            poll_interval=0,
         )
 
         reason = orch.run_loop(max_cycles=MAX_CYCLES)
@@ -363,6 +365,7 @@ class TestTwoTasksRunInParallelE2E:
             process=E2E_PIPELINE,
             max_workers=4,
             max_rounds=10,
+            poll_interval=0,
         )
 
         reason = orch.run_loop(max_cycles=MAX_CYCLES)
@@ -411,6 +414,7 @@ class TestLocalMergeLandsCodeOnBaseBranch:
             max_workers=2,
             max_rounds=10,
             repo_path=str(repo),
+            poll_interval=0,
         )
 
         reason = orch.run_loop(max_cycles=MAX_CYCLES)
@@ -485,6 +489,7 @@ class TestPRFlowWithFakePRManager:
             max_workers=2,
             max_rounds=10,
             pr_manager=pr_manager,
+            poll_interval=0,
         )
 
         reason = orch.run_loop(max_cycles=MAX_CYCLES)
@@ -560,6 +565,7 @@ class TestGateBlocksUntilLgtm:
             max_workers=2,
             max_rounds=10,
             pr_manager=pr_manager,
+            poll_interval=0,
         )
 
         # Run enough cycles for implementer + verifier to complete, reaching the gate

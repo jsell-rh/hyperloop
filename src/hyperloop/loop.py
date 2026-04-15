@@ -1,13 +1,14 @@
 """Orchestrator loop — wires decide, pipeline, state store, and runtime.
 
 Runs the serial section from the spec: reap finished workers, check for halt,
-run stubs for process-improver/intake, poll gates, merge PRs, decide what to
-spawn, update state, spawn workers, and check convergence.
+run process-improver/intake, poll gates, merge PRs, decide what to spawn,
+update state, spawn workers, and check convergence.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from hyperloop.domain.decide import decide
@@ -37,10 +38,13 @@ from hyperloop.domain.pipeline import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from hyperloop.compose import PromptComposer
     from hyperloop.domain.model import PipelineStep, Process, Task, WorkerResult
     from hyperloop.ports.pr import PRPort
     from hyperloop.ports.runtime import Runtime
+    from hyperloop.ports.serial import SerialRunner
     from hyperloop.ports.state import StateStore
 
 logger = logging.getLogger(__name__)
@@ -53,8 +57,8 @@ class Orchestrator:
     Each cycle follows the spec's serial section order:
       1. Reap finished workers
       2. Halt if any task failed
-      3. Process-improver (stub)
-      4. Intake (stub)
+      3. Process-improver (serial on trunk)
+      4. Intake (serial on trunk)
       5. Poll gates
       6. Merge ready PRs
       7. Decide what to spawn (via decide())
@@ -72,6 +76,9 @@ class Orchestrator:
         pr_manager: PRPort | None = None,
         composer: PromptComposer | None = None,
         repo_path: str | None = None,
+        poll_interval: float = 30.0,
+        on_cycle: Callable[[dict[str, object]], None] | None = None,
+        serial_runner: SerialRunner | None = None,
     ) -> None:
         self._state = state
         self._runtime = runtime
@@ -81,16 +88,21 @@ class Orchestrator:
         self._pr_manager = pr_manager
         self._composer = composer
         self._repo_path = repo_path
+        self._poll_interval = poll_interval
+        self._on_cycle = on_cycle
+        self._serial_runner = serial_runner
 
         # Active worker tracking: task_id -> (handle, pipeline_position)
         self._workers: dict[str, tuple[WorkerHandle, PipelinePosition]] = {}
 
     def run_loop(self, max_cycles: int = 1000) -> str:
         """Run the orchestrator loop until halt or max_cycles. Returns halt reason."""
-        for _ in range(max_cycles):
-            reason = self.run_cycle()
+        for cycle_num in range(max_cycles):
+            reason = self.run_cycle(cycle_num=cycle_num + 1)
             if reason is not None:
                 return reason
+            if self._poll_interval > 0:
+                time.sleep(self._poll_interval)
         return "max_cycles exhausted"
 
     def recover(self) -> None:
@@ -123,7 +135,7 @@ class Orchestrator:
                 task.phase,
             )
 
-    def run_cycle(self) -> str | None:
+    def run_cycle(self, cycle_num: int = 0) -> str | None:
         """Run one serial section cycle.
 
         Returns a halt reason string if the loop should stop, or None to continue.
@@ -132,6 +144,16 @@ class Orchestrator:
 
         # Cache world snapshot once per cycle — augmented with worker state
         world = self._build_world()
+
+        # ---- 0. Early exit on zero tasks -------------------------------------
+        if not world.tasks and not self._workers:
+            # Try intake first — it may create tasks from new specs
+            self._run_intake()
+            world = self._build_world()
+            if not world.tasks and not self._workers:
+                reason = "no tasks found — nothing to do"
+                self._notify_cycle(cycle_num, world, reason=reason)
+                return reason
 
         # ---- 1. Reap finished workers ----------------------------------------
         reaped_results: dict[str, WorkerResult] = {}
@@ -210,12 +232,12 @@ class Orchestrator:
             self._state.commit("orchestrator: halt")
             return halt_reason
 
-        # ---- 3. Process-improver (stub) --------------------------------------
+        # ---- 3. Process-improver ------------------------------------------------
         if had_failures_this_cycle:
-            logger.info("process-improver: stub — would run on trunk with this cycle's findings")
+            self._run_process_improver(reaped_results)
 
-        # ---- 4. Intake (stub) ------------------------------------------------
-        logger.debug("intake: stub — would run if configured and new specs exist")
+        # ---- 4. Intake ----------------------------------------------------------
+        self._run_intake()
 
         # ---- 5. Poll gates ---------------------------------------------------
         self._poll_gates(executor, to_spawn)
@@ -277,14 +299,18 @@ class Orchestrator:
         # ---- Check convergence -----------------------------------------------
         all_tasks = self._state.get_world().tasks
         if not all_tasks:
+            self._notify_cycle(cycle_num, world)
             return None
 
         all_complete = all(t.status == TaskStatus.COMPLETE for t in all_tasks.values())
         no_workers = len(self._workers) == 0
 
         if all_complete and no_workers:
-            return "all tasks complete"
+            reason = "all tasks complete"
+            self._notify_cycle(cycle_num, world, reason=reason)
+            return reason
 
+        self._notify_cycle(cycle_num, world)
         return None
 
     # -----------------------------------------------------------------------
@@ -403,6 +429,84 @@ class Orchestrator:
             self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
 
     # -----------------------------------------------------------------------
+    # Serial agents (PM intake + process-improver)
+    # -----------------------------------------------------------------------
+
+    def _unprocessed_specs(self) -> list[str]:
+        """Return spec file paths that have no corresponding task.
+
+        Scans specs/*.md (excluding subdirectories like tasks/, reviews/,
+        prompts/) and checks whether any existing task references each spec
+        via its spec_ref field.
+        """
+        all_specs = self._state.list_files("specs/*.md")
+        world = self._state.get_world()
+        covered_refs = {task.spec_ref for task in world.tasks.values()}
+        return [s for s in all_specs if s not in covered_refs]
+
+    def _collect_cycle_findings(self, reaped_results: dict[str, WorkerResult]) -> str:
+        """Collect findings from all failed results this cycle into a single string."""
+        sections: list[str] = []
+        for task_id, result in reaped_results.items():
+            if result.verdict in (Verdict.FAIL, Verdict.ERROR, Verdict.TIMEOUT):
+                sections.append(f"### {task_id}\n{result.detail}")
+        return "\n\n".join(sections)
+
+    def _run_intake(self) -> None:
+        """Run PM intake if there are unprocessed specs and a serial runner + composer."""
+        if self._serial_runner is None or self._composer is None:
+            logger.debug("intake: no serial_runner or composer — skipping")
+            return
+
+        unprocessed = self._unprocessed_specs()
+        if not unprocessed:
+            logger.debug("intake: no unprocessed specs — skipping")
+            return
+
+        logger.info("intake: %d unprocessed spec(s), running PM", len(unprocessed))
+
+        spec_list = "\n".join(f"- {s}" for s in unprocessed)
+        prompt = self._composer.compose(
+            role="pm",
+            task_id="intake",
+            spec_ref="specs/",
+            findings="",
+        )
+        prompt += f"\n## Specs to Process\n{spec_list}\n"
+
+        success = self._serial_runner.run("pm", prompt)
+        if success:
+            logger.info("intake: PM completed successfully")
+        else:
+            logger.warning("intake: PM agent failed")
+
+    def _run_process_improver(self, reaped_results: dict[str, WorkerResult]) -> None:
+        """Run process-improver with findings from failed results this cycle."""
+        if self._serial_runner is None or self._composer is None:
+            logger.info("process-improver: no serial_runner or composer — skipping")
+            return
+
+        findings_text = self._collect_cycle_findings(reaped_results)
+        if not findings_text:
+            logger.debug("process-improver: no failure findings this cycle — skipping")
+            return
+
+        logger.info("process-improver: running with this cycle's findings")
+
+        prompt = self._composer.compose(
+            role="process-improver",
+            task_id="process-improvement",
+            spec_ref="specs/prompts",
+            findings=findings_text,
+        )
+
+        success = self._serial_runner.run("process-improver", prompt)
+        if success:
+            logger.info("process-improver: completed successfully")
+        else:
+            logger.warning("process-improver: agent failed")
+
+    # -----------------------------------------------------------------------
     # World building
     # -----------------------------------------------------------------------
 
@@ -422,6 +526,37 @@ class Orchestrator:
             workers=workers,
             epoch=base_world.epoch,
         )
+
+    # -----------------------------------------------------------------------
+    # Cycle notification
+    # -----------------------------------------------------------------------
+
+    def _notify_cycle(
+        self,
+        cycle_num: int,
+        world: World,
+        reason: str | None = None,
+    ) -> None:
+        """Invoke the on_cycle callback with a summary of this cycle."""
+        if self._on_cycle is None:
+            return
+
+        tasks = world.tasks
+        summary: dict[str, object] = {
+            "cycle": cycle_num,
+            "tasks": {
+                "total": len(tasks),
+                "not_started": sum(1 for t in tasks.values() if t.status == TaskStatus.NOT_STARTED),
+                "in_progress": sum(1 for t in tasks.values() if t.status == TaskStatus.IN_PROGRESS),
+                "complete": sum(1 for t in tasks.values() if t.status == TaskStatus.COMPLETE),
+                "failed": sum(1 for t in tasks.values() if t.status == TaskStatus.FAILED),
+            },
+            "workers": len(self._workers),
+        }
+        if reason is not None:
+            summary["halt_reason"] = reason
+
+        self._on_cycle(summary)
 
     # -----------------------------------------------------------------------
     # Prompt composition

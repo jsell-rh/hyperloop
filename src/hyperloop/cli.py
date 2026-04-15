@@ -66,6 +66,37 @@ def _config_table(cfg: Config) -> Table:
     return table
 
 
+def _make_composer(state: object) -> object | None:
+    """Construct a PromptComposer using the base/ directory.
+
+    Tries two locations:
+    1. Development: relative to this file (src/hyperloop/../../base)
+    2. Installed package: via importlib.resources
+
+    Returns None if base/ directory cannot be found.
+    """
+    from hyperloop.compose import PromptComposer
+
+    # Development path: relative to this source file
+    dev_base = Path(__file__).resolve().parent.parent.parent / "base"
+    if dev_base.is_dir():
+        return PromptComposer(base_dir=dev_base, state=state)  # type: ignore[arg-type]
+
+    # Installed package: try importlib.resources
+    try:
+        import importlib.resources as pkg_resources
+
+        ref = pkg_resources.files("hyperloop").joinpath("../../base")
+        base_path = Path(str(ref))
+        if base_path.is_dir():
+            return PromptComposer(base_dir=base_path, state=state)  # type: ignore[arg-type]
+    except (ImportError, TypeError, FileNotFoundError):
+        pass
+
+    console.print("[dim]Warning: base/ directory not found — prompts will be empty.[/dim]")
+    return None
+
+
 @app.command()
 def run(
     path: Path = typer.Option(
@@ -164,12 +195,44 @@ def run(
     state = GitStateStore(repo_path, specs_dir=cfg.specs_dir)
     runtime = LocalRuntime(repo_path=str(repo_path))
 
+    # Resolve base/ directory for agent prompt definitions
+    composer = _make_composer(state)
+
+    def _on_cycle(summary: dict[str, object]) -> None:
+        """Print a rich status line after each orchestrator cycle."""
+        cycle = summary.get("cycle", "?")
+        tasks = summary.get("tasks", {})
+        workers = summary.get("workers", 0)
+        halt = summary.get("halt_reason")
+
+        if isinstance(tasks, dict):
+            total = tasks.get("total", 0)
+            done = tasks.get("complete", 0)
+            in_prog = tasks.get("in_progress", 0)
+            failed = tasks.get("failed", 0)
+            task_str = (
+                f"[dim]{total} total[/dim]  "
+                f"[green]{done} done[/green]  "
+                f"[yellow]{in_prog} active[/yellow]  "
+                f"[red]{failed} failed[/red]"
+            )
+        else:
+            task_str = "[dim]unknown[/dim]"
+
+        status = f"[bold]cycle {cycle}[/bold]  tasks: {task_str}  workers: {workers}"
+        if halt:
+            status += f"  [bold]{halt}[/bold]"
+        console.print(status)
+
     orchestrator = Orchestrator(
         state=state,
         runtime=runtime,
         process=default_process,
         max_workers=cfg.max_workers,
         max_rounds=cfg.max_rounds,
+        composer=composer,
+        poll_interval=cfg.poll_interval,
+        on_cycle=_on_cycle,
     )
 
     # 6. Recover and run

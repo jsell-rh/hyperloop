@@ -200,6 +200,12 @@ class GitStateStore:
         """Record a last-run marker."""
         self._epochs[key] = value
 
+    def list_files(self, pattern: str) -> list[str]:
+        """List file paths matching a glob pattern relative to the repo root."""
+        return sorted(
+            str(p.relative_to(self._repo)) for p in self._repo.glob(pattern) if p.is_file()
+        )
+
     def read_file(self, path: str) -> str | None:
         """Read a file from the repo. Returns None if it does not exist."""
         file_path = self._repo / path
