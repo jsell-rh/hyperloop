@@ -209,6 +209,19 @@ def _create_room(
 # ---------------------------------------------------------------------------
 
 
+def _check_token(client: httpx.Client, homeserver: str, access_token: str) -> bool:
+    """Verify an access token is still valid via /_matrix/client/v3/account/whoami."""
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        resp = client.get(
+            f"{homeserver}/_matrix/client/v3/account/whoami",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        return resp.status_code == 200
+    return False
+
+
 def ensure_matrix_ready(
     config: MatrixConfig,
     repo_path: Path,
@@ -217,12 +230,13 @@ def ensure_matrix_ready(
 
     **Access token** resolution:
     1. Explicit ``token_env`` env var → use directly.
-    2. ``registration_token_env`` → register a fresh disposable bot
-       (``hyperloop-{repo}-{random}``), deactivate the previous one.
+    2. Cached token from ``.hyperloop/matrix-state.json`` → validate with
+       whoami, reuse if valid.
+    3. ``registration_token_env`` → register a new bot, cache credentials.
 
     **Room ID** resolution:
     1. Explicit ``room_id`` in config.
-    2. Cached room_id from ``.hyperloop/matrix-state.json``.
+    2. Cached room_id.
     3. Auto-create via Matrix API (invites ``invite_user``).
 
     Returns:
@@ -233,64 +247,88 @@ def ensure_matrix_ready(
 
     homeserver = config.homeserver.rstrip("/")
     cache = _load_cache(repo_path, homeserver)
+    client = httpx.Client(timeout=30.0)
 
-    # --- Resolve access token ---
-    explicit_token = os.environ.get(config.token_env) if config.token_env else ""
-    access_token = explicit_token
+    try:
+        # --- Resolve access token ---
+        explicit_token = os.environ.get(config.token_env) if config.token_env else ""
+        access_token = explicit_token
+        is_new_bot = False
 
-    if not access_token:
-        registration_token = (
-            os.environ.get(config.registration_token_env) if config.registration_token_env else ""
-        )
-        if registration_token:
-            try:
-                access_token = _register_disposable_bot(
-                    config, repo_path, homeserver, registration_token, cache
+        if not access_token:
+            # Try cached token
+            cached_token = cache.get("access_token", "") if cache else ""
+            if cached_token and _check_token(client, homeserver, cached_token):
+                access_token = cached_token
+                _log.info("matrix_using_cached_credentials")
+            else:
+                # Cached token missing or stale — try registration
+                registration_token = (
+                    os.environ.get(config.registration_token_env)
+                    if config.registration_token_env
+                    else ""
                 )
-            except Exception:
-                _log.exception("matrix_bot_registration_failed")
-        else:
-            _log.warning("matrix_skipped", reason="no access token and no registration token")
+                if not registration_token:
+                    if cached_token:
+                        _log.warning(
+                            "matrix_credentials_stale",
+                            hint="Cached Matrix credentials are invalid. "
+                            "Set registration_token_env in .hyperloop.yaml to "
+                            "auto-register a new bot, or provide a fresh access "
+                            "token via token_env.",
+                        )
+                    else:
+                        _log.warning(
+                            "matrix_skipped",
+                            reason="no access token, no cache, no registration token",
+                        )
+                    return "", ""
+
+                try:
+                    access_token = _register_bot_and_cache(
+                        config, repo_path, homeserver, registration_token, cache
+                    )
+                    is_new_bot = True
+                except Exception:
+                    _log.exception("matrix_bot_registration_failed")
+                    return "", ""
+
+        if not access_token:
             return "", ""
 
-    if not access_token:
-        return "", ""
+        # --- Resolve room_id ---
+        cached_room = cache.get("room_id", "") if cache else ""
+        room_id = config.room_id or cached_room
 
-    # --- Resolve room_id ---
-    cached_room = cache.get("room_id", "") if cache else ""
-    room_id = config.room_id or cached_room
+        if not room_id:
+            _log.info("matrix_room_creating")
+            try:
+                room_id = _auto_create_room(config, repo_path, homeserver, access_token)
+            except Exception:
+                _log.exception("matrix_room_creation_failed")
+                return access_token, ""
 
-    if not room_id:
-        _log.info("matrix_room_creating")
-        try:
-            room_id = _auto_create_room(config, repo_path, homeserver, access_token)
-        except Exception:
-            _log.exception("matrix_room_creation_failed")
-            return access_token, ""
+        # New bot needs to join the existing room
+        if is_new_bot and room_id:
+            _log.info("matrix_room_joining", room_id=room_id)
+            try:
+                _join_room(client, homeserver, access_token, room_id)
+            except Exception:
+                _log.exception("matrix_room_join_failed", room_id=room_id)
 
-    # Ensure the bot has joined the room (it's a new user each run)
-    if access_token != explicit_token and room_id:
-        _log.info("matrix_room_joining", room_id=room_id)
-        try:
-            _join_room(httpx.Client(timeout=10.0), homeserver, access_token, room_id)
-        except Exception:
-            _log.exception("matrix_room_join_failed", room_id=room_id)
-
-    return access_token, room_id
+        return access_token, room_id
+    finally:
+        client.close()
 
 
-def _register_disposable_bot(
+def _register_bot_and_cache(
     config: MatrixConfig,
     repo_path: Path,
     homeserver: str,
     registration_token: str,
     cache: dict[str, str] | None,
 ) -> str:
-    """Register a fresh disposable bot user. Returns access_token.
-
-    Each run gets a new identity (``hyperloop-{repo}-{random}``). The
-    previous bot is deactivated best-effort. Only the room_id is cached.
-    """
+    """Register a bot user and cache credentials. Returns access_token."""
     repo_name = repo_path.name
     suffix = secrets.token_hex(4)
     username = f"hyperloop-{repo_name}-{suffix}"
@@ -298,17 +336,10 @@ def _register_disposable_bot(
 
     client = httpx.Client(timeout=30.0)
     try:
-        # Deactivate previous bot (best-effort)
-        prev_token = cache.get("access_token", "") if cache else ""
-        if prev_token:
-            _deactivate_user(client, homeserver, prev_token)
-
-        # Register new bot
         user_id, access_token = _register_bot(
             client, homeserver, registration_token, username, password
         )
 
-        # Cache room_id + new bot credentials
         cached_room = cache.get("room_id", "") if cache else ""
         _save_cache(
             repo_path,
@@ -323,19 +354,6 @@ def _register_disposable_bot(
         return access_token
     finally:
         client.close()
-
-
-def _deactivate_user(client: httpx.Client, homeserver: str, access_token: str) -> None:
-    """Deactivate the user associated with the given access token. Best-effort."""
-    import contextlib
-
-    url = f"{homeserver}/_matrix/client/v3/account/deactivate"
-    with contextlib.suppress(Exception):
-        client.post(
-            url,
-            json={"auth": {"type": "m.login.password"}},
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
 
 
 def _join_room(client: httpx.Client, homeserver: str, access_token: str, room_id: str) -> None:
