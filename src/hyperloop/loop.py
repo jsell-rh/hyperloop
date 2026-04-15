@@ -7,9 +7,10 @@ update state, spawn workers, and check convergence.
 
 from __future__ import annotations
 
-import logging
 import time
 from typing import TYPE_CHECKING
+
+import structlog
 
 from hyperloop.adapters.probe import NullProbe
 from hyperloop.domain.decide import decide
@@ -51,7 +52,7 @@ if TYPE_CHECKING:
     from hyperloop.ports.serial import SerialRunner
     from hyperloop.ports.state import StateStore
 
-logger = logging.getLogger(__name__)
+logger: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 
 class Orchestrator:
@@ -109,6 +110,13 @@ class Orchestrator:
 
     def run_loop(self, max_cycles: int = 1000) -> str:
         """Run the orchestrator loop until halt or max_cycles. Returns halt reason."""
+        world = self._state.get_world()
+        self._probe.orchestrator_started(
+            task_count=len(world.tasks),
+            max_workers=self._max_workers,
+            max_rounds=self._max_rounds,
+            overlay=None,
+        )
         for cycle_num in range(max_cycles):
             reason = self.run_cycle(cycle_num=cycle_num + 1)
             if reason is not None:
@@ -315,6 +323,16 @@ class Orchestrator:
                         TaskStatus.IN_PROGRESS,
                         phase=Phase(pipe_action.role),
                     )
+                    self._probe.task_advanced(
+                        task_id=task_id,
+                        spec_ref=task.spec_ref,
+                        from_phase=str(task.phase) if task.phase else None,
+                        to_phase=pipe_action.role,
+                        from_status=task.status.value,
+                        to_status=TaskStatus.IN_PROGRESS.value,
+                        round=task.round,
+                        cycle=cycle_num,
+                    )
                 to_spawn.append((task_id, pipe_action.role, new_pos))
 
             else:
@@ -324,6 +342,16 @@ class Orchestrator:
                     task_id,
                     TaskStatus.IN_PROGRESS,
                     phase=Phase(phase_name) if phase_name else None,
+                )
+                self._probe.task_advanced(
+                    task_id=task_id,
+                    spec_ref=task.spec_ref,
+                    from_phase=str(task.phase) if task.phase else None,
+                    to_phase=phase_name,
+                    from_status=task.status.value,
+                    to_status=TaskStatus.IN_PROGRESS.value,
+                    round=task.round,
+                    cycle=cycle_num,
                 )
 
         # ---- 2b. Halt if any task failed -------------------------------------

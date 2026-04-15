@@ -5,10 +5,11 @@ Used for PM intake and process-improver. Blocks until the agent completes.
 
 from __future__ import annotations
 
-import logging
 import subprocess
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 
 class SubprocessSerialRunner:

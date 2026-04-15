@@ -7,11 +7,12 @@ FakePRManager (tests/fakes/pr.py) for testing without a real GitHub repo.
 from __future__ import annotations
 
 import json
-import logging
 import re
 import subprocess
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 
 class PRManager:

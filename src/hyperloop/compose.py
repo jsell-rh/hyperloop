@@ -12,7 +12,6 @@ spawn time because it changes during the loop.
 
 from __future__ import annotations
 
-import logging
 import shutil
 import subprocess
 import tempfile
@@ -20,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import structlog
 import yaml
 
 from hyperloop.domain.model import (
@@ -38,7 +38,7 @@ from hyperloop.domain.model import (
 if TYPE_CHECKING:
     from hyperloop.ports.state import StateStore
 
-logger = logging.getLogger(__name__)
+logger: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 HYPERLOOP_BASE_REF = "github.com/jsell-rh/hyperloop//base?ref=main"
 

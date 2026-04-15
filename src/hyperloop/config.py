@@ -194,11 +194,14 @@ def load_config(
 
     # Build ObservabilityConfig
     matrix_cfg: MatrixConfig | None = None
-    if "matrix_homeserver" in values:
+    homeserver = str(values.get("matrix_homeserver", ""))
+    room_id = str(values.get("matrix_room_id", ""))
+    token_env = str(values.get("matrix_token_env", ""))
+    if homeserver and room_id and token_env:
         matrix_cfg = MatrixConfig(
-            homeserver=str(values["matrix_homeserver"]),
-            room_id=str(values["matrix_room_id"]),
-            token_env=str(values["matrix_token_env"]),
+            homeserver=homeserver,
+            room_id=room_id,
+            token_env=token_env,
             verbose=bool(values.get("matrix_verbose", False)),
         )
 
