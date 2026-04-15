@@ -7,6 +7,7 @@ the orchestrator, and runs the loop with rich status output.
 from __future__ import annotations
 
 import sys
+from importlib.metadata import version as pkg_version
 from pathlib import Path
 
 import typer
@@ -23,8 +24,23 @@ app = typer.Typer(
 console = Console()
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        console.print(f"hyperloop {pkg_version('hyperloop')}")
+        raise typer.Exit()
+
+
 @app.callback()
-def main() -> None:
+def main(
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        help="Show version and exit.",
+        callback=_version_callback,
+        is_eager=True,
+    ),
+) -> None:
     """AI agent orchestrator for composable process pipelines."""
 
 
