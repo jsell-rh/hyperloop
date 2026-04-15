@@ -52,7 +52,12 @@ class PromptComposer:
         self._state = state
 
     @classmethod
-    def from_kustomize(cls, overlay: str | None, state: StateStore) -> PromptComposer:
+    def from_kustomize(
+        cls,
+        overlay: str | None,
+        state: StateStore,
+        base_ref: str = HYPERLOOP_BASE_REF,
+    ) -> PromptComposer:
         """Resolve templates via kustomize build, then construct.
 
         Args:
@@ -60,6 +65,8 @@ class PromptComposer:
                      a temporary kustomization referencing the hyperloop base
                      is created and built.
             state: StateStore for reading process overlays at spawn time.
+            base_ref: Kustomize remote resource for the base definitions.
+                      Configurable via .hyperloop.yaml or HYPERLOOP_BASE_REF env var.
 
         Returns:
             A PromptComposer with resolved templates.
@@ -67,7 +74,7 @@ class PromptComposer:
         Raises:
             RuntimeError: If kustomize build fails.
         """
-        raw_yaml = _kustomize_build(overlay)
+        raw_yaml = _kustomize_build(overlay, base_ref=base_ref)
         templates = _parse_multi_doc(raw_yaml)
         return cls(templates, state)
 
@@ -149,13 +156,14 @@ class PromptComposer:
         return raw_yaml.strip()
 
 
-def _kustomize_build(overlay: str | None) -> str:
+def _kustomize_build(overlay: str | None, base_ref: str = HYPERLOOP_BASE_REF) -> str:
     """Run ``kustomize build`` and return the raw YAML output.
 
     Args:
         overlay: Path or git URL to a kustomization directory.
                  If None, builds from a temporary kustomization that
                  references the hyperloop base.
+        base_ref: Kustomize remote resource for the base definitions.
 
     Returns:
         The multi-document YAML output from kustomize build.
@@ -169,7 +177,7 @@ def _kustomize_build(overlay: str | None) -> str:
     # No overlay — build a temp kustomization referencing the base
     with tempfile.TemporaryDirectory() as tmp:
         kustomization = Path(tmp) / "kustomization.yaml"
-        kustomization.write_text(f"resources:\n  - {HYPERLOOP_BASE_REF}\n")
+        kustomization.write_text(f"resources:\n  - {base_ref}\n")
         return _run_kustomize(tmp)
 
 

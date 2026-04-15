@@ -6,10 +6,13 @@ returns a frozen Config dataclass. CLI arguments can override file values.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 import yaml
+
+DEFAULT_BASE_REF = "github.com/jsell-rh/hyperloop//base?ref=main"
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -27,6 +30,7 @@ class Config:
     base_branch: str  # default: "main"
     specs_dir: str  # default: "specs"
     overlay: str | None  # path or git URL to kustomization dir
+    base_ref: str  # kustomize remote base ref (env: HYPERLOOP_BASE_REF)
     runtime: str  # "local" (v1 only)
     max_workers: int  # default: 6
     auto_merge: bool  # default: True
@@ -44,6 +48,7 @@ def _defaults() -> dict[str, object]:
         "base_branch": "main",
         "specs_dir": "specs",
         "overlay": None,
+        "base_ref": os.environ.get("HYPERLOOP_BASE_REF", DEFAULT_BASE_REF),
         "runtime": "local",
         "max_workers": 6,
         "auto_merge": True,
@@ -63,7 +68,7 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
     flat: dict[str, object] = {}
 
     # Top-level scalars
-    for key in ("overlay", "poll_interval", "max_rounds", "max_rebase_attempts"):
+    for key in ("overlay", "base_ref", "poll_interval", "max_rounds", "max_rebase_attempts"):
         if key in raw:
             flat[key] = raw[key]
 
@@ -150,6 +155,7 @@ def load_config(
         base_branch=str(values["base_branch"]),
         specs_dir=str(values["specs_dir"]),
         overlay=values["overlay"] if values["overlay"] is not None else None,  # type: ignore[arg-type]
+        base_ref=str(values["base_ref"]),
         runtime=str(values["runtime"]),
         max_workers=int(values["max_workers"]),  # type: ignore[arg-type]
         auto_merge=bool(values["auto_merge"]),

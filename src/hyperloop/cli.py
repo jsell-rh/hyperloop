@@ -54,6 +54,7 @@ def _config_table(cfg: Config) -> Table:
     table.add_row("base_branch", cfg.base_branch)
     table.add_row("specs_dir", cfg.specs_dir)
     table.add_row("overlay", cfg.overlay or "[dim]none[/dim]")
+    table.add_row("base_ref", cfg.base_ref)
     table.add_row("runtime", cfg.runtime)
     table.add_row("max_workers", str(cfg.max_workers))
     table.add_row("auto_merge", str(cfg.auto_merge))
@@ -84,7 +85,8 @@ def _make_composer(cfg: object, state: object) -> object:
     check_kustomize_available()
 
     overlay = getattr(cfg, "overlay", None)
-    return PromptComposer.from_kustomize(overlay, state)  # type: ignore[arg-type]
+    base_ref = getattr(cfg, "base_ref", "github.com/jsell-rh/hyperloop//base?ref=main")
+    return PromptComposer.from_kustomize(overlay, state, base_ref=base_ref)  # type: ignore[arg-type]
 
 
 @app.command()
