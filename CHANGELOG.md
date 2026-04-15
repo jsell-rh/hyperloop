@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.0 (2026-04-15)
+
+### Features
+
+- **matrix**: Auto-register bot and create room
+  ([`fc0d2dd`](https://github.com/jsell-rh/hyperloop/commit/fc0d2dd77cfc11f392af635ec516b3f131bc5a81))
+
+
 ## v0.7.0 (2026-04-15)
 
 ### Features
