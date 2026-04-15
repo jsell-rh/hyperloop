@@ -95,8 +95,11 @@ class TestRunRequiresRepo:
     """Running without --dry-run and without a repo should show an error."""
 
     def test_no_repo_shows_error(self, tmp_path: Path) -> None:
-        # No config file, no --repo flag, no git remote to infer from
-        result = runner.invoke(app, ["run", "--config", str(tmp_path / "nope.yaml")])
+        # Point --path at a non-git temp dir so the CLI never touches the real repo
+        result = runner.invoke(
+            app,
+            ["run", "--path", str(tmp_path), "--config", str(tmp_path / "nope.yaml")],
+        )
 
-        # Should exit non-zero or show an error message
-        assert result.exit_code != 0 or "repo" in result.output.lower()
+        # Should exit non-zero — tmp_path is not a git repository
+        assert result.exit_code != 0

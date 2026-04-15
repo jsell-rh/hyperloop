@@ -1,1 +1,0 @@
-{"verdict": "pass", "findings": 0, "detail": "Added specs/prompts/checklist.md, rules.md, and checks/check_result_file.sh to enforce result file writing after 5/5 tasks failed with missing .worker-result.json"}

@@ -72,7 +72,7 @@ def _init_repo(path: Path) -> None:
         env=env,
     )
     subprocess.run(
-        ["git", "-C", str(path), "commit", "--allow-empty", "-m", "init"],
+        ["git", "-C", str(path), "commit", "--no-verify", "--allow-empty", "-m", "init"],
         check=True,
         capture_output=True,
         env=env,
@@ -96,7 +96,7 @@ def _write_spec_file(repo: Path, name: str, content: str) -> None:
 def _commit_all(repo: Path, message: str) -> None:
     """Stage and commit all changes in the repo."""
     _git(repo, "add", "-A")
-    _git(repo, "commit", "-m", message)
+    _git(repo, "commit", "--no-verify", "-m", message)
 
 
 def _make_agent_script(tmp_path: Path, name: str, body: str) -> str:

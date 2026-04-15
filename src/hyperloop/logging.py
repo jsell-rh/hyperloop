@@ -16,7 +16,6 @@ def configure_logging(log_format: str = "console", log_level: str = "info") -> N
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
-        structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.ExceptionRenderer(),

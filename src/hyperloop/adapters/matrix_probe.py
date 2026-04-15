@@ -11,12 +11,12 @@ sent.
 
 from __future__ import annotations
 
+import logging
 from uuid import uuid4
 
 import httpx
-import structlog
 
-_log: structlog.stdlib.BoundLogger = structlog.get_logger()
+_log = logging.getLogger(__name__)
 
 
 class MatrixProbe:
@@ -93,7 +93,7 @@ class MatrixProbe:
                 self._thread_roots[task_id] = event_id
 
         except Exception:
-            _log.exception("matrix_send_failed", room_id=self._room_id)
+            _log.exception("matrix_send_failed room_id=%s", self._room_id)
 
     # ------------------------------------------------------------------
     # High-signal: always sent
@@ -107,7 +107,7 @@ class MatrixProbe:
         duration_s = kw.get("duration_s", 0.0)
         detail = str(kw.get("detail", ""))
 
-        dur = round(float(duration_s), 1) if isinstance(duration_s, (int, float)) else duration_s
+        dur = round(float(duration_s), 1) if isinstance(duration_s, int | float) else duration_s
         emoji = "\u2705" if verdict == "pass" else "\u274c"
         body = f"{emoji} {task_id} \u00b7 {role} {verdict} (round {rnd}, {dur}s)\n{detail}"
         self._send(body, task_id=task_id)
@@ -212,7 +212,7 @@ class MatrixProbe:
             return
         cycle = kw.get("cycle", 0)
         duration_s = kw.get("duration_s", 0.0)
-        dur = round(float(duration_s), 1) if isinstance(duration_s, (int, float)) else duration_s
+        dur = round(float(duration_s), 1) if isinstance(duration_s, int | float) else duration_s
 
         body = f"\U0001f504 cycle {cycle} completed ({dur}s)"
         self._send(body)
@@ -222,7 +222,7 @@ class MatrixProbe:
             return
         created = kw.get("created_tasks", 0)
         duration_s = kw.get("duration_s", 0.0)
-        dur = round(float(duration_s), 1) if isinstance(duration_s, (int, float)) else duration_s
+        dur = round(float(duration_s), 1) if isinstance(duration_s, int | float) else duration_s
 
         body = f"\U0001f4e5 intake ran: {created} task(s) created ({dur}s)"
         self._send(body)
@@ -231,7 +231,7 @@ class MatrixProbe:
         if not self._verbose:
             return
         duration_s = kw.get("duration_s", 0.0)
-        dur = round(float(duration_s), 1) if isinstance(duration_s, (int, float)) else duration_s
+        dur = round(float(duration_s), 1) if isinstance(duration_s, int | float) else duration_s
 
         body = f"\U0001f527 process-improver ran ({dur}s)"
         self._send(body)

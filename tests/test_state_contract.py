@@ -39,7 +39,7 @@ def _init_git_repo(path: Path) -> None:
         capture_output=True,
     )
     subprocess.run(
-        ["git", "-C", str(path), "commit", "--allow-empty", "-m", "init"],
+        ["git", "-C", str(path), "commit", "--no-verify", "--allow-empty", "-m", "init"],
         check=True,
         capture_output=True,
     )
@@ -52,7 +52,7 @@ def _write_task_file(repo: Path, task_id: str, content: str) -> None:
     (tasks_dir / f"{task_id}.md").write_text(content)
     subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
     subprocess.run(
-        ["git", "-C", str(repo), "commit", "-m", f"add {task_id}"],
+        ["git", "-C", str(repo), "commit", "--no-verify", "-m", f"add {task_id}"],
         check=True,
         capture_output=True,
     )

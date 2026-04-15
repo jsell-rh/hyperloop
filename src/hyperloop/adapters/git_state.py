@@ -228,9 +228,15 @@ class GitStateStore:
         self._write_task_file(task_id, fm, body)
 
     def commit(self, message: str) -> None:
-        """Stage all changes and create a git commit."""
+        """Stage all changes and create a git commit.
+
+        Uses --no-verify to skip pre-commit hooks. State commits are
+        orchestrator bookkeeping (task status transitions, findings), not
+        code changes — running linters and tests on them is incorrect and
+        can cause infinite recursion when pre-commit hooks include pytest.
+        """
         self._git("add", "-A")
-        self._git("commit", "-m", message)
+        self._git("commit", "--no-verify", "-m", message)
 
 
 # ---------------------------------------------------------------------------

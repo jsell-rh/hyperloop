@@ -49,7 +49,7 @@ def _init_repo(path: Path) -> None:
         env=env,
     )
     subprocess.run(
-        ["git", "-C", str(path), "commit", "--allow-empty", "-m", "init"],
+        ["git", "-C", str(path), "commit", "--no-verify", "--allow-empty", "-m", "init"],
         check=True,
         capture_output=True,
         env=env,

@@ -7,7 +7,7 @@ returns a frozen Config dataclass. CLI arguments can override file values.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 import yaml
@@ -58,8 +58,10 @@ class Config:
     poll_interval: int  # default: 30
     max_rounds: int  # default: 50
     max_rebase_attempts: int  # default: 3
-    observability: ObservabilityConfig = ObservabilityConfig(
-        log_format="console", log_level="info", matrix=None
+    observability: ObservabilityConfig = field(
+        default_factory=lambda: ObservabilityConfig(
+            log_format="console", log_level="info", matrix=None
+        )
     )
 
 
