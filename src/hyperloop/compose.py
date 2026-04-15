@@ -119,7 +119,7 @@ class PromptComposer:
         try:
             doc = yaml.safe_load(raw_yaml)
             if isinstance(doc, dict) and "prompt" in doc:
-                return str(cast(dict[str, object], doc)["prompt"]).strip()
+                return str(cast("dict[str, object]", doc)["prompt"]).strip()
         except yaml.YAMLError:
             pass
         # Fall back to raw content

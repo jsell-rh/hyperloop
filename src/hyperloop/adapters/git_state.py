@@ -54,7 +54,8 @@ def _frontmatter_to_task(fm: dict[str, object]) -> Task:
     phase = Phase(str(raw_phase)) if raw_phase is not None else None
 
     raw_deps = fm.get("deps")
-    deps = tuple(str(d) for d in cast(list[object], raw_deps)) if isinstance(raw_deps, list) else ()
+    dep_list = cast("list[object]", raw_deps) if isinstance(raw_deps, list) else []
+    deps = tuple(str(d) for d in dep_list)
 
     raw_branch = fm.get("branch")
     branch = str(raw_branch) if raw_branch is not None else None
