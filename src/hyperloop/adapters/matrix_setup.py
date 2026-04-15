@@ -281,12 +281,15 @@ def _auto_register(
     cache: dict[str, str] | None,
 ) -> str:
     """Register a bot user and cache credentials. Returns access_token."""
+    import os
+
     repo_name = repo_path.name
     username = config.bot_username or f"hyperloop-{repo_name}"
 
-    password = cache.get("password", "") if cache else ""
-    if not password:
-        password = secrets.token_urlsafe(32)
+    # Password priority: env var > cache > generate new
+    env_password = os.environ.get(config.bot_password_env) if config.bot_password_env else ""
+    cached_password = cache.get("password", "") if cache else ""
+    password = env_password or cached_password or secrets.token_urlsafe(32)
 
     client = httpx.Client(timeout=30.0)
     try:
