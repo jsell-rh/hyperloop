@@ -38,6 +38,21 @@ class InMemoryStateStore:
         """Return stored findings for a task (test helper)."""
         return self._findings.get(task_id, "")
 
+    def set_task_pr(self, task_id: str, pr_url: str) -> None:
+        """Set the PR URL on a task (test helper, not part of the port)."""
+        old = self._tasks[task_id]
+        self._tasks[task_id] = Task(
+            id=old.id,
+            title=old.title,
+            spec_ref=old.spec_ref,
+            status=old.status,
+            phase=old.phase,
+            deps=old.deps,
+            round=old.round,
+            branch=old.branch,
+            pr=pr_url,
+        )
+
     # -- StateStore protocol ------------------------------------------------
 
     def get_world(self) -> World:

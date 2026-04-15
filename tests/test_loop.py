@@ -6,6 +6,8 @@ Uses InMemoryStateStore and InMemoryRuntime fakes. No mocks.
 from __future__ import annotations
 
 from k_orchestrate.domain.model import (
+    ActionStep,
+    GateStep,
     LoopStep,
     Phase,
     RoleStep,
@@ -16,6 +18,7 @@ from k_orchestrate.domain.model import (
     Workflow,
 )
 from k_orchestrate.loop import Orchestrator
+from tests.fakes.pr import FakePRManager
 from tests.fakes.runtime import InMemoryRuntime
 from tests.fakes.state import InMemoryStateStore
 
@@ -67,6 +70,7 @@ def _make_orchestrator(
     workflow: Workflow = DEFAULT_WORKFLOW,
     max_workers: int = 6,
     max_rounds: int = 50,
+    pr_manager: FakePRManager | None = None,
 ) -> Orchestrator:
     return Orchestrator(
         state=state,
@@ -74,6 +78,7 @@ def _make_orchestrator(
         workflow=workflow,
         max_workers=max_workers,
         max_rounds=max_rounds,
+        pr_manager=pr_manager,
     )
 
 
@@ -590,10 +595,10 @@ class TestRecovery:
 
 
 class TestGateStub:
-    """Gate polling is currently a stub — tasks at gates are not blocked from decide()."""
+    """Gate polling without PRManager is a no-op."""
 
     def test_gate_stub_does_not_crash(self) -> None:
-        """Running a cycle with the gate stub should not raise."""
+        """Running a cycle without a PRManager should not raise."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task())
@@ -624,3 +629,212 @@ class TestDecideIntegration:
         orch.run_cycle()
         assert state.get_task("task-001").status == TaskStatus.IN_PROGRESS
         assert state.get_task("task-002").status == TaskStatus.NOT_STARTED
+
+
+class TestGatePolling:
+    """Gate polling with PRManager: tasks at a gate advance when lgtm label is present."""
+
+    GATE_WORKFLOW = Workflow(
+        name="gate-workflow",
+        intake=(),
+        pipeline=(
+            LoopStep(
+                steps=(
+                    RoleStep(role="implementer", on_pass=None, on_fail=None),
+                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                ),
+            ),
+            GateStep(gate="human-pr-approval"),
+            ActionStep(action="merge-pr"),
+        ),
+    )
+
+    def test_gate_cleared_advances_task(self) -> None:
+        """When lgtm label is found, the gate clears and task advances past it."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        # Create a PR for the task
+        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/widget.md")
+
+        # Task is at the gate step
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("human-pr-approval"),
+                branch="worker/task-001",
+            )
+        )
+        # Store the PR URL on the task
+        state.set_task_pr("task-001", pr_url)
+
+        # Human adds lgtm label
+        pr_mgr.add_label(pr_url, "lgtm")
+
+        orch = _make_orchestrator(state, runtime, workflow=self.GATE_WORKFLOW, pr_manager=pr_mgr)
+        orch.run_cycle()
+
+        # Gate should have cleared, task should advance past the gate
+        task = state.get_task("task-001")
+        assert task.phase != Phase("human-pr-approval")
+
+    def test_gate_not_cleared_task_stays(self) -> None:
+        """When no lgtm label, the task stays at the gate."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/widget.md")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("human-pr-approval"),
+                branch="worker/task-001",
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(state, runtime, workflow=self.GATE_WORKFLOW, pr_manager=pr_mgr)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.phase == Phase("human-pr-approval")
+
+    def test_no_pr_manager_gates_are_noop(self) -> None:
+        """Without a PRManager, gate polling is a no-op (backward compat)."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("human-pr-approval"),
+                branch="worker/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime, workflow=self.GATE_WORKFLOW, pr_manager=None)
+        # Should not crash
+        orch.run_cycle()
+        task = state.get_task("task-001")
+        assert task.phase == Phase("human-pr-approval")
+
+
+class TestMergeWithPRManager:
+    """Merge step with PRManager: rebase, then squash-merge."""
+
+    MERGE_WORKFLOW = Workflow(
+        name="merge-workflow",
+        intake=(),
+        pipeline=(
+            LoopStep(
+                steps=(
+                    RoleStep(role="implementer", on_pass=None, on_fail=None),
+                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                ),
+            ),
+            ActionStep(action="merge-pr"),
+        ),
+    )
+
+    def test_merge_succeeds_marks_task_complete(self) -> None:
+        """When rebase is clean and merge succeeds, task becomes COMPLETE."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/widget.md")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="worker/task-001",
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(state, runtime, workflow=self.MERGE_WORKFLOW, pr_manager=pr_mgr)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.COMPLETE
+
+    def test_rebase_conflict_spawns_rebase_resolver(self) -> None:
+        """When rebase fails, task gets rebase-resolver spawned."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/widget.md")
+        pr_mgr.set_rebase_fails("worker/task-001")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="worker/task-001",
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(state, runtime, workflow=self.MERGE_WORKFLOW, pr_manager=pr_mgr)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.phase == Phase("rebase-resolver")
+
+    def test_merge_conflict_spawns_rebase_resolver(self) -> None:
+        """When merge fails, task gets rebase-resolver spawned."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/widget.md")
+        pr_mgr.set_merge_fails(pr_url)
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="worker/task-001",
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(state, runtime, workflow=self.MERGE_WORKFLOW, pr_manager=pr_mgr)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.phase == Phase("rebase-resolver")
+
+    def test_no_pr_manager_merge_is_noop(self) -> None:
+        """Without a PRManager, merge is a no-op (backward compat)."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="worker/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime, workflow=self.MERGE_WORKFLOW, pr_manager=None)
+        # Should not crash — merge is a no-op
+        orch.run_cycle()
+        # Task stays in its current state since merge was a no-op
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS

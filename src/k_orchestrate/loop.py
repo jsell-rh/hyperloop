@@ -1,8 +1,8 @@
 """Orchestrator loop — wires decide, pipeline, state store, and runtime.
 
 Runs the serial section from the spec: reap finished workers, check for halt,
-run stubs for process-improver/intake/gates/merge, decide what to spawn,
-update state, spawn workers, and check convergence.
+run stubs for process-improver/intake, poll gates, merge PRs, decide what to
+spawn, update state, spawn workers, and check convergence.
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 
 from k_orchestrate.domain.decide import decide
 from k_orchestrate.domain.model import (
+    ActionStep,
+    GateStep,
     Halt,
     LoopStep,
     Phase,
@@ -26,14 +28,17 @@ from k_orchestrate.domain.model import (
     World,
 )
 from k_orchestrate.domain.pipeline import (
+    PerformAction,
     PipelineComplete,
     PipelineExecutor,
     PipelineFailed,
     SpawnRole,
+    WaitForGate,
 )
 
 if TYPE_CHECKING:
     from k_orchestrate.domain.model import PipelineStep, Task, WorkerResult, Workflow
+    from k_orchestrate.ports.pr import PRPort
     from k_orchestrate.ports.runtime import Runtime
     from k_orchestrate.ports.state import StateStore
 
@@ -49,8 +54,8 @@ class Orchestrator:
       2. Halt if any task failed
       3. Process-improver (stub)
       4. Intake (stub)
-      5. Poll gates (stub)
-      6. Merge ready PRs (stub)
+      5. Poll gates
+      6. Merge ready PRs
       7. Decide what to spawn (via decide())
       8. Update state (transition tasks, commit)
       9. Spawn workers
@@ -63,12 +68,14 @@ class Orchestrator:
         workflow: Workflow,
         max_workers: int = 6,
         max_rounds: int = 50,
+        pr_manager: PRPort | None = None,
     ) -> None:
         self._state = state
         self._runtime = runtime
         self._workflow = workflow
         self._max_workers = max_workers
         self._max_rounds = max_rounds
+        self._pr_manager = pr_manager
 
         # Active worker tracking: task_id -> (handle, pipeline_position)
         self._workers: dict[str, tuple[WorkerHandle, PipelinePosition]] = {}
@@ -103,8 +110,6 @@ class Orchestrator:
             if orphan is not None:
                 self._runtime.cancel(orphan)
 
-            # Create a placeholder handle so decide() sees this task as
-            # needing a worker (it will be re-spawned in the next cycle)
             # We don't add to _workers here — instead leave it workerless
             # so decide() will emit a SpawnWorker for it next cycle.
             logger.info(
@@ -202,27 +207,19 @@ class Orchestrator:
 
         # ---- 3. Process-improver (stub) --------------------------------------
         if had_failures_this_cycle:
-            # TODO: run process-improver agent once on trunk, reading all
-            # findings from this cycle. For now, log and skip.
             logger.info("process-improver: stub — would run on trunk with this cycle's findings")
 
         # ---- 4. Intake (stub) ------------------------------------------------
-        # TODO: run PM intake if configured and new specs exist.
-        # For now, log and skip.
         logger.debug("intake: stub — would run if configured and new specs exist")
 
-        # ---- 5. Poll gates (stub) --------------------------------------------
-        # TODO: for tasks at a gate step, check PR labels for lgtm.
-        # When found, clear gate and advance task.
-        logger.debug("gates: stub — would poll PR labels for lgtm")
+        # ---- 5. Poll gates ---------------------------------------------------
+        self._poll_gates(executor, to_spawn)
 
-        # ---- 6. Merge ready PRs (stub) ---------------------------------------
-        # TODO: squash-merge ready PRs one at a time in dependency order.
-        # Will be implemented with GitStateStore.
-        logger.debug("merge: stub — would merge ready PRs")
+        # ---- 6. Merge ready PRs ----------------------------------------------
+        self._merge_ready_prs()
 
         # ---- 7. Decide what to spawn (via decide()) -------------------------
-        # Rebuild world after reaping (tasks may have changed status)
+        # Rebuild world after reaping + gates + merges (tasks may have changed)
         world_after_reap = self._build_world()
         spawn_actions = decide(world_after_reap, self._max_workers, self._max_rounds)
 
@@ -239,7 +236,6 @@ class Orchestrator:
                 task = self._state.get_task(action.task_id)
 
                 if action.role == "rebase-resolver":
-                    # NEEDS_REBASE tasks get rebase-resolver role directly
                     pos = executor.initial_position()
                     self._state.transition_task(
                         action.task_id,
@@ -248,11 +244,9 @@ class Orchestrator:
                     )
                     to_spawn.append((action.task_id, "rebase-resolver", pos))
                 elif task.status == TaskStatus.IN_PROGRESS and task.phase is not None:
-                    # Resuming an in-progress task — use its current phase
                     pos = self._position_from_phase(executor, task)
                     to_spawn.append((action.task_id, str(task.phase), pos))
                 else:
-                    # New task — start at the beginning of the pipeline
                     pos = executor.initial_position()
                     pipe_action, pos = executor.next_action(pos, result=None)
                     if isinstance(pipe_action, SpawnRole):
@@ -287,12 +281,107 @@ class Orchestrator:
 
         return None
 
-    def _build_world(self) -> World:
-        """Build a World snapshot including current worker state from runtime.
+    # -----------------------------------------------------------------------
+    # Gate polling and merge
+    # -----------------------------------------------------------------------
 
-        The state store's get_world() returns tasks but no workers. This method
-        augments it with the orchestrator's tracked workers and their poll status.
+    def _poll_gates(
+        self,
+        executor: PipelineExecutor,
+        to_spawn: list[tuple[str, str, PipelinePosition]],
+    ) -> None:
+        """Poll gates for tasks at a gate step. If cleared, advance the task."""
+        if self._pr_manager is None:
+            logger.debug("gates: no PRManager — skipping gate polling")
+            return
+
+        all_tasks = self._state.get_world().tasks
+        for task in all_tasks.values():
+            if task.status != TaskStatus.IN_PROGRESS:
+                continue
+            if task.phase is None:
+                continue
+            if task.pr is None:
+                continue
+
+            # Check if this phase corresponds to a gate step in the pipeline
+            pos = self._find_position_for_step(executor, str(task.phase))
+            if pos is None:
+                continue
+
+            step = PipelineExecutor._resolve_step(executor.pipeline, pos.path)
+            if not isinstance(step, GateStep):
+                continue
+
+            # Task is at a gate — poll it
+            cleared = self._pr_manager.check_gate(task.pr, step.gate)
+            if not cleared:
+                continue
+
+            # Gate cleared — advance to next pipeline step
+            logger.info("Gate '%s' cleared for task %s", step.gate, task.id)
+            advanced = PipelineExecutor._advance_from(executor.pipeline, pos.path)
+            if advanced is not None:
+                next_action, new_pos = advanced
+                phase_name = _phase_for_pipe_action(next_action)
+                self._state.transition_task(
+                    task.id,
+                    TaskStatus.IN_PROGRESS,
+                    phase=Phase(phase_name) if phase_name else None,
+                )
+                if isinstance(next_action, SpawnRole):
+                    to_spawn.append((task.id, next_action.role, new_pos))
+            else:
+                self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
+                self._state.clear_findings(task.id)
+
+    def _merge_ready_prs(self) -> None:
+        """Merge PRs for tasks at the merge-pr action step.
+
+        Rebases branch first; on conflict transitions to NEEDS_REBASE.
         """
+        if self._pr_manager is None:
+            logger.debug("merge: no PRManager — skipping merge")
+            return
+
+        all_tasks = self._state.get_world().tasks
+        for task in all_tasks.values():
+            if task.status != TaskStatus.IN_PROGRESS:
+                continue
+            if task.phase != Phase("merge-pr"):
+                continue
+            if task.pr is None:
+                continue
+
+            branch = task.branch or f"worker/{task.id}"
+
+            # Step 1: Rebase onto base branch
+            if not self._pr_manager.rebase_branch(branch, "main"):
+                logger.warning("Rebase conflict for task %s, marking NEEDS_REBASE", task.id)
+                self._state.transition_task(
+                    task.id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr")
+                )
+                continue
+
+            # Step 2: Squash-merge the PR
+            if not self._pr_manager.merge(task.pr, task.id, task.spec_ref):
+                logger.warning("Merge conflict for task %s, marking NEEDS_REBASE", task.id)
+                self._state.transition_task(
+                    task.id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr")
+                )
+                continue
+
+            # Merge succeeded — mark task complete
+            self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
+            self._state.clear_findings(task.id)
+            logger.info("Merged PR for task %s", task.id)
+
+    # -----------------------------------------------------------------------
+    # World building
+    # -----------------------------------------------------------------------
+
+    def _build_world(self) -> World:
+        """Build a World snapshot including current worker state from runtime."""
         base_world = self._state.get_world()
         workers: dict[str, WorkerState] = {}
         for task_id, (handle, _pos) in self._workers.items():
@@ -308,12 +397,12 @@ class Orchestrator:
             epoch=base_world.epoch,
         )
 
-    def _position_from_phase(self, executor: PipelineExecutor, task: Task) -> PipelinePosition:
-        """Determine pipeline position from a task's current phase.
+    # -----------------------------------------------------------------------
+    # Pipeline position helpers
+    # -----------------------------------------------------------------------
 
-        Walks the pipeline to find the step matching the task's phase.
-        Falls back to initial position if no match is found.
-        """
+    def _position_from_phase(self, executor: PipelineExecutor, task: Task) -> PipelinePosition:
+        """Determine pipeline position from a task's current phase."""
         if task.phase is not None:
             pos = self._find_position_for_role(executor, str(task.phase))
             if pos is not None:
@@ -322,10 +411,7 @@ class Orchestrator:
 
     @staticmethod
     def _find_position_for_role(executor: PipelineExecutor, role: str) -> PipelinePosition | None:
-        """Walk the pipeline to find a position matching the given role name.
-
-        Searches the pipeline depth-first for a RoleStep with the matching role.
-        """
+        """Walk the pipeline for a RoleStep matching the given role name."""
 
         def _search(
             steps: tuple[PipelineStep, ...], prefix: tuple[int, ...]
@@ -342,11 +428,60 @@ class Orchestrator:
 
         return _search(executor.pipeline, ())
 
+    @staticmethod
+    def _find_position_for_step(
+        executor: PipelineExecutor, phase_name: str
+    ) -> PipelinePosition | None:
+        """Walk the pipeline for any step whose name matches phase_name.
+
+        Searches depth-first across RoleStep, GateStep, and ActionStep.
+        """
+
+        def _step_name(step: PipelineStep) -> str | None:
+            if isinstance(step, RoleStep):
+                return step.role
+            if isinstance(step, GateStep):
+                return step.gate
+            if isinstance(step, ActionStep):
+                return step.action
+            return None
+
+        def _search(
+            steps: tuple[PipelineStep, ...], prefix: tuple[int, ...]
+        ) -> PipelinePosition | None:
+            for i, step in enumerate(steps):
+                path = (*prefix, i)
+                if _step_name(step) == phase_name:
+                    return PipelinePosition(path=path)
+                if isinstance(step, LoopStep):
+                    found = _search(step.steps, path)
+                    if found is not None:
+                        return found
+            return None
+
+        return _search(executor.pipeline, ())
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
 
 def _phase_for_action(action: object) -> str | None:
-    """Extract a phase name from a pipeline action."""
-    from k_orchestrate.domain.pipeline import PerformAction, WaitForGate
+    """Extract a phase name from a pipeline action (WaitForGate or PerformAction)."""
+    if isinstance(action, WaitForGate):
+        return action.gate
+    if isinstance(action, PerformAction):
+        return action.action
+    return None
 
+
+def _phase_for_pipe_action(
+    action: SpawnRole | WaitForGate | PerformAction | PipelineComplete | PipelineFailed,
+) -> str | None:
+    """Extract a phase name from any pipeline action type."""
+    if isinstance(action, SpawnRole):
+        return action.role
     if isinstance(action, WaitForGate):
         return action.gate
     if isinstance(action, PerformAction):
