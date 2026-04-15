@@ -213,10 +213,15 @@ def ensure_matrix_ready(
 ) -> tuple[str, str]:
     """Ensure Matrix credentials and room are available.
 
-    Resolution order:
-    1. Explicit ``token_env`` + ``room_id`` in config → use directly (no setup).
-    2. Cached credentials in ``.hyperloop/matrix-state.json`` → reuse.
-    3. ``registration_token`` → register bot, create room, cache.
+    Resolution order for **access_token**:
+    1. Explicit ``token_env`` env var
+    2. Cached token from ``.hyperloop/matrix-state.json``
+    3. Auto-register via ``registration_token_env``
+
+    Resolution order for **room_id**:
+    1. Explicit ``room_id`` in config
+    2. Cached room_id
+    3. Auto-create via Matrix API
 
     Returns:
         (access_token, room_id) tuple. Either or both may be empty string
@@ -225,82 +230,106 @@ def ensure_matrix_ready(
     import os
 
     homeserver = config.homeserver.rstrip("/")
-
-    # 1. Explicit token from env takes precedence
-    explicit_token = os.environ.get(config.token_env) if config.token_env else ""
-    explicit_room = config.room_id
-
-    if explicit_token and explicit_room:
-        return explicit_token, explicit_room
-
-    # 2. Try cache
     cache = _load_cache(repo_path, homeserver)
-    if cache is not None:
-        cached_token = cache.get("access_token", "")
-        cached_room = cache.get("room_id", "")
-        # Allow explicit overrides to supplement cache
-        token = explicit_token or cached_token
-        room_id = explicit_room or cached_room
-        if token and room_id:
-            return token, room_id
 
-    # 3. Auto-setup via registration_token from env
-    registration_token = (
-        os.environ.get(config.registration_token_env) if config.registration_token_env else ""
-    )
-    if not registration_token:
-        _log.warning(
-            "Matrix: no access token, no cached credentials, and no registration token — skipping"
+    # --- Resolve access token ---
+    explicit_token = os.environ.get(config.token_env) if config.token_env else ""
+    cached_token = cache.get("access_token", "") if cache else ""
+    access_token = explicit_token or cached_token
+
+    if not access_token:
+        # Try auto-registration
+        registration_token = (
+            os.environ.get(config.registration_token_env) if config.registration_token_env else ""
         )
+        if registration_token:
+            try:
+                access_token = _auto_register(
+                    config, repo_path, homeserver, registration_token, cache
+                )
+            except Exception:
+                _log.exception("Matrix bot registration failed")
+        else:
+            _log.warning("Matrix: no access token and no registration token — skipping")
+            return "", ""
+
+    if not access_token:
         return "", ""
 
-    try:
-        return _auto_setup(config, repo_path, homeserver, registration_token, cache)
-    except Exception:
-        _log.exception("Matrix auto-setup failed — skipping Matrix notifications")
-        return "", ""
+    # --- Resolve room_id ---
+    cached_room = cache.get("room_id", "") if cache else ""
+    room_id = config.room_id or cached_room
+
+    if not room_id:
+        try:
+            room_id = _auto_create_room(config, repo_path, homeserver, access_token)
+        except Exception:
+            _log.exception("Matrix room creation failed")
+            return access_token, ""
+
+    return access_token, room_id
 
 
-def _auto_setup(
+def _auto_register(
     config: MatrixConfig,
     repo_path: Path,
     homeserver: str,
     registration_token: str,
     cache: dict[str, str] | None,
-) -> tuple[str, str]:
-    """Register bot, create room, cache credentials. Returns (token, room_id)."""
-    # Derive bot username
+) -> str:
+    """Register a bot user and cache credentials. Returns access_token."""
     repo_name = repo_path.name
     username = config.bot_username or f"hyperloop-{repo_name}"
 
-    # Reuse cached password if available, otherwise generate one
     password = cache.get("password", "") if cache else ""
     if not password:
         password = secrets.token_urlsafe(32)
 
     client = httpx.Client(timeout=30.0)
     try:
-        # Register or login
         user_id, access_token = _register_bot(
             client, homeserver, registration_token, username, password
         )
 
-        # Create room if needed
-        room_id = config.room_id
-        if not room_id:
-            room_id = _create_room(client, homeserver, access_token, f"hyperloop-{repo_name}")
-
-        # Cache for next run
         _save_cache(
             repo_path,
             homeserver=homeserver,
             user_id=user_id,
             access_token=access_token,
-            room_id=room_id,
+            room_id=config.room_id,
             password=password,
         )
 
-        _log.info("Matrix auto-setup complete: user=%s room=%s", user_id, room_id)
-        return access_token, room_id
+        _log.info("Matrix bot registered: %s", user_id)
+        return access_token
+    finally:
+        client.close()
+
+
+def _auto_create_room(
+    config: MatrixConfig,
+    repo_path: Path,
+    homeserver: str,
+    access_token: str,
+) -> str:
+    """Create a room and update the cache. Returns room_id."""
+    repo_name = repo_path.name
+    client = httpx.Client(timeout=30.0)
+    try:
+        room_id = _create_room(client, homeserver, access_token, f"hyperloop-{repo_name}")
+
+        # Update cache with the new room_id
+        cache = _load_cache(repo_path, homeserver) or {}
+        _save_cache(
+            repo_path,
+            homeserver=homeserver,
+            user_id=cache.get("user_id", ""),
+            access_token=cache.get("access_token", access_token),
+            room_id=room_id,
+            password=cache.get("password", ""),
+        )
+
+        _log.info("Matrix room created: %s", room_id)
+        return room_id
     finally:
         client.close()
