@@ -1,6 +1,6 @@
 [project]
 name = "hyperloop"
-dynamic = ["version"]
+version = "0.1.0"
 description = "Orchestrator that walks tasks through composable process pipelines using AI agents"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -22,11 +22,8 @@ dev = [
 hyperloop = "hyperloop.cli:app"
 
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.hatch.version]
-source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hyperloop"]
@@ -63,13 +60,41 @@ reportMissingTypeStubs = false
 testpaths = ["tests"]
 
 [tool.semantic_release]
+commit_parser = "conventional"
 version_toml = ["pyproject.toml:project.version"]
-branch = "main"
-commit_version = false
-tag_format = "v{version}"
+allow_zero_version = true
+major_on_zero = false
+
+[tool.semantic_release.branches.main]
+match = "main"
+
+[tool.semantic_release.publish]
+upload_to_vcs_release = false
+
+[tool.semantic_release.commit_author]
+env = "GIT_COMMIT_AUTHOR"
+default = "github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
 
 [tool.semantic_release.commit_parser_options]
-# Conventional commits: feat -> minor, fix -> patch, breaking -> major
-allowed_tags = ["feat", "fix", "refactor", "perf", "test", "chore", "docs", "style", "ci"]
 minor_tags = ["feat"]
-patch_tags = ["fix", "perf", "refactor"]
+patch_tags = ["fix", "perf"]
+parse_squash_commits = true
+ignore_merge_commits = true
+
+[tool.semantic_release.changelog]
+exclude_commit_patterns = [
+    '''chore(?:\([^)]*?\))?: .+''',
+    '''ci(?:\([^)]*?\))?: .+''',
+    '''refactor(?:\([^)]*?\))?: .+''',
+    '''style(?:\([^)]*?\))?: .+''',
+    '''test(?:\([^)]*?\))?: .+''',
+    '''docs(?:\([^)]*?\))?: .+''',
+]
+
+[tool.semantic_release.changelog.default_templates]
+changelog_file = "CHANGELOG.md"
+output_format = "md"
+
+[tool.semantic_release.remote]
+type = "github"
+token = { env = "GH_TOKEN" }
