@@ -58,6 +58,9 @@ reportMissingTypeStubs = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: end-to-end integration tests (real git repos, subprocesses)",
+]
 
 [tool.semantic_release]
 commit_parser = "conventional"
