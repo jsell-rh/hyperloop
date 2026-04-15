@@ -18,6 +18,9 @@ dev = [
     "pre-commit>=4.0",
 ]
 
+[project.scripts]
+k-orchestrate = "k_orchestrate.cli:app"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -46,6 +49,7 @@ ignore = []
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["ANN"]  # don't require annotations in tests
+"src/k_orchestrate/cli.py" = ["B008"]  # typer.Option() in arg defaults is the intended API
 
 [tool.pyright]
 pythonVersion = "3.12"
