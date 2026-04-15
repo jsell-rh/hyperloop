@@ -2,45 +2,83 @@
 
 Walks tasks through composable workflow pipelines using AI agents. You write specs, it creates tasks, implements them, verifies the work, and merges PRs.
 
+## Prerequisites
+
+- Python 3.12+
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` on PATH)
+- `gh` CLI (authenticated, for PR management)
+- `git`
+
 ## Install
+
+From PyPI (once published):
 
 ```bash
 pip install hyperloop
-# or
-uvx hyperloop
 ```
 
-Requires: `kustomize` CLI (for overlay resolution), `gh` CLI (for PR management), `git`.
+From source (for development or testing):
+
+```bash
+git clone git@github.com:jsell-rh/hyperloop.git
+cd hyperloop
+uv sync --all-extras
+```
 
 ## Quickstart
 
-1. Add specs to your repo:
-
-```
-your-repo/
-└── specs/
-    └── auth-api.md       # what you want built
-```
-
-2. Run:
+1. Create a repo with a spec:
 
 ```bash
-cd your-repo
-hyperloop --repo owner/repo --branch main
+mkdir -p my-project/specs
+cd my-project
+git init && git commit --allow-empty -m "init"
 ```
 
-The orchestrator reads your specs, creates tasks, and starts running agents through the pipeline: implement, verify, merge.
+2. Write a spec. This is what you want built. Be specific about acceptance criteria:
+
+```markdown
+<!-- specs/auth.md -->
+# User Authentication
+
+Implement JWT-based authentication for the API.
+
+## Acceptance Criteria
+
+- POST /auth/login accepts email + password, returns JWT
+- POST /auth/register creates a new user account
+- GET /auth/me returns the current user (requires valid JWT)
+- Passwords are hashed with bcrypt, never stored in plaintext
+- JWTs expire after 24 hours
+```
+
+3. Run:
+
+```bash
+# From source:
+uv run hyperloop run --repo owner/repo --branch main
+
+# Or if installed:
+hyperloop run --repo owner/repo --branch main
+```
+
+4. See what it would do without executing:
+
+```bash
+hyperloop run --repo owner/repo --dry-run
+```
+
+The orchestrator reads your specs, has the PM create tasks in `specs/tasks/`, then walks each task through the default pipeline: implement, verify, merge.
 
 ## Configuration
 
-Create `.hyperloop.yaml` in your repo root for persistent config:
+Create `.hyperloop.yaml` in your repo root:
 
 ```yaml
 target:
   base_branch: main
 
 runtime:
-  default: local
   max_workers: 4
 
 merge:
@@ -48,11 +86,19 @@ merge:
   strategy: squash
 ```
 
+Then just run from the repo directory:
+
+```bash
+hyperloop run
+```
+
+The repo is inferred from your git remote. All settings have sensible defaults.
+
 ## Customizing Agent Behavior
 
-hyperloop ships with base agent definitions (implementer, verifier, etc.) that work out of the box. To customize them for your project, you overlay with patches.
+Hyperloop ships with base agent definitions (implementer, verifier, etc.) that work out of the box. To customize them for your project, overlay with patches.
 
-### Level 1: In-repo overlay
+### In-repo overlay
 
 For single-repo projects. Agent patches live in the repo itself:
 
@@ -84,7 +130,7 @@ annotations:
     Follow Clean Architecture. Use dependency injection.
 ```
 
-### Level 2: Shared overlay via gitops repo
+### Shared overlay via gitops repo
 
 For teams with multiple repos sharing agent definitions. The overlay lives in a central gitops repo and references the hyperloop base as a kustomize remote resource:
 
@@ -178,4 +224,15 @@ merge:
 poll_interval: 30                  # seconds between orchestrator cycles
 max_rounds: 50                     # max retry rounds per task before failure
 max_rebase_attempts: 3             # max rebase retries before full loop retry
+```
+
+## Development
+
+```bash
+uv sync --all-extras
+uv run pytest                    # run tests (280 tests)
+uv run ruff check .              # lint
+uv run ruff format --check .     # format check
+uv run pyright                   # type check
+uv run hyperloop --help          # CLI help
 ```
