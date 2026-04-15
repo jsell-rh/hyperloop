@@ -182,15 +182,18 @@ def _create_room(
     homeserver: str,
     access_token: str,
     room_name: str,
+    invite_user: str = "",
 ) -> str:
-    """Create a private Matrix room. Returns the room_id."""
+    """Create a private Matrix room and optionally invite a user. Returns the room_id."""
     url = f"{homeserver}/_matrix/client/v3/createRoom"
-    body = {
+    body: dict[str, object] = {
         "name": room_name,
         "topic": "hyperloop orchestrator notifications",
         "visibility": "private",
         "preset": "private_chat",
     }
+    if invite_user:
+        body["invite"] = [invite_user]
 
     resp = client.post(
         url,
@@ -312,11 +315,17 @@ def _auto_create_room(
     homeserver: str,
     access_token: str,
 ) -> str:
-    """Create a room and update the cache. Returns room_id."""
+    """Create a room, invite the configured user, and update the cache. Returns room_id."""
     repo_name = repo_path.name
     client = httpx.Client(timeout=30.0)
     try:
-        room_id = _create_room(client, homeserver, access_token, f"hyperloop-{repo_name}")
+        room_id = _create_room(
+            client,
+            homeserver,
+            access_token,
+            f"hyperloop-{repo_name}",
+            invite_user=config.invite_user,
+        )
 
         # Update cache with the new room_id
         cache = _load_cache(repo_path, homeserver) or {}

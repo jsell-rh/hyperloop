@@ -32,6 +32,7 @@ class MatrixConfig:
     verbose: bool
     registration_token_env: str  # env var holding the registration token
     bot_username: str
+    invite_user: str  # Matrix user ID to invite to auto-created rooms
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,7 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
             flat["matrix_verbose"] = mx.get("verbose", False)
             flat["matrix_registration_token_env"] = mx.get("registration_token_env", "")
             flat["matrix_bot_username"] = mx.get("bot_username", "")
+            flat["matrix_invite_user"] = mx.get("invite_user", "")
 
     return flat
 
@@ -209,6 +211,7 @@ def load_config(
             verbose=bool(values.get("matrix_verbose", False)),
             registration_token_env=registration_token_env,
             bot_username=str(values.get("matrix_bot_username", "")),
+            invite_user=str(values.get("matrix_invite_user", "")),
         )
 
     obs_cfg = ObservabilityConfig(
