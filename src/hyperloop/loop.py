@@ -340,45 +340,61 @@ class Orchestrator:
                 self._state.clear_findings(task.id)
 
     def _merge_ready_prs(self) -> None:
-        """Merge PRs for tasks at the merge-pr action step.
+        """Merge branches for tasks at the merge-pr action step.
 
-        Rebases branch first; on conflict transitions to NEEDS_REBASE.
+        With a PRManager: rebase + squash-merge the PR.
+        Without a PRManager: local git merge of worker branch into base branch.
+        On conflict, transitions to NEEDS_REBASE.
         """
-        if self._pr_manager is None:
-            logger.debug("merge: no PRManager — skipping merge")
-            return
-
         all_tasks = self._state.get_world().tasks
         for task in all_tasks.values():
             if task.status != TaskStatus.IN_PROGRESS:
                 continue
             if task.phase != Phase("merge-pr"):
                 continue
-            if task.pr is None:
-                continue
 
             branch = task.branch or f"worker/{task.id}"
 
-            # Step 1: Rebase onto base branch
-            if not self._pr_manager.rebase_branch(branch, "main"):
-                logger.warning("Rebase conflict for task %s, marking NEEDS_REBASE", task.id)
-                self._state.transition_task(
-                    task.id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr")
-                )
-                continue
+            if self._pr_manager is not None and task.pr is not None:
+                self._merge_via_pr(task.id, task.pr, task.spec_ref, branch)
+            else:
+                self._merge_local(task.id, branch)
 
-            # Step 2: Squash-merge the PR
-            if not self._pr_manager.merge(task.pr, task.id, task.spec_ref):
-                logger.warning("Merge conflict for task %s, marking NEEDS_REBASE", task.id)
-                self._state.transition_task(
-                    task.id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr")
-                )
-                continue
+    def _merge_via_pr(self, task_id: str, pr_url: str, spec_ref: str, branch: str) -> None:
+        """Merge via GitHub PR: rebase, then squash-merge."""
+        assert self._pr_manager is not None
 
-            # Merge succeeded — mark task complete
-            self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
-            self._state.clear_findings(task.id)
-            logger.info("Merged PR for task %s", task.id)
+        if not self._pr_manager.rebase_branch(branch, "main"):
+            logger.warning("Rebase conflict for task %s, marking NEEDS_REBASE", task_id)
+            self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
+            return
+
+        if not self._pr_manager.merge(pr_url, task_id, spec_ref):
+            logger.warning("Merge conflict for task %s, marking NEEDS_REBASE", task_id)
+            self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
+            return
+
+        self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
+        self._state.clear_findings(task_id)
+        logger.info("Merged PR for task %s", task_id)
+
+    def _merge_local(self, task_id: str, branch: str) -> None:
+        """Merge worker branch into base branch locally (no PR)."""
+        import subprocess
+
+        try:
+            subprocess.run(
+                ["git", "merge", branch, "--no-edit", "-m", f"merge: {task_id}"],
+                check=True,
+                capture_output=True,
+            )
+            self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
+            self._state.clear_findings(task_id)
+            logger.info("Local merge of %s into base branch", task_id)
+        except subprocess.CalledProcessError:
+            logger.warning("Local merge conflict for task %s, marking NEEDS_REBASE", task_id)
+            subprocess.run(["git", "merge", "--abort"], capture_output=True, check=False)
+            self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
 
     # -----------------------------------------------------------------------
     # World building

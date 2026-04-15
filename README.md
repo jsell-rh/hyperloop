@@ -1,13 +1,13 @@
 # hyperloop
 
-Walks tasks through composable process pipelines using AI agents. You write specs, it creates tasks, implements them, verifies the work, and merges PRs.
+Walks tasks through composable process pipelines using AI agents. You write specs, it creates tasks, implements them, verifies the work, and merges the results.
 
 ## Prerequisites
 
 - Python 3.12+
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` on PATH)
-- `gh` CLI (authenticated, for PR management)
 - `git`
+- `gh` CLI (optional, for GitHub PR operations)
 
 ## Install
 
@@ -52,23 +52,23 @@ Implement JWT-based authentication for the API.
 - JWTs expire after 24 hours
 ```
 
-3. Run:
+3. Run against the local repo:
 
 ```bash
-# From source:
-uv run hyperloop run --repo owner/repo --branch main
+# From inside the repo
+uv run hyperloop run
 
-# Or if installed:
-hyperloop run --repo owner/repo --branch main
+# Or point to a repo elsewhere
+uv run hyperloop run --path ~/code/my-project
+
+# With GitHub PR support (draft PRs, lgtm gates, squash-merge)
+uv run hyperloop run --repo owner/repo
+
+# Dry run (show config, don't execute)
+uv run hyperloop run --dry-run
 ```
 
-4. See what it would do without executing:
-
-```bash
-hyperloop run --repo owner/repo --dry-run
-```
-
-The orchestrator reads your specs, has the PM create tasks in `specs/tasks/`, then walks each task through the default pipeline: implement, verify, merge.
+When `--repo` is not set, completed work is merged locally into the base branch via `git merge`. When `--repo` is set, the orchestrator creates draft PRs, polls for `lgtm` labels on gates, and squash-merges via GitHub.
 
 ## Configuration
 
@@ -86,13 +86,14 @@ merge:
   strategy: squash
 ```
 
-Then just run from the repo directory:
+Then run from the repo directory (or use `--path`):
 
 ```bash
 hyperloop run
+hyperloop run --path ~/code/my-project
 ```
 
-The repo is inferred from your git remote. All settings have sensible defaults.
+All settings have sensible defaults. `--repo` is only needed for GitHub PR operations.
 
 ## Customizing Agent Behavior
 
