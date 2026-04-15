@@ -1,5 +1,7 @@
+apiVersion: hyperloop.io/v1
 kind: Agent
-name: implementer
+metadata:
+  name: implementer
 prompt: |
   You are a worker agent implementing a task.
 

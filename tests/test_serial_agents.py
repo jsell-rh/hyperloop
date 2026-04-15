@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hyperloop.compose import PromptComposer
+from hyperloop.compose import PromptComposer, load_templates_from_dir
 from hyperloop.domain.model import (
     LoopStep,
     Phase,
@@ -230,7 +230,7 @@ class TestPMIntake:
         serial = FakeSerialRunner()
         state.set_file("specs/widget.md", "Widget spec content")
 
-        composer = PromptComposer(base_dir=BASE_DIR, state=state)
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, serial_runner=serial, composer=composer)
 
         orch.run_cycle()
@@ -246,7 +246,7 @@ class TestPMIntake:
         state.set_file("specs/widget.md", "Widget spec content")
         state.add_task(_task(spec_ref="specs/widget.md"))
 
-        composer = PromptComposer(base_dir=BASE_DIR, state=state)
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, serial_runner=serial, composer=composer)
 
         orch.run_cycle()
@@ -288,7 +288,7 @@ class TestPMIntake:
         state.set_file("specs/widget.md", "Widget spec")
         state.add_task(_task(spec_ref="specs/widget.md"))
 
-        composer = PromptComposer(base_dir=BASE_DIR, state=state)
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, serial_runner=serial, composer=composer)
 
         orch.run_cycle()
@@ -316,7 +316,7 @@ class TestProcessImprover:
         state.add_task(_task())
         state.set_file("specs/widget.md", "Widget spec")
 
-        composer = PromptComposer(base_dir=BASE_DIR, state=state)
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(
             state, runtime, serial_runner=serial, composer=composer, max_rounds=50
         )
@@ -345,7 +345,7 @@ class TestProcessImprover:
         state.add_task(_task())
         state.set_file("specs/widget.md", "Widget spec")
 
-        composer = PromptComposer(base_dir=BASE_DIR, state=state)
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, serial_runner=serial, composer=composer)
 
         # Cycle 1: spawn implementer

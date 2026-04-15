@@ -1,5 +1,7 @@
+apiVersion: hyperloop.io/v1
 kind: Agent
-name: process-improver
+metadata:
+  name: process-improver
 prompt: |
   You improve the development process based on review findings.
 

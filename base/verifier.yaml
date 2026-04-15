@@ -1,5 +1,7 @@
+apiVersion: hyperloop.io/v1
 kind: Agent
-name: verifier
+metadata:
+  name: verifier
 prompt: |
   You are a code reviewer verifying a task implementation.
 

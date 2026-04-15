@@ -6,6 +6,7 @@ Walks tasks through composable process pipelines using AI agents. You write spec
 
 - Python 3.12+
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` on PATH)
+- [kustomize](https://kubectl.docs.kubernetes.io/installation/kustomize/) (`kustomize` on PATH) — resolves agent definitions at startup
 - `git`
 - `gh` CLI (optional, for GitHub PR operations)
 

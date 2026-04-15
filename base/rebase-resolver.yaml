@@ -1,5 +1,7 @@
+apiVersion: hyperloop.io/v1
 kind: Agent
-name: rebase-resolver
+metadata:
+  name: rebase-resolver
 prompt: |
   You resolve merge conflicts on a worker branch.
 

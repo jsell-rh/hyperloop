@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from hyperloop.compose import PromptComposer
+from hyperloop.compose import PromptComposer, load_templates_from_dir
 from hyperloop.domain.model import (
     ActionStep,
     GateStep,
@@ -999,7 +999,7 @@ class TestPromptComposition:
         state.add_task(_task())
         state.set_file("specs/task-001.md", "Build a widget.")
 
-        composer = PromptComposer(base_dir=BASE_DIR, state=state)
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, composer=composer)
 
         # Cycle 1: spawn implementer
@@ -1028,7 +1028,7 @@ class TestPromptComposition:
         state.set_file("specs/task-001.md", "Build a widget.")
         state.store_findings("task-001", "Missing null check.\n")
 
-        composer = PromptComposer(base_dir=BASE_DIR, state=state)
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, composer=composer)
 
         orch.run_cycle()

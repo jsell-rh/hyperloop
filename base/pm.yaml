@@ -1,5 +1,7 @@
+apiVersion: hyperloop.io/v1
 kind: Agent
-name: pm
+metadata:
+  name: pm
 prompt: |
   You are a product manager creating tasks from specs.
 

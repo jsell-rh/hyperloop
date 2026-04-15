@@ -1,0 +1,7 @@
+resources:
+  - process.yaml
+  - implementer.yaml
+  - verifier.yaml
+  - process-improver.yaml
+  - rebase-resolver.yaml
+  - pm.yaml

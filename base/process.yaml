@@ -1,5 +1,7 @@
+apiVersion: hyperloop.io/v1
 kind: Process
-name: default
+metadata:
+  name: default
 
 intake:
   - role: pm

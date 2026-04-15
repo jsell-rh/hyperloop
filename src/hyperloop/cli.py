@@ -66,35 +66,25 @@ def _config_table(cfg: Config) -> Table:
     return table
 
 
-def _make_composer(state: object) -> object | None:
-    """Construct a PromptComposer using the base/ directory.
+def _make_composer(cfg: object, state: object) -> object:
+    """Construct a PromptComposer via kustomize build.
 
-    Tries two locations:
-    1. Development: relative to this file (src/hyperloop/../../base)
-    2. Installed package: via importlib.resources
+    Runs ``kustomize build`` on the configured overlay (or the default
+    hyperloop base if no overlay is set).
 
-    Returns None if base/ directory cannot be found.
+    Args:
+        cfg: Config object with an ``overlay`` attribute.
+        state: StateStore instance for reading process overlays at spawn time.
+
+    Returns:
+        A PromptComposer with resolved templates.
     """
-    from hyperloop.compose import PromptComposer
+    from hyperloop.compose import PromptComposer, check_kustomize_available
 
-    # Development path: relative to this source file
-    dev_base = Path(__file__).resolve().parent.parent.parent / "base"
-    if dev_base.is_dir():
-        return PromptComposer(base_dir=dev_base, state=state)  # type: ignore[arg-type]
+    check_kustomize_available()
 
-    # Installed package: try importlib.resources
-    try:
-        import importlib.resources as pkg_resources
-
-        ref = pkg_resources.files("hyperloop").joinpath("../../base")
-        base_path = Path(str(ref))
-        if base_path.is_dir():
-            return PromptComposer(base_dir=base_path, state=state)  # type: ignore[arg-type]
-    except (ImportError, TypeError, FileNotFoundError):
-        pass
-
-    console.print("[dim]Warning: base/ directory not found — prompts will be empty.[/dim]")
-    return None
+    overlay = getattr(cfg, "overlay", None)
+    return PromptComposer.from_kustomize(overlay, state)  # type: ignore[arg-type]
 
 
 @app.command()
@@ -197,8 +187,8 @@ def run(
     runtime = LocalRuntime(repo_path=str(repo_path))
     serial_runner = SubprocessSerialRunner(repo_path=str(repo_path))
 
-    # Resolve base/ directory for agent prompt definitions
-    composer = _make_composer(state)
+    # Resolve agent definitions via kustomize build
+    composer = _make_composer(cfg, state)
 
     def _on_cycle(summary: dict[str, object]) -> None:
         """Print a rich status line after each orchestrator cycle."""
