@@ -1,0 +1,11 @@
+kind: Workflow
+name: default
+
+intake:
+  - role: pm
+
+pipeline:
+  - loop:
+      - role: implementer
+      - role: verifier
+  - action: merge-pr
