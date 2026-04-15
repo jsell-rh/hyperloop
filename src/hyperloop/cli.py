@@ -228,6 +228,7 @@ def run(
         serial_runner=serial_runner,
         poll_interval=cfg.poll_interval,
         on_cycle=_on_cycle,
+        max_rebase_attempts=cfg.max_rebase_attempts,
     )
 
     # 6. Recover and run

@@ -60,6 +60,10 @@ class StateStore(Protocol):
         """Read a file from trunk. Returns None if the file does not exist."""
         ...
 
+    def set_task_pr(self, task_id: str, pr_url: str) -> None:
+        """Set the PR URL on a task."""
+        ...
+
     def commit(self, message: str) -> None:
         """Persist all pending state changes."""
         ...

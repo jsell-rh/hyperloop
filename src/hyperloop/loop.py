@@ -79,6 +79,7 @@ class Orchestrator:
         poll_interval: float = 30.0,
         on_cycle: Callable[[dict[str, object]], None] | None = None,
         serial_runner: SerialRunner | None = None,
+        max_rebase_attempts: int = 3,
     ) -> None:
         self._state = state
         self._runtime = runtime
@@ -91,9 +92,12 @@ class Orchestrator:
         self._poll_interval = poll_interval
         self._on_cycle = on_cycle
         self._serial_runner = serial_runner
+        self._max_rebase_attempts = max_rebase_attempts
 
         # Active worker tracking: task_id -> (handle, pipeline_position)
         self._workers: dict[str, tuple[WorkerHandle, PipelinePosition]] = {}
+        # Consecutive rebase failure count per task
+        self._rebase_attempts: dict[str, int] = {}
 
     def run_loop(self, max_cycles: int = 1000) -> str:
         """Run the orchestrator loop until halt or max_cycles. Returns halt reason."""
@@ -181,6 +185,9 @@ class Orchestrator:
             pipe_action, new_pos = executor.next_action(position, result)
 
             if isinstance(pipe_action, PipelineComplete):
+                # Mark PR ready if reviews passed and pipeline is done
+                if self._pr_manager is not None and task.pr is not None:
+                    self._pr_manager.mark_ready(task.pr)
                 self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
                 self._state.clear_findings(task_id)
 
@@ -211,6 +218,14 @@ class Orchestrator:
                         round=new_round,
                     )
                 else:
+                    # Advancing forward on PASS — create draft PR if needed
+                    if self._pr_manager is not None and task.pr is None:
+                        branch = task.branch or f"worker/{task_id}"
+                        pr_url = self._pr_manager.create_draft(
+                            task_id, branch, task.title, task.spec_ref
+                        )
+                        self._state.set_task_pr(task_id, pr_url)
+
                     self._state.transition_task(
                         task_id,
                         TaskStatus.IN_PROGRESS,
@@ -389,19 +404,62 @@ class Orchestrator:
                 self._merge_local(task.id, branch)
 
     def _merge_via_pr(self, task_id: str, pr_url: str, spec_ref: str, branch: str) -> None:
-        """Merge via GitHub PR: rebase, then squash-merge."""
+        """Merge via GitHub PR: mark ready, rebase, then squash-merge."""
         assert self._pr_manager is not None
+
+        # Mark the draft PR as ready before merging
+        self._pr_manager.mark_ready(pr_url)
 
         if not self._pr_manager.rebase_branch(branch, "main"):
             logger.warning("Rebase conflict for task %s, marking NEEDS_REBASE", task_id)
+            self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
+            if self._rebase_attempts[task_id] >= self._max_rebase_attempts:
+                logger.warning(
+                    "Task %s exceeded max_rebase_attempts (%d), looping back",
+                    task_id,
+                    self._max_rebase_attempts,
+                )
+                self._rebase_attempts.pop(task_id, None)
+                task = self._state.get_task(task_id)
+                self._state.store_findings(
+                    task_id, f"Rebase conflict after {self._max_rebase_attempts} attempts"
+                )
+                self._state.transition_task(
+                    task_id,
+                    TaskStatus.IN_PROGRESS,
+                    phase=Phase("implementer"),
+                    round=task.round + 1,
+                )
+                return
             self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
             return
 
         if not self._pr_manager.merge(pr_url, task_id, spec_ref):
             logger.warning("Merge conflict for task %s, marking NEEDS_REBASE", task_id)
+            self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
+            if self._rebase_attempts[task_id] >= self._max_rebase_attempts:
+                logger.warning(
+                    "Task %s exceeded max_rebase_attempts (%d), looping back",
+                    task_id,
+                    self._max_rebase_attempts,
+                )
+                self._rebase_attempts.pop(task_id, None)
+                task = self._state.get_task(task_id)
+                self._state.store_findings(
+                    task_id, f"Merge conflict after {self._max_rebase_attempts} attempts"
+                )
+                self._state.transition_task(
+                    task_id,
+                    TaskStatus.IN_PROGRESS,
+                    phase=Phase("implementer"),
+                    round=task.round + 1,
+                )
+                return
             self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
             return
 
+        # Merge succeeded — reset counter
+        self._rebase_attempts.pop(task_id, None)
         self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
         self._state.clear_findings(task_id)
         logger.info("Merged PR for task %s", task_id)
@@ -420,12 +478,32 @@ class Orchestrator:
                 check=True,
                 capture_output=True,
             )
+            self._rebase_attempts.pop(task_id, None)
             self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
             self._state.clear_findings(task_id)
             logger.info("Local merge of %s into base branch", task_id)
         except subprocess.CalledProcessError:
             logger.warning("Local merge conflict for task %s, marking NEEDS_REBASE", task_id)
             subprocess.run([*git_cmd, "merge", "--abort"], capture_output=True, check=False)
+            self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
+            if self._rebase_attempts[task_id] >= self._max_rebase_attempts:
+                logger.warning(
+                    "Task %s exceeded max_rebase_attempts (%d), looping back",
+                    task_id,
+                    self._max_rebase_attempts,
+                )
+                self._rebase_attempts.pop(task_id, None)
+                task = self._state.get_task(task_id)
+                self._state.store_findings(
+                    task_id, f"Merge conflict after {self._max_rebase_attempts} attempts"
+                )
+                self._state.transition_task(
+                    task_id,
+                    TaskStatus.IN_PROGRESS,
+                    phase=Phase("implementer"),
+                    round=task.round + 1,
+                )
+                return
             self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
 
     # -----------------------------------------------------------------------

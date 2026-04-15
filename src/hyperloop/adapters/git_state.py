@@ -213,6 +213,12 @@ class GitStateStore:
             return None
         return file_path.read_text()
 
+    def set_task_pr(self, task_id: str, pr_url: str) -> None:
+        """Set the PR URL on a task file."""
+        fm, body = self._read_task_file(task_id)
+        fm["pr"] = pr_url
+        self._write_task_file(task_id, fm, body)
+
     def commit(self, message: str) -> None:
         """Stage all changes and create a git commit."""
         self._git("add", "-A")

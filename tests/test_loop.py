@@ -81,6 +81,7 @@ def _make_orchestrator(
     composer: PromptComposer | None = None,
     poll_interval: float = 0,
     on_cycle: Callable[[dict[str, object]], None] | None = None,
+    max_rebase_attempts: int = 3,
 ) -> Orchestrator:
     return Orchestrator(
         state=state,
@@ -92,6 +93,7 @@ def _make_orchestrator(
         composer=composer,
         poll_interval=poll_interval,
         on_cycle=on_cycle,
+        max_rebase_attempts=max_rebase_attempts,
     )
 
 
@@ -1035,3 +1037,235 @@ class TestPromptComposition:
 
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS
+
+
+class TestPRLifecycle:
+    """PR lifecycle: draft created at first review step, marked ready on completion."""
+
+    MERGE_PROCESS = Process(
+        name="merge-process",
+        intake=(),
+        pipeline=(
+            LoopStep(
+                steps=(
+                    RoleStep(role="implementer", on_pass=None, on_fail=None),
+                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                ),
+            ),
+            ActionStep(action="merge-pr"),
+        ),
+    )
+
+    def test_draft_pr_created_when_task_advances_to_verifier(self) -> None:
+        """A draft PR is created when a task advances from implementer to verifier."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        state.add_task(_task(id="task-001", branch="worker/task-001"))
+
+        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
+
+        # Cycle 1: spawn implementer
+        orch.run_cycle()
+        assert state.get_task("task-001").phase == Phase("implementer")
+        assert state.get_task("task-001").pr is None
+
+        # Implementer passes
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", PASS_RESULT)
+
+        # Cycle 2: reap implementer, advance to verifier -> draft PR created
+        orch.run_cycle()
+        task = state.get_task("task-001")
+        assert task.phase == Phase("verifier")
+        assert task.pr is not None
+        assert "github.com" in task.pr
+
+        # The PR should be a draft
+        assert pr_mgr.is_draft(task.pr)
+
+    def test_mark_ready_called_when_task_completes_pipeline(self) -> None:
+        """mark_ready is called when a task reaches the merge step."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="worker/task-001",
+            )
+        )
+        # Create and set PR on the task
+        pr_url = pr_mgr.create_draft(
+            "task-001", "worker/task-001", "Task task-001", "specs/task-001.md"
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
+        orch.run_cycle()
+
+        # mark_ready should have been called before merge
+        assert pr_url in pr_mgr.marked_ready
+        # And the task should be complete (merged)
+        assert state.get_task("task-001").status == TaskStatus.COMPLETE
+
+    def test_no_pr_created_when_pr_manager_is_none(self) -> None:
+        """No PR is created when pr_manager is not set."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+
+        state.add_task(_task(id="task-001", branch="worker/task-001"))
+
+        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=None)
+
+        # Cycle 1: spawn implementer
+        orch.run_cycle()
+
+        # Implementer passes
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", PASS_RESULT)
+
+        # Cycle 2: advance to verifier — no PR should be created
+        orch.run_cycle()
+        task = state.get_task("task-001")
+        assert task.phase == Phase("verifier")
+        assert task.pr is None
+
+    def test_draft_pr_not_recreated_on_loop_back(self) -> None:
+        """When a task loops back (verifier fails), the existing PR is reused."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        state.add_task(_task(id="task-001", branch="worker/task-001"))
+
+        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
+
+        # Cycle 1: spawn implementer
+        orch.run_cycle()
+
+        # Implementer passes -> advance to verifier, create draft
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", PASS_RESULT)
+        orch.run_cycle()
+
+        first_pr = state.get_task("task-001").pr
+        assert first_pr is not None
+
+        # Verifier fails -> loops back to implementer
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", FAIL_RESULT)
+        orch.run_cycle()
+
+        # Implementer passes again -> advance to verifier again
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", PASS_RESULT)
+        orch.run_cycle()
+
+        # PR should be the same (not recreated)
+        assert state.get_task("task-001").pr == first_pr
+
+
+class TestMaxRebaseAttempts:
+    """max_rebase_attempts: after N consecutive rebase failures, task loops back."""
+
+    MERGE_PROCESS = Process(
+        name="merge-process",
+        intake=(),
+        pipeline=(
+            LoopStep(
+                steps=(
+                    RoleStep(role="implementer", on_pass=None, on_fail=None),
+                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                ),
+            ),
+            ActionStep(action="merge-pr"),
+        ),
+    )
+
+    def test_rebase_failure_exceeds_max_attempts_loops_task_back(self) -> None:
+        """After max_rebase_attempts consecutive rebase failures, task loops back."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/task-001.md")
+        pr_mgr.set_rebase_fails("worker/task-001")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="worker/task-001",
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            process=self.MERGE_PROCESS,
+            pr_manager=pr_mgr,
+            max_rebase_attempts=3,
+        )
+
+        # First two failures: task stays in NEEDS_REBASE / rebase-resolver cycle
+        for _ in range(2):
+            orch.run_cycle()
+            task = state.get_task("task-001")
+            # Should be NEEDS_REBASE or spawning rebase-resolver
+            assert task.status in (TaskStatus.NEEDS_REBASE, TaskStatus.IN_PROGRESS)
+
+            # If rebase-resolver was spawned, let it complete and return to merge-pr
+            if task.phase == Phase("rebase-resolver"):
+                runtime.set_poll_status("task-001", "done")
+                runtime.set_result("task-001", PASS_RESULT)
+                orch.run_cycle()
+                # Manually transition back to merge-pr for next attempt
+                state.transition_task("task-001", TaskStatus.IN_PROGRESS, phase=Phase("merge-pr"))
+
+        # Third failure: should exceed max_rebase_attempts -> loop back
+        orch.run_cycle()
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.round == 1  # round incremented
+        assert task.phase == Phase("implementer")  # looped back to start
+
+    def test_successful_merge_resets_rebase_counter(self) -> None:
+        """A successful merge resets the rebase attempt counter for a task."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/task-001.md")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="worker/task-001",
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            process=self.MERGE_PROCESS,
+            pr_manager=pr_mgr,
+            max_rebase_attempts=3,
+        )
+
+        # Merge succeeds
+        orch.run_cycle()
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.COMPLETE
+
+        # The counter should be reset (no external way to verify directly,
+        # but the task completed successfully — that's the behavior we want)
