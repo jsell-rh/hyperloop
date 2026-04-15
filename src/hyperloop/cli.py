@@ -174,6 +174,7 @@ def run(
     # 5. Construct runtime and state store, run loop
     from hyperloop.adapters.git_state import GitStateStore
     from hyperloop.adapters.local import LocalRuntime
+    from hyperloop.adapters.serial import SubprocessSerialRunner
     from hyperloop.domain.model import ActionStep, LoopStep, Process, RoleStep
     from hyperloop.loop import Orchestrator
 
@@ -194,6 +195,7 @@ def run(
 
     state = GitStateStore(repo_path, specs_dir=cfg.specs_dir)
     runtime = LocalRuntime(repo_path=str(repo_path))
+    serial_runner = SubprocessSerialRunner(repo_path=str(repo_path))
 
     # Resolve base/ directory for agent prompt definitions
     composer = _make_composer(state)
@@ -231,6 +233,7 @@ def run(
         max_workers=cfg.max_workers,
         max_rounds=cfg.max_rounds,
         composer=composer,
+        serial_runner=serial_runner,
         poll_interval=cfg.poll_interval,
         on_cycle=_on_cycle,
     )
