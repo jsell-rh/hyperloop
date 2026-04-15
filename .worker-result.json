@@ -1,1 +1,1 @@
-{"verdict": "pass", "findings": 0, "detail": "created 6 tasks from 1 spec (specs/spec.md)"}
+{"verdict": "pass", "findings": 0, "detail": "Added specs/prompts/checklist.md, rules.md, and checks/check_result_file.sh to enforce result file writing after 5/5 tasks failed with missing .worker-result.json"}
