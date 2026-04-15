@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import yaml
 
 if TYPE_CHECKING:
-    from k_orchestrate.ports.state import StateStore
+    from hyperloop.ports.state import StateStore
 
 
 class PromptComposer:

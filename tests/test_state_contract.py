@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from k_orchestrate.adapters.git_state import GitStateStore
-from k_orchestrate.domain.model import Phase, Task, TaskStatus
+from hyperloop.adapters.git_state import GitStateStore
+from hyperloop.domain.model import Phase, Task, TaskStatus
 from tests.fakes.state import InMemoryStateStore
 
 if TYPE_CHECKING:

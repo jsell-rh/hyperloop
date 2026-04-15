@@ -4,8 +4,8 @@ Given a World snapshot, decide() returns a list of Actions describing what
 workers to reap, what tasks to spawn, and when to halt.
 """
 
-from k_orchestrate.domain.decide import decide
-from k_orchestrate.domain.model import (
+from hyperloop.domain.decide import decide
+from hyperloop.domain.model import (
     AdvanceTask,
     Halt,
     ReapWorker,

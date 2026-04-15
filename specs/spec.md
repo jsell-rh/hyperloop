@@ -1,4 +1,4 @@
-# k-orchestrate
+# hyperloop
 
 An orchestrator that turns a backlog of tasks into completed, merged work using AI agents.
 
@@ -110,7 +110,7 @@ Future signal sources (webhooks, CI status, ambient annotations) can be added be
 
 ### Agent Definition
 
-Follows the ambient platform resource model. Base definitions live in the k-orchestrate repo, referenced by git URL. Projects overlay with personas and project-specific rules via kustomize patches in a gitops repo.
+Follows the ambient platform resource model. Base definitions live in the hyperloop repo, referenced by git URL. Projects overlay with personas and project-specific rules via kustomize patches in a gitops repo.
 
 ```yaml
 kind: Agent
@@ -188,18 +188,18 @@ Three layers, composed at spawn time:
 
 | Layer | Source | What it provides | Who writes it |
 |---|---|---|---|
-| Base | k-orchestrate repo `base/` | Protocol (how to behave) | Orchestrator maintainers |
+| Base | hyperloop repo `base/` | Protocol (how to behave) | Orchestrator maintainers |
 | Project overlay | Project gitops repo `overlays/{project}/` | Persona (who you are) | Project team |
 | Process overlay | Target repo `specs/prompts/` | Learned rules (what to watch for) | Process-improver agent |
 
 ### Layer 1+2: Kustomize
 
-Layers 1 and 2 are composed via kustomize. The project gitops repo contains a `kustomization.yaml` that references the k-orchestrate base as a remote resource and applies project-specific patches:
+Layers 1 and 2 are composed via kustomize. The project gitops repo contains a `kustomization.yaml` that references the hyperloop base as a remote resource and applies project-specific patches:
 
 ```yaml
 # project-gitops/overlays/api/kustomization.yaml
 resources:
-  - github.com/org/k-orchestrate//base?ref=v1.2.0    # remote base, pinned by ref
+  - github.com/org/hyperloop//base?ref=v1.2.0    # remote base, pinned by ref
 
 patches:
   - path: implementer-patch.yaml
@@ -379,7 +379,7 @@ Implementations: `LocalRuntime` (git worktrees + CLI), `AmbientRuntime` (ambient
 
 ```
 startup:
-    read .k-orchestrate.yaml from target repo
+    read .hyperloop.yaml from target repo
     kustomize build <overlay-path> → resolved templates
     recovery (if resuming):
         read task files → reconstruct in-flight state
@@ -441,7 +441,7 @@ while true:
 
 ## Configuration
 
-The target repo contains a `.k-orchestrate.yaml` file:
+The target repo contains a `.hyperloop.yaml` file:
 
 ```yaml
 # Points to a kustomization directory — kustomize build resolves base + overlay
@@ -471,7 +471,7 @@ max_rebase_attempts: 3
 **Level 0 — no config, all defaults:**
 
 ```bash
-uvx k-orchestrate --repo owner/repo --branch main
+uvx hyperloop --repo owner/repo --branch main
 ```
 
 Base prompts, default workflow, no overlay.
@@ -479,7 +479,7 @@ Base prompts, default workflow, no overlay.
 **Level 1 — config file, no overlay:**
 
 ```yaml
-# .k-orchestrate.yaml
+# .hyperloop.yaml
 target:
   base_branch: main
 merge:
@@ -491,8 +491,8 @@ Base prompts with tuned knobs.
 **Level 2 — in-repo overlay:**
 
 ```yaml
-# .k-orchestrate.yaml
-overlay: .k-orchestrate/agents/
+# .hyperloop.yaml
+overlay: .hyperloop/agents/
 ```
 
 Agent patches live in the target repo itself. No separate gitops repo needed.
@@ -500,7 +500,7 @@ Agent patches live in the target repo itself. No separate gitops repo needed.
 **Level 3 — shared gitops overlay:**
 
 ```yaml
-# .k-orchestrate.yaml
+# .hyperloop.yaml
 overlay: git@gitlab.cee.redhat.com:hyperfleet/gitops//overlays/api
 ```
 
@@ -511,12 +511,12 @@ Agent definitions managed centrally across multiple target repos.
 ### Orchestrator repo (this repo)
 
 ```
-k-orchestrate/
+hyperloop/
 ├── specs/
 │   └── spec.md              ← this file
 ├── base/                    ← base agent + workflow definitions
 │   ├── workflow.yaml          referenced by gitops repos via kustomize remote resource
-│   ├── implementer.yaml       (github.com/org/k-orchestrate//base?ref=v1.2.0)
+│   ├── implementer.yaml       (github.com/org/hyperloop//base?ref=v1.2.0)
 │   ├── verifier.yaml
 │   ├── process-improver.yaml
 │   ├── rebase-resolver.yaml
@@ -544,8 +544,8 @@ The `base/` directory is not bundled into the pip package. It lives in the repo 
 
 ```
 target-repo/
-├── .k-orchestrate.yaml      ← orchestrator config (overlay ref, runtime settings)
-├── .k-orchestrate/           ← optional: in-repo overlay (level 2 adoption)
+├── .hyperloop.yaml      ← orchestrator config (overlay ref, runtime settings)
+├── .hyperloop/           ← optional: in-repo overlay (level 2 adoption)
 │   └── agents/
 │       ├── implementer-patch.yaml
 │       └── workflow-patch.yaml
@@ -561,7 +561,7 @@ target-repo/
 ```
 project-gitops/
 └── overlays/{project}/
-    ├── kustomization.yaml            ← references k-orchestrate//base as remote resource
+    ├── kustomization.yaml            ← references hyperloop//base as remote resource
     ├── workflow-patch.yaml           ← replaces pipeline list
     ├── implementer-patch.yaml        ← injects persona
     ├── verifier-patch.yaml

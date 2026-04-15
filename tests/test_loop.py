@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from k_orchestrate.compose import PromptComposer
-from k_orchestrate.domain.model import (
+from hyperloop.compose import PromptComposer
+from hyperloop.domain.model import (
     ActionStep,
     GateStep,
     LoopStep,
@@ -20,7 +20,7 @@ from k_orchestrate.domain.model import (
     WorkerResult,
     Workflow,
 )
-from k_orchestrate.loop import Orchestrator
+from hyperloop.loop import Orchestrator
 from tests.fakes.pr import FakePRManager
 from tests.fakes.runtime import InMemoryRuntime
 from tests.fakes.state import InMemoryStateStore

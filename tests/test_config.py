@@ -6,20 +6,20 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from k_orchestrate.config import ConfigError, load_config
+from hyperloop.config import ConfigError, load_config
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 
 class TestLoadConfigFromFile:
-    """Load a complete .k-orchestrate.yaml file."""
+    """Load a complete .hyperloop.yaml file."""
 
     def test_loads_all_fields(self, tmp_path: Path) -> None:
-        config_file = tmp_path / ".k-orchestrate.yaml"
+        config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
-overlay: .k-orchestrate/agents/
+overlay: .hyperloop/agents/
 
 target:
   repo: acme/widgets
@@ -46,7 +46,7 @@ max_rebase_attempts: 5
         assert cfg.repo == "acme/widgets"
         assert cfg.base_branch == "develop"
         assert cfg.specs_dir == "specifications"
-        assert cfg.overlay == ".k-orchestrate/agents/"
+        assert cfg.overlay == ".hyperloop/agents/"
         assert cfg.runtime == "local"
         assert cfg.max_workers == 4
         assert cfg.auto_merge is False
@@ -89,7 +89,7 @@ class TestLoadConfigPartial:
     """Load config with some fields set, others defaulted."""
 
     def test_partial_target_section(self, tmp_path: Path) -> None:
-        config_file = tmp_path / ".k-orchestrate.yaml"
+        config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
 target:
@@ -106,7 +106,7 @@ target:
         assert cfg.auto_merge is True
 
     def test_partial_merge_section(self, tmp_path: Path) -> None:
-        config_file = tmp_path / ".k-orchestrate.yaml"
+        config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
 merge:
@@ -121,7 +121,7 @@ merge:
         assert cfg.delete_branch is True
 
     def test_partial_runtime_section(self, tmp_path: Path) -> None:
-        config_file = tmp_path / ".k-orchestrate.yaml"
+        config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
 runtime:
@@ -135,7 +135,7 @@ runtime:
         assert cfg.runtime == "local"
 
     def test_overlay_only(self, tmp_path: Path) -> None:
-        config_file = tmp_path / ".k-orchestrate.yaml"
+        config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text("overlay: git@github.com:org/gitops//overlays/api\n")
 
         cfg = load_config(config_file)
@@ -144,7 +144,7 @@ runtime:
         assert cfg.base_branch == "main"
 
     def test_top_level_fields_only(self, tmp_path: Path) -> None:
-        config_file = tmp_path / ".k-orchestrate.yaml"
+        config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
 poll_interval: 45
@@ -164,7 +164,7 @@ class TestLoadConfigCliOverrides:
     """Override specific fields from CLI arguments."""
 
     def test_override_repo(self, tmp_path: Path) -> None:
-        config_file = tmp_path / ".k-orchestrate.yaml"
+        config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
 target:
@@ -182,7 +182,7 @@ target:
         assert cfg.base_branch == "develop"
 
     def test_override_max_workers(self, tmp_path: Path) -> None:
-        config_file = tmp_path / ".k-orchestrate.yaml"
+        config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
 runtime:
@@ -196,7 +196,7 @@ runtime:
 
     def test_override_none_does_not_replace(self, tmp_path: Path) -> None:
         """CLI args that are None should not override file values."""
-        config_file = tmp_path / ".k-orchestrate.yaml"
+        config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
 target:
@@ -213,14 +213,14 @@ class TestLoadConfigErrors:
     """Invalid YAML or config raises useful errors."""
 
     def test_invalid_yaml_raises_config_error(self, tmp_path: Path) -> None:
-        config_file = tmp_path / ".k-orchestrate.yaml"
+        config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text("invalid: yaml: {{{bad")
 
         with pytest.raises(ConfigError, match="Failed to parse"):
             load_config(config_file)
 
     def test_non_dict_yaml_raises_config_error(self, tmp_path: Path) -> None:
-        config_file = tmp_path / ".k-orchestrate.yaml"
+        config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text("- a list\n- not a mapping\n")
 
         with pytest.raises(ConfigError, match="must be a YAML mapping"):

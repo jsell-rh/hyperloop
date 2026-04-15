@@ -10,8 +10,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from k_orchestrate.domain.decide import decide
-from k_orchestrate.domain.model import (
+from hyperloop.domain.decide import decide
+from hyperloop.domain.model import (
     ActionStep,
     GateStep,
     Halt,
@@ -27,7 +27,7 @@ from k_orchestrate.domain.model import (
     WorkerState,
     World,
 )
-from k_orchestrate.domain.pipeline import (
+from hyperloop.domain.pipeline import (
     PerformAction,
     PipelineComplete,
     PipelineExecutor,
@@ -37,11 +37,11 @@ from k_orchestrate.domain.pipeline import (
 )
 
 if TYPE_CHECKING:
-    from k_orchestrate.compose import PromptComposer
-    from k_orchestrate.domain.model import PipelineStep, Task, WorkerResult, Workflow
-    from k_orchestrate.ports.pr import PRPort
-    from k_orchestrate.ports.runtime import Runtime
-    from k_orchestrate.ports.state import StateStore
+    from hyperloop.compose import PromptComposer
+    from hyperloop.domain.model import PipelineStep, Task, WorkerResult, Workflow
+    from hyperloop.ports.pr import PRPort
+    from hyperloop.ports.runtime import Runtime
+    from hyperloop.ports.state import StateStore
 
 logger = logging.getLogger(__name__)
 

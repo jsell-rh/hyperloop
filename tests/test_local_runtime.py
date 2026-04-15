@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from k_orchestrate.adapters.local import LocalRuntime
-from k_orchestrate.domain.model import Verdict
+from hyperloop.adapters.local import LocalRuntime
+from hyperloop.domain.model import Verdict
 
 if TYPE_CHECKING:
     from pathlib import Path

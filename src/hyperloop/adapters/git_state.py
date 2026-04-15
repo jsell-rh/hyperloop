@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from k_orchestrate.domain.model import Phase, Task, TaskStatus, World
+from hyperloop.domain.model import Phase, Task, TaskStatus, World
 
 if TYPE_CHECKING:
     from pathlib import Path

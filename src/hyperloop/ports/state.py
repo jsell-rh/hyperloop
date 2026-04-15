@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from k_orchestrate.domain.model import Phase, Task, TaskStatus, World
+    from hyperloop.domain.model import Phase, Task, TaskStatus, World
 
 
 class StateStore(Protocol):

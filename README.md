@@ -1,13 +1,13 @@
-# k-orchestrate
+# hyperloop
 
 Walks tasks through composable workflow pipelines using AI agents. You write specs, it creates tasks, implements them, verifies the work, and merges PRs.
 
 ## Install
 
 ```bash
-pip install k-orchestrate
+pip install hyperloop
 # or
-uvx k-orchestrate
+uvx hyperloop
 ```
 
 Requires: `kustomize` CLI (for overlay resolution), `gh` CLI (for PR management), `git`.
@@ -26,14 +26,14 @@ your-repo/
 
 ```bash
 cd your-repo
-k-orchestrate --repo owner/repo --branch main
+hyperloop --repo owner/repo --branch main
 ```
 
 The orchestrator reads your specs, creates tasks, and starts running agents through the pipeline: implement, verify, merge.
 
 ## Configuration
 
-Create `.k-orchestrate.yaml` in your repo root for persistent config:
+Create `.hyperloop.yaml` in your repo root for persistent config:
 
 ```yaml
 target:
@@ -50,21 +50,21 @@ merge:
 
 ## Customizing Agent Behavior
 
-k-orchestrate ships with base agent definitions (implementer, verifier, etc.) that work out of the box. To customize them for your project, you overlay with patches.
+hyperloop ships with base agent definitions (implementer, verifier, etc.) that work out of the box. To customize them for your project, you overlay with patches.
 
 ### Level 1: In-repo overlay
 
 For single-repo projects. Agent patches live in the repo itself:
 
 ```yaml
-# .k-orchestrate.yaml
-overlay: .k-orchestrate/agents/
+# .hyperloop.yaml
+overlay: .hyperloop/agents/
 ```
 
 ```
 your-repo/
-├── .k-orchestrate.yaml
-├── .k-orchestrate/
+├── .hyperloop.yaml
+├── .hyperloop/
 │   └── agents/
 │       ├── implementer-patch.yaml
 │       └── workflow-patch.yaml
@@ -74,7 +74,7 @@ your-repo/
 An implementer patch injects your project's persona:
 
 ```yaml
-# .k-orchestrate/agents/implementer-patch.yaml
+# .hyperloop/agents/implementer-patch.yaml
 kind: Agent
 name: implementer
 annotations:
@@ -86,17 +86,17 @@ annotations:
 
 ### Level 2: Shared overlay via gitops repo
 
-For teams with multiple repos sharing agent definitions. The overlay lives in a central gitops repo and references the k-orchestrate base as a kustomize remote resource:
+For teams with multiple repos sharing agent definitions. The overlay lives in a central gitops repo and references the hyperloop base as a kustomize remote resource:
 
 ```yaml
-# .k-orchestrate.yaml
+# .hyperloop.yaml
 overlay: git@github.com:your-org/agent-gitops//overlays/api
 ```
 
 ```yaml
 # your-org/agent-gitops/overlays/api/kustomization.yaml
 resources:
-  - github.com/org/k-orchestrate//base?ref=v1.0.0
+  - github.com/org/hyperloop//base?ref=v1.0.0
 
 patches:
   - path: implementer-patch.yaml
@@ -157,9 +157,9 @@ All task state is tracked in git. Every commit includes `Spec-Ref` and `Task-Ref
 ## Configuration Reference
 
 ```yaml
-# .k-orchestrate.yaml
+# .hyperloop.yaml
 
-overlay: .k-orchestrate/agents/    # local path or git URL to kustomization dir
+overlay: .hyperloop/agents/    # local path or git URL to kustomization dir
 
 target:
   repo: owner/repo                 # GitHub repo (default: inferred from git remote)

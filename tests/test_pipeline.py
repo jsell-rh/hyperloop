@@ -4,7 +4,7 @@ The PipelineExecutor takes a pipeline definition at construction, and given a
 current position and worker result, returns the next action to take and the new position.
 """
 
-from k_orchestrate.domain.model import (
+from hyperloop.domain.model import (
     ActionStep,
     GateStep,
     LoopStep,
@@ -13,7 +13,7 @@ from k_orchestrate.domain.model import (
     Verdict,
     WorkerResult,
 )
-from k_orchestrate.domain.pipeline import (
+from hyperloop.domain.pipeline import (
     PerformAction,
     PipelineComplete,
     PipelineExecutor,

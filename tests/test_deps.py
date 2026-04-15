@@ -6,8 +6,8 @@ detect_cycles function that identifies cycles in the task dependency graph.
 
 from __future__ import annotations
 
-from k_orchestrate.domain.deps import detect_cycles
-from k_orchestrate.domain.model import Task, TaskStatus
+from hyperloop.domain.deps import detect_cycles
+from hyperloop.domain.model import Task, TaskStatus
 
 
 def _task(task_id: str, deps: tuple[str, ...] = ()) -> Task:

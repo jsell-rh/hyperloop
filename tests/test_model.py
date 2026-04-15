@@ -1,6 +1,6 @@
 """Tests for the domain model — value objects, entities, and pipeline primitives."""
 
-from k_orchestrate.domain.model import (
+from hyperloop.domain.model import (
     ActionStep,
     AdvanceTask,
     GateStep,

@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from k_orchestrate.domain.model import Task
+    from hyperloop.domain.model import Task
 
 
 def detect_cycles(tasks: dict[str, Task]) -> list[list[str]]:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from k_orchestrate.cli import app
+from hyperloop.cli import app
 
 runner = CliRunner()
 
@@ -18,7 +18,7 @@ class TestHelpCommand:
 
     def test_help_shows_app_name(self) -> None:
         result = runner.invoke(app, ["--help"])
-        assert "k-orchestrate" in result.output.lower() or "orchestrat" in result.output.lower()
+        assert "hyperloop" in result.output.lower() or "orchestrat" in result.output.lower()
 
     def test_run_help_shows_options(self) -> None:
         result = runner.invoke(app, ["run", "--help"])
@@ -32,7 +32,7 @@ class TestDryRun:
     """--dry-run shows config without executing."""
 
     def test_dry_run_shows_config_table(self, tmp_path) -> None:
-        config_file = tmp_path / ".k-orchestrate.yaml"
+        config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
 target:
@@ -48,7 +48,7 @@ target:
         assert "dry" in result.output.lower() or "Dry" in result.output
 
     def test_dry_run_with_cli_overrides(self, tmp_path) -> None:
-        config_file = tmp_path / ".k-orchestrate.yaml"
+        config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text("target:\n  repo: acme/widgets\n")
 
         result = runner.invoke(

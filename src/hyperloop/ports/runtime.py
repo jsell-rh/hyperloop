@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, Protocol
 
 if TYPE_CHECKING:
-    from k_orchestrate.domain.model import WorkerHandle, WorkerResult
+    from hyperloop.domain.model import WorkerHandle, WorkerResult
 
 WorkerPollStatus = Literal["running", "done", "failed"]
 

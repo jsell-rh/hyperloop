@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-from k_orchestrate.domain.model import (
+from hyperloop.domain.model import (
     ActionStep,
     GateStep,
     LoopStep,

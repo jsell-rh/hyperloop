@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from k_orchestrate.compose import PromptComposer
+from hyperloop.compose import PromptComposer
 from tests.fakes.state import InMemoryStateStore
 
 # The base/ dir lives at the repo root, adjacent to src/

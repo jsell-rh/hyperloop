@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from k_orchestrate.domain.model import (
+from hyperloop.domain.model import (
     AdvanceTask,
     Halt,
     ReapWorker,
@@ -16,7 +16,7 @@ from k_orchestrate.domain.model import (
 )
 
 if TYPE_CHECKING:
-    from k_orchestrate.domain.model import Action, Task, World
+    from hyperloop.domain.model import Action, Task, World
 
 
 def _deps_met(task: Task, tasks: dict[str, Task]) -> bool:

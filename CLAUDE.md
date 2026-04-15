@@ -1,4 +1,4 @@
-# k-orchestrate
+# hyperloop
 
 An orchestrator that walks tasks through composable workflow pipelines using AI agents.
 
@@ -16,7 +16,7 @@ uv run ruff format --check .     # format check
 Hexagonal (ports & adapters). Domain logic has zero I/O dependencies.
 
 ```
-src/k_orchestrate/
+src/hyperloop/
 ├── domain/           ← pure logic, no I/O, no framework imports
 │   ├── model.py      ← Task, WorkerResult, Workflow, Pipeline (value objects/entities)
 │   ├── decide.py     ← decide(world) → Action[] (pure function)

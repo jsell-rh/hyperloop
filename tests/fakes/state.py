@@ -5,7 +5,7 @@ A first-class fake, tested via contract tests, reusable across all tests.
 
 from __future__ import annotations
 
-from k_orchestrate.domain.model import (
+from hyperloop.domain.model import (
     Phase,
     Task,
     TaskStatus,

@@ -1,4 +1,4 @@
-"""Configuration loading — parse .k-orchestrate.yaml with defaults.
+"""Configuration loading — parse .hyperloop.yaml with defaults.
 
 Reads the YAML config file, applies defaults for missing fields, and
 returns a frozen Config dataclass. CLI arguments can override file values.
@@ -108,7 +108,7 @@ def load_config(
     """Load config from a YAML file, with defaults for missing fields.
 
     Args:
-        path: Path to .k-orchestrate.yaml. If None or non-existent, use all defaults.
+        path: Path to .hyperloop.yaml. If None or non-existent, use all defaults.
         repo: CLI override for target.repo.
         base_branch: CLI override for target.base_branch.
         max_workers: CLI override for runtime.max_workers.

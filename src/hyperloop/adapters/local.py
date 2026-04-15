@@ -13,10 +13,10 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from k_orchestrate.domain.model import Verdict, WorkerHandle, WorkerResult
+from hyperloop.domain.model import Verdict, WorkerHandle, WorkerResult
 
 if TYPE_CHECKING:
-    from k_orchestrate.ports.runtime import WorkerPollStatus
+    from hyperloop.ports.runtime import WorkerPollStatus
 
 
 def _clean_git_env() -> dict[str, str]:

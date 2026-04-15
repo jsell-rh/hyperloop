@@ -1,6 +1,6 @@
 """CLI entry point — typer app with rich output formatting.
 
-Provides the ``k-orchestrate run`` command that loads config, constructs
+Provides the ``hyperloop run`` command that loads config, constructs
 the orchestrator, and runs the loop with rich status output.
 """
 
@@ -14,10 +14,10 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from k_orchestrate.config import Config, ConfigError, load_config
+from hyperloop.config import Config, ConfigError, load_config
 
 app = typer.Typer(
-    name="k-orchestrate",
+    name="hyperloop",
     no_args_is_help=True,
 )
 console = Console()
@@ -64,7 +64,7 @@ def run(
         None,
         "--config",
         "-c",
-        help="Config file path. Default: .k-orchestrate.yaml",
+        help="Config file path. Default: .hyperloop.yaml",
     ),
     max_workers: int | None = typer.Option(
         None,
@@ -78,7 +78,7 @@ def run(
 ) -> None:
     """Run the orchestrator loop."""
     # 1. Load config (file + CLI overrides)
-    config_path = config_file or Path(".k-orchestrate.yaml")
+    config_path = config_file or Path(".hyperloop.yaml")
     try:
         cfg = load_config(
             config_path,
@@ -94,7 +94,7 @@ def run(
     console.print()
     console.print(
         Panel(
-            "[bold]k-orchestrate[/bold]",
+            "[bold]hyperloop[/bold]",
             subtitle="AI agent orchestrator",
             style="blue",
         )
@@ -111,15 +111,15 @@ def run(
     if cfg.repo is None:
         console.print(
             "[bold red]Error:[/bold red] No repo specified. "
-            "Use --repo owner/repo or set target.repo in .k-orchestrate.yaml"
+            "Use --repo owner/repo or set target.repo in .hyperloop.yaml"
         )
         raise typer.Exit(code=1)
 
     # 5. Construct runtime and state store, run loop
-    from k_orchestrate.adapters.git_state import GitStateStore
-    from k_orchestrate.adapters.local import LocalRuntime
-    from k_orchestrate.domain.model import ActionStep, LoopStep, RoleStep, Workflow
-    from k_orchestrate.loop import Orchestrator
+    from hyperloop.adapters.git_state import GitStateStore
+    from hyperloop.adapters.local import LocalRuntime
+    from hyperloop.domain.model import ActionStep, LoopStep, RoleStep, Workflow
+    from hyperloop.loop import Orchestrator
 
     # Default workflow: loop(implementer, verifier) -> merge-pr
     default_workflow = Workflow(

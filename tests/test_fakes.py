@@ -6,7 +6,7 @@ They are structured so they could also be run against real adapters later.
 
 from __future__ import annotations
 
-from k_orchestrate.domain.model import (
+from hyperloop.domain.model import (
     Phase,
     Task,
     TaskStatus,
