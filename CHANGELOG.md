@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.8.1 (2026-04-15)
+
+### Bug Fixes
+
+- **matrix**: Auto-create room independently of registration
+  ([`cb4c0a6`](https://github.com/jsell-rh/hyperloop/commit/cb4c0a665a018a6739ff0fb70e333e7f69202e54))
+
+
 ## v0.8.0 (2026-04-15)
 
 ### Features
