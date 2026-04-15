@@ -88,9 +88,9 @@ class InMemoryStateStore:
             pr=old.pr,
         )
 
-    def store_findings(self, task_id: str, data: str) -> None:
+    def store_findings(self, task_id: str, detail: str) -> None:
         """Append findings to the task's findings string."""
-        self._findings[task_id] = self._findings.get(task_id, "") + data
+        self._findings[task_id] = self._findings.get(task_id, "") + detail
 
     def clear_findings(self, task_id: str) -> None:
         """Clear findings for a task."""

@@ -149,7 +149,7 @@ class TestConvergence:
 
 class TestMaxWorkers:
     def test_respects_max_workers_limit(self):
-        tasks = {}
+        tasks: dict[str, Task] = {}
         for i in range(5):
             t = _task(id=f"task-{i:03d}")
             tasks[t.id] = t

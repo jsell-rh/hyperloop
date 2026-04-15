@@ -12,7 +12,7 @@ reads base YAML files directly and injects process overlays + task context.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import yaml
 
@@ -119,7 +119,7 @@ class PromptComposer:
         try:
             doc = yaml.safe_load(raw_yaml)
             if isinstance(doc, dict) and "prompt" in doc:
-                return str(doc["prompt"]).strip()
+                return str(cast(dict[str, object], doc)["prompt"]).strip()
         except yaml.YAMLError:
             pass
         # Fall back to raw content

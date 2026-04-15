@@ -7,7 +7,7 @@ returns a frozen Config dataclass. CLI arguments can override file values.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import yaml
 
@@ -134,7 +134,7 @@ def load_config(
                 msg = f"Config file {path} must be a YAML mapping, got {type(raw).__name__}"
                 raise ConfigError(msg)
 
-            file_values = _flatten_yaml(raw)
+            file_values = _flatten_yaml(cast(dict[str, object], raw))
             values.update(file_values)
 
     # Apply CLI overrides (only if not None)

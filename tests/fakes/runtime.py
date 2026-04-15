@@ -5,7 +5,12 @@ A first-class fake, tested via contract tests, reusable across all tests.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from hyperloop.domain.model import WorkerHandle, WorkerResult
+
+if TYPE_CHECKING:
+    from hyperloop.ports.runtime import WorkerPollStatus
 
 
 class InMemoryRuntime:
@@ -13,11 +18,23 @@ class InMemoryRuntime:
 
     def __init__(self) -> None:
         self._handles: dict[str, WorkerHandle] = {}
-        self._poll_statuses: dict[str, str] = {}
+        self._poll_statuses: dict[str, WorkerPollStatus] = {}
         self._results: dict[str, WorkerResult] = {}
         self._reaped: set[str] = set()
         self._cancelled: set[str] = set()
         self._spawn_counter: int = 0
+
+    # -- Public accessors (for test assertions) -------------------------------
+
+    @property
+    def handles(self) -> dict[str, WorkerHandle]:
+        """Expose spawned handles for test assertions."""
+        return self._handles
+
+    @property
+    def cancelled(self) -> set[str]:
+        """Expose cancelled task IDs for test assertions."""
+        return self._cancelled
 
     # -- Configuration helpers (for tests) ----------------------------------
 
@@ -25,7 +42,7 @@ class InMemoryRuntime:
         """Pre-configure what reap() returns for a task."""
         self._results[task_id] = result
 
-    def set_poll_status(self, task_id: str, status: str) -> None:
+    def set_poll_status(self, task_id: str, status: WorkerPollStatus) -> None:
         """Pre-configure what poll() returns for a task."""
         self._poll_statuses[task_id] = status
 
@@ -48,11 +65,11 @@ class InMemoryRuntime:
         self._cancelled.discard(task_id)
         return handle
 
-    def poll(self, handle: WorkerHandle) -> str:
-        """Check worker status. Returns 'running', 'done', 'failed', or 'cancelled'."""
+    def poll(self, handle: WorkerHandle) -> WorkerPollStatus:
+        """Check worker status. Returns 'running', 'done', or 'failed'."""
         task_id = handle.task_id
         if task_id in self._cancelled:
-            return "cancelled"
+            return "failed"
         return self._poll_statuses.get(task_id, "running")
 
     def reap(self, handle: WorkerHandle) -> WorkerResult:

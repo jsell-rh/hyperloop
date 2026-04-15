@@ -30,11 +30,11 @@ PASS = WorkerResult(verdict=Verdict.PASS, findings=0, detail="ok")
 FAIL = WorkerResult(verdict=Verdict.FAIL, findings=1, detail="failed")
 
 
-def pos(*indices):
+def pos(*indices: int) -> PipelinePosition:
     return PipelinePosition(path=indices)
 
 
-def role(name):
+def role(name: str) -> RoleStep:
     return RoleStep(role=name, on_pass=None, on_fail=None)
 
 

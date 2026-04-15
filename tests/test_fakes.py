@@ -326,7 +326,7 @@ class TestRuntimeCancel:
         handle = runtime.spawn("task-001", "implementer", "Do the work", "worker/task-001")
 
         runtime.cancel(handle)
-        assert runtime.poll(handle) == "cancelled"
+        assert runtime.poll(handle) == "failed"
 
 
 class TestRuntimeFindOrphan:

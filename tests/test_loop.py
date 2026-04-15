@@ -472,7 +472,7 @@ class TestNeedsRebaseSpawning:
         orch.run_cycle()
 
         # Check the runtime received a spawn with rebase-resolver role
-        handle = runtime._handles.get("task-001")
+        handle = runtime.handles.get("task-001")
         assert handle is not None
         assert handle.role == "rebase-resolver"
 
@@ -527,7 +527,7 @@ class TestRecovery:
         orch.recover()
 
         # The orphan should have been cancelled
-        assert "task-001" in runtime._cancelled
+        assert "task-001" in runtime.cancelled
 
     def test_recover_respawns_in_progress_task_next_cycle(self) -> None:
         """After recovery, the next cycle should spawn a worker for the in-progress task."""
@@ -552,7 +552,7 @@ class TestRecovery:
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS
         # Should have spawned a fresh worker
-        handle = runtime._handles.get("task-001")
+        handle = runtime.handles.get("task-001")
         assert handle is not None
 
     def test_recover_ignores_non_in_progress_tasks(self) -> None:
@@ -568,9 +568,9 @@ class TestRecovery:
         orch.recover()
 
         # No orphan checks for these tasks
-        assert "task-001" not in runtime._cancelled
-        assert "task-002" not in runtime._cancelled
-        assert "task-003" not in runtime._cancelled
+        assert "task-001" not in runtime.cancelled
+        assert "task-002" not in runtime.cancelled
+        assert "task-003" not in runtime.cancelled
 
     def test_recover_handles_no_orphan(self) -> None:
         """When runtime finds no orphan, recovery proceeds without cancellation."""
@@ -591,11 +591,11 @@ class TestRecovery:
         orch.recover()
 
         # No cancellation should have happened
-        assert "task-001" not in runtime._cancelled
+        assert "task-001" not in runtime.cancelled
 
         # But the task should still be re-spawned on next cycle
         orch.run_cycle()
-        handle = runtime._handles.get("task-001")
+        handle = runtime.handles.get("task-001")
         assert handle is not None
 
 

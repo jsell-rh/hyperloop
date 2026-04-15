@@ -313,7 +313,7 @@ class Orchestrator:
             if pos is None:
                 continue
 
-            step = PipelineExecutor._resolve_step(executor.pipeline, pos.path)
+            step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
             if not isinstance(step, GateStep):
                 continue
 
@@ -324,7 +324,7 @@ class Orchestrator:
 
             # Gate cleared — advance to next pipeline step
             logger.info("Gate '%s' cleared for task %s", step.gate, task.id)
-            advanced = PipelineExecutor._advance_from(executor.pipeline, pos.path)
+            advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
             if advanced is not None:
                 next_action, new_pos = advanced
                 phase_name = _phase_for_pipe_action(next_action)

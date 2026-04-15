@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from typer.testing import CliRunner
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from hyperloop.cli import app
 
@@ -31,7 +36,7 @@ class TestHelpCommand:
 class TestDryRun:
     """--dry-run shows config without executing."""
 
-    def test_dry_run_shows_config_table(self, tmp_path) -> None:
+    def test_dry_run_shows_config_table(self, tmp_path: Path) -> None:
         config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
@@ -47,7 +52,7 @@ target:
         assert "acme/widgets" in result.output
         assert "dry" in result.output.lower() or "Dry" in result.output
 
-    def test_dry_run_with_cli_overrides(self, tmp_path) -> None:
+    def test_dry_run_with_cli_overrides(self, tmp_path: Path) -> None:
         config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text("target:\n  repo: acme/widgets\n")
 
@@ -80,7 +85,7 @@ target:
 class TestRunRequiresRepo:
     """Running without --dry-run and without a repo should show an error."""
 
-    def test_no_repo_shows_error(self, tmp_path) -> None:
+    def test_no_repo_shows_error(self, tmp_path: Path) -> None:
         # No config file, no --repo flag, no git remote to infer from
         result = runner.invoke(app, ["run", "--config", str(tmp_path / "nope.yaml")])
 

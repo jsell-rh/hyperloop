@@ -95,7 +95,7 @@ class PipelineExecutor:
         Returns:
             A tuple of (action to take, new position).
         """
-        step = self._resolve_step(self._pipeline, position.path)
+        step = self.resolve_step(self._pipeline, position.path)
 
         # --- No result: we're arriving at this step for the first time ---
         if result is None:
@@ -127,7 +127,7 @@ class PipelineExecutor:
 
         if is_pass:
             # Advance to next step
-            advanced = self._advance_from(self._pipeline, position.path)
+            advanced = self.advance_from(self._pipeline, position.path)
             if advanced is not None:
                 return advanced
             # Past the end of the pipeline
@@ -156,7 +156,7 @@ class PipelineExecutor:
     # -----------------------------------------------------------------------
 
     @staticmethod
-    def _resolve_step(
+    def resolve_step(
         steps: Sequence[PipelineStep],
         path: tuple[int, ...],
     ) -> PipelineStep:
@@ -229,7 +229,7 @@ class PipelineExecutor:
         return PipelineExecutor._action_for_step(step), PipelinePosition(path=current_path)
 
     @classmethod
-    def _advance_from(
+    def advance_from(
         cls,
         pipeline: Sequence[PipelineStep],
         path: tuple[int, ...],
@@ -270,7 +270,7 @@ class PipelineExecutor:
             return cls._descend_to_leaf(parent_step.steps, parent_path, next_idx)
 
         # End of this loop's steps — exit the loop and advance at the parent level
-        return cls._advance_from(pipeline, parent_path)
+        return cls.advance_from(pipeline, parent_path)
 
     @classmethod
     def _restart_loop(
