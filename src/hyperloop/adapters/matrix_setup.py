@@ -262,6 +262,7 @@ def ensure_matrix_ready(
     room_id = config.room_id or cached_room
 
     if not room_id:
+        _log.info("Matrix: no room_id configured or cached — creating room")
         try:
             room_id = _auto_create_room(config, repo_path, homeserver, access_token)
         except Exception:
@@ -269,11 +270,12 @@ def ensure_matrix_ready(
             return access_token, ""
 
     # Ensure the bot has joined the room (it's a new user each run)
-    if access_token != explicit_token:
+    if access_token != explicit_token and room_id:
+        _log.info("Matrix: joining room %s", room_id)
         try:
             _join_room(httpx.Client(timeout=10.0), homeserver, access_token, room_id)
         except Exception:
-            _log.exception("Matrix room join failed")
+            _log.exception("Matrix room join failed for room %s", room_id)
 
     return access_token, room_id
 
