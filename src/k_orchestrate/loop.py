@@ -37,6 +37,7 @@ from k_orchestrate.domain.pipeline import (
 )
 
 if TYPE_CHECKING:
+    from k_orchestrate.compose import PromptComposer
     from k_orchestrate.domain.model import PipelineStep, Task, WorkerResult, Workflow
     from k_orchestrate.ports.pr import PRPort
     from k_orchestrate.ports.runtime import Runtime
@@ -69,6 +70,7 @@ class Orchestrator:
         max_workers: int = 6,
         max_rounds: int = 50,
         pr_manager: PRPort | None = None,
+        composer: PromptComposer | None = None,
     ) -> None:
         self._state = state
         self._runtime = runtime
@@ -76,6 +78,7 @@ class Orchestrator:
         self._max_workers = max_workers
         self._max_rounds = max_rounds
         self._pr_manager = pr_manager
+        self._composer = composer
 
         # Active worker tracking: task_id -> (handle, pipeline_position)
         self._workers: dict[str, tuple[WorkerHandle, PipelinePosition]] = {}
@@ -265,7 +268,8 @@ class Orchestrator:
         for task_id, role, position in to_spawn:
             task = self._state.get_task(task_id)
             branch = task.branch or f"worker/{task_id}"
-            handle = self._runtime.spawn(task_id, role, prompt="", branch=branch)
+            prompt = self._compose_prompt(task, role)
+            handle = self._runtime.spawn(task_id, role, prompt=prompt, branch=branch)
             self._workers[task_id] = (handle, position)
 
         # ---- Check convergence -----------------------------------------------
@@ -395,6 +399,23 @@ class Orchestrator:
             tasks=base_world.tasks,
             workers=workers,
             epoch=base_world.epoch,
+        )
+
+    # -----------------------------------------------------------------------
+    # Prompt composition
+    # -----------------------------------------------------------------------
+
+    def _compose_prompt(self, task: Task, role: str) -> str:
+        """Compose a prompt for a worker using PromptComposer if available."""
+        if self._composer is None:
+            return ""
+
+        findings = self._state.get_findings(task.id)
+        return self._composer.compose(
+            role=role,
+            task_id=task.id,
+            spec_ref=task.spec_ref,
+            findings=findings,
         )
 
     # -----------------------------------------------------------------------

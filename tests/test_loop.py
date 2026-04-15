@@ -5,6 +5,9 @@ Uses InMemoryStateStore and InMemoryRuntime fakes. No mocks.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from k_orchestrate.compose import PromptComposer
 from k_orchestrate.domain.model import (
     ActionStep,
     GateStep,
@@ -71,6 +74,7 @@ def _make_orchestrator(
     max_workers: int = 6,
     max_rounds: int = 50,
     pr_manager: FakePRManager | None = None,
+    composer: PromptComposer | None = None,
 ) -> Orchestrator:
     return Orchestrator(
         state=state,
@@ -79,6 +83,7 @@ def _make_orchestrator(
         max_workers=max_workers,
         max_rounds=max_rounds,
         pr_manager=pr_manager,
+        composer=composer,
     )
 
 
@@ -836,5 +841,56 @@ class TestMergeWithPRManager:
         # Should not crash — merge is a no-op
         orch.run_cycle()
         # Task stays in its current state since merge was a no-op
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+
+
+BASE_DIR = Path(__file__).parent.parent / "base"
+
+
+class TestPromptComposition:
+    """PromptComposer is wired into the spawn path when provided."""
+
+    def test_spawn_uses_composed_prompt(self) -> None:
+        """When a PromptComposer is provided, spawn receives a composed prompt."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task())
+        state.set_file("specs/task-001.md", "Build a widget.")
+
+        composer = PromptComposer(base_dir=BASE_DIR, state=state)
+        orch = _make_orchestrator(state, runtime, composer=composer)
+
+        # Cycle 1: spawn implementer
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+
+    def test_spawn_without_composer_uses_empty_prompt(self) -> None:
+        """Backward compat: without a composer, spawn uses an empty prompt."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task())
+
+        orch = _make_orchestrator(state, runtime, composer=None)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+
+    def test_spawn_with_findings_includes_them_in_prompt(self) -> None:
+        """When a task has findings from a prior round, they are included in the prompt."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task())
+        state.set_file("specs/task-001.md", "Build a widget.")
+        state.store_findings("task-001", "Missing null check.\n")
+
+        composer = PromptComposer(base_dir=BASE_DIR, state=state)
+        orch = _make_orchestrator(state, runtime, composer=composer)
+
+        orch.run_cycle()
+
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS

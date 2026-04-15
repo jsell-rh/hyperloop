@@ -175,6 +175,11 @@ class GitStateStore:
         body = _append_to_findings(body, detail)
         self._write_task_file(task_id, fm, body)
 
+    def get_findings(self, task_id: str) -> str:
+        """Return stored findings for a task. Empty string if none."""
+        _fm, body = self._read_task_file(task_id)
+        return _extract_findings(body)
+
     def clear_findings(self, task_id: str) -> None:
         """Clear the findings section of a task file."""
         fm, body = self._read_task_file(task_id)
@@ -229,6 +234,15 @@ def _append_to_findings(body: str, detail: str) -> str:
     else:
         # Empty findings section — add content
         return body[:findings_start] + detail
+
+
+def _extract_findings(body: str) -> str:
+    """Extract content from the ## Findings section. Returns empty string if none."""
+    findings_match = re.search(r"## Findings\n", body)
+    if not findings_match:
+        return ""
+    content = body[findings_match.end() :]
+    return content.strip()
 
 
 def _clear_findings(body: str) -> str:

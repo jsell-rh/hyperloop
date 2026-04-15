@@ -36,6 +36,10 @@ class StateStore(Protocol):
         """Append findings detail text to the task file's Findings section on trunk."""
         ...
 
+    def get_findings(self, task_id: str) -> str:
+        """Return stored findings for a task. Empty string if none."""
+        ...
+
     def clear_findings(self, task_id: str) -> None:
         """Clear the findings section of a task file (on completion)."""
         ...

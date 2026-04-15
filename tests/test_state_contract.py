@@ -227,6 +227,31 @@ class TestStoreFindingsContract:
             assert "Round 2 failed." in findings
 
 
+class TestGetFindingsContract:
+    """get_findings retrieves stored findings text."""
+
+    def test_get_findings_returns_empty_when_none(
+        self, state_store: InMemoryStateStore | GitStateStore
+    ) -> None:
+        assert state_store.get_findings("task-001") == ""
+
+    def test_get_findings_returns_stored_text(
+        self, state_store: InMemoryStateStore | GitStateStore
+    ) -> None:
+        state_store.store_findings("task-001", "Tests failed.\n")
+        findings = state_store.get_findings("task-001")
+        assert "Tests failed." in findings
+
+    def test_get_findings_returns_appended_text(
+        self, state_store: InMemoryStateStore | GitStateStore
+    ) -> None:
+        state_store.store_findings("task-001", "Round 1 failed.\n")
+        state_store.store_findings("task-001", "Round 2 failed.\n")
+        findings = state_store.get_findings("task-001")
+        assert "Round 1 failed." in findings
+        assert "Round 2 failed." in findings
+
+
 class TestClearFindingsContract:
     """Clear findings removes text."""
 
