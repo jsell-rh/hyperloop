@@ -227,13 +227,62 @@ merge:
 poll_interval: 30                  # seconds between orchestrator cycles
 max_rounds: 50                     # max retry rounds per task before failure
 max_rebase_attempts: 3             # max rebase retries before full loop retry
+
+observability:
+  log_format: console              # console (human-readable) | json (for log aggregators)
+  log_level: info                  # debug | info | warning | error
+
+  matrix:                          # optional — omit entire section to disable
+    homeserver: https://matrix.example.com
+    room_id: "!abc123:example.com"
+    token_env: MATRIX_ACCESS_TOKEN  # env var holding the access token
+    verbose: false                 # true: send worker_spawned, cycle_completed, etc.
 ```
+
+## Observability
+
+Hyperloop uses structured logging via [structlog](https://www.structlog.org/). Every interesting moment in the orchestrator lifecycle emits a typed probe call that gets rendered as a structured log entry.
+
+### Log output
+
+Console mode (default):
+```
+2026-04-15T14:23:01Z [info     ] worker_reaped    cycle=7 duration_s=142.3 role=verifier spec_ref=specs/persistence.md task_id=task-003 verdict=pass
+2026-04-15T14:23:01Z [warning  ] task_looped_back  cycle=7 findings_count=3 round=2 spec_ref=specs/widget.md task_id=task-001
+```
+
+JSON mode (`log_format: json`):
+```json
+{"timestamp": "2026-04-15T14:23:01Z", "level": "info", "event": "worker_reaped", "task_id": "task-003", "role": "verifier", "verdict": "pass", "cycle": 7, "duration_s": 142.3}
+```
+
+### Matrix notifications
+
+Send real-time status updates to a [Matrix](https://matrix.org/) room. Each task's messages are threaded together.
+
+1. Create a Matrix access token for a bot account on your homeserver.
+2. Set the token in an environment variable:
+   ```bash
+   export MATRIX_ACCESS_TOKEN=syt_your_token_here
+   ```
+3. Add the Matrix section to `.hyperloop.yaml`:
+   ```yaml
+   observability:
+     matrix:
+       homeserver: https://matrix.example.com
+       room_id: "!roomid:example.com"
+       token_env: MATRIX_ACCESS_TOKEN
+   ```
+
+High-signal events are always sent (worker results, task completions/failures, merge outcomes, orchestrator halt). Set `verbose: true` to also see worker spawns, cycle completions, and intake runs. Noisy events (cycle starts, gate polls, phase transitions) are never sent to Matrix.
+
+Matrix failures are logged and swallowed — a Matrix outage never stalls the orchestrator.
 
 ## Development
 
 ```bash
 uv sync --all-extras
-uv run pytest                    # run tests (280 tests)
+uv run pytest                    # run tests (~390 tests)
 uv run ruff check .              # lint
 uv run ruff format --check .     # format check
 uv run pyright                   # type check
