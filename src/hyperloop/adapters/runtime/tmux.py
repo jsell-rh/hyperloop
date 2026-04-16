@@ -4,11 +4,12 @@ Uses tmux to run worker agents in named windows within a shared session.
 Each worker gets its own worktree and tmux window, allowing the user to
 attach and observe agents working in real time.
 
-The tmux session is detached by default. To observe workers:
+The tmux session is named after the repo (e.g. ``hyperloop-myproject``)
+and created detached. To observe workers:
 
-    tmux attach -t hyperloop
+    tmux attach -t hyperloop-myproject
 
-Individual workers run in named windows (e.g. ``hyperloop:task-001``).
+Individual workers run in named windows (e.g. ``hyperloop-myproject:task-001``).
 """
 
 from __future__ import annotations
@@ -40,8 +41,9 @@ log: structlog.stdlib.BoundLogger = structlog.get_logger()
 class TmuxRuntime:
     """Runtime implementation using tmux windows in git worktrees.
 
-    All workers share a single tmux session (default: ``hyperloop``).
-    Each worker gets its own named window within that session.
+    All workers share a single tmux session named after the repo
+    (e.g. ``hyperloop-myproject``).  Each worker gets its own named
+    window within that session.
     """
 
     def __init__(
@@ -49,12 +51,13 @@ class TmuxRuntime:
         repo_path: str,
         worktree_base: str | None = None,
         command: str | None = None,
-        session: str = "hyperloop",
+        session: str | None = None,
     ) -> None:
         self._repo_path = repo_path
         self._worktree_base = worktree_base or f"{repo_path}/worktrees/workers"
         self._command = command or "claude --dangerously-skip-permissions"
-        self._session = session
+        repo_name = Path(repo_path).resolve().name
+        self._session = session or f"hyperloop-{repo_name}"
         self._worktrees: dict[str, str] = {}  # task_id -> worktree_path
         self._session_created = False
 
