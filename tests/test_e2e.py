@@ -80,8 +80,8 @@ def _init_repo(path: Path) -> None:
 
 
 def _write_task_file(repo: Path, task_id: str, content: str) -> None:
-    """Write a task file into the repo's specs/tasks directory."""
-    tasks_dir = repo / "specs" / "tasks"
+    """Write a task file into the repo's .hyperloop/state/tasks directory."""
+    tasks_dir = repo / ".hyperloop" / "state" / "tasks"
     tasks_dir.mkdir(parents=True, exist_ok=True)
     (tasks_dir / f"{task_id}.md").write_text(content)
 

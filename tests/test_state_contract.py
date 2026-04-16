@@ -46,8 +46,8 @@ def _init_git_repo(path: Path) -> None:
 
 
 def _write_task_file(repo: Path, task_id: str, content: str) -> None:
-    """Write a task file into the repo's specs/tasks directory and commit it."""
-    tasks_dir = repo / "specs" / "tasks"
+    """Write a task file into the repo's .hyperloop/state/tasks directory and commit it."""
+    tasks_dir = repo / ".hyperloop" / "state" / "tasks"
     tasks_dir.mkdir(parents=True, exist_ok=True)
     (tasks_dir / f"{task_id}.md").write_text(content)
     subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
@@ -202,70 +202,47 @@ class TestTransitionTaskContract:
         assert updated.round == 5
 
 
-class TestStoreFindingsContract:
-    """Store findings appends text."""
+class TestStoreReviewContract:
+    """store_review persists a review record."""
 
-    def test_store_findings_does_not_raise(
+    def test_store_review_does_not_raise(
         self, state_store: InMemoryStateStore | GitStateStore
     ) -> None:
-        # Storing findings should succeed without error
-        state_store.store_findings("task-001", "Test X failed.\n")
+        state_store.store_review("task-001", 1, "verifier", "fail", 1, "Test X failed.")
 
-    def test_store_findings_appends(self, state_store: InMemoryStateStore | GitStateStore) -> None:
-        state_store.store_findings("task-001", "Round 1 failed.\n")
-        state_store.store_findings("task-001", "Round 2 failed.\n")
+    def test_store_review_multiple_rounds(
+        self, state_store: InMemoryStateStore | GitStateStore
+    ) -> None:
+        state_store.store_review("task-001", 1, "verifier", "fail", 2, "Round 1 failed.")
+        state_store.store_review("task-001", 2, "verifier", "fail", 1, "Round 2 failed.")
 
-        # Verify both findings survive by clearing and re-storing to confirm
-        # the append behavior. The state_store protocol doesn't expose a
-        # get_findings method, but we can verify indirectly: after two appends,
-        # the data is persisted (doesn't raise).
-
-        # For InMemoryStateStore we can check via the helper
-        if isinstance(state_store, InMemoryStateStore):
-            findings = state_store.get_findings("task-001")
-            assert "Round 1 failed." in findings
-            assert "Round 2 failed." in findings
+        # get_findings returns the latest review's detail
+        findings = state_store.get_findings("task-001")
+        assert "Round 2 failed." in findings
 
 
 class TestGetFindingsContract:
-    """get_findings retrieves stored findings text."""
+    """get_findings retrieves the latest review's detail."""
 
-    def test_get_findings_returns_empty_when_none(
+    def test_get_findings_returns_empty_when_no_reviews(
         self, state_store: InMemoryStateStore | GitStateStore
     ) -> None:
         assert state_store.get_findings("task-001") == ""
 
-    def test_get_findings_returns_stored_text(
+    def test_get_findings_returns_stored_detail(
         self, state_store: InMemoryStateStore | GitStateStore
     ) -> None:
-        state_store.store_findings("task-001", "Tests failed.\n")
+        state_store.store_review("task-001", 1, "verifier", "fail", 1, "Tests failed.")
         findings = state_store.get_findings("task-001")
         assert "Tests failed." in findings
 
-    def test_get_findings_returns_appended_text(
+    def test_get_findings_returns_latest_review(
         self, state_store: InMemoryStateStore | GitStateStore
     ) -> None:
-        state_store.store_findings("task-001", "Round 1 failed.\n")
-        state_store.store_findings("task-001", "Round 2 failed.\n")
+        state_store.store_review("task-001", 1, "verifier", "fail", 2, "Round 1 failed.")
+        state_store.store_review("task-001", 2, "verifier", "fail", 1, "Round 2 failed.")
         findings = state_store.get_findings("task-001")
-        assert "Round 1 failed." in findings
         assert "Round 2 failed." in findings
-
-
-class TestClearFindingsContract:
-    """Clear findings removes text."""
-
-    def test_clear_findings_does_not_raise(
-        self, state_store: InMemoryStateStore | GitStateStore
-    ) -> None:
-        state_store.store_findings("task-001", "Some findings.\n")
-        state_store.clear_findings("task-001")
-
-    def test_clear_findings_on_empty_does_not_raise(
-        self, state_store: InMemoryStateStore | GitStateStore
-    ) -> None:
-        # Clearing findings when there are none should be a no-op
-        state_store.clear_findings("task-001")
 
 
 class TestEpochContract:

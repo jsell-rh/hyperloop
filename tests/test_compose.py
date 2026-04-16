@@ -105,14 +105,21 @@ class TestProcessOverlay:
 
     def test_overlay_content_is_included(self) -> None:
         state = _state_with_spec()
-        overlay_content = "prompt: |\n  Always run linter before submitting.\n"
-        state.set_file("specs/prompts/implementer-overlay.yaml", overlay_content)
+        # Guidelines now come from the kustomize-resolved template, not a file read
+        templates = _templates()
+        templates["implementer"] = AgentTemplate(
+            name="implementer",
+            prompt=templates["implementer"].prompt,
+            guidelines="Always run linter before submitting.",
+            annotations=templates["implementer"].annotations,
+        )
 
-        composer = PromptComposer(templates=_templates(), state=state)
+        composer = PromptComposer(templates=templates, state=state)
 
         ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
         result = composer.compose(role="implementer", context=ctx)
 
+        assert "## Guidelines" in result
         assert "Always run linter before submitting." in result
 
     def test_no_overlay_still_composes(self) -> None:
@@ -243,13 +250,13 @@ class TestAgentTemplate:
     """AgentTemplate is a frozen dataclass."""
 
     def test_frozen(self) -> None:
-        t = AgentTemplate(name="test", prompt="hello", annotations={})
+        t = AgentTemplate(name="test", prompt="hello", guidelines="", annotations={})
         with pytest.raises(AttributeError):
             t.name = "other"  # type: ignore[misc]
 
     def test_equality(self) -> None:
-        a = AgentTemplate(name="x", prompt="p", annotations={"k": "v"})
-        b = AgentTemplate(name="x", prompt="p", annotations={"k": "v"})
+        a = AgentTemplate(name="x", prompt="p", guidelines="", annotations={"k": "v"})
+        b = AgentTemplate(name="x", prompt="p", guidelines="", annotations={"k": "v"})
         assert a == b
 
 
@@ -266,6 +273,7 @@ metadata:
   name: implementer
 prompt: |
   You are a worker.
+guidelines: ""
 annotations:
   ambient.io/persona: ""
 ---
@@ -282,6 +290,7 @@ metadata:
   name: verifier
 prompt: |
   You are a reviewer.
+guidelines: ""
 annotations: {}
 """
         templates = _parse_multi_doc(raw)
@@ -318,23 +327,6 @@ class TestKustomizeIntegration:
         ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
         result = composer.compose(role="implementer", context=ctx)
         assert "You are a worker agent implementing a task" in result
-
-    @pytest.mark.skipif(
-        not shutil.which("kustomize"),
-        reason="kustomize CLI not available",
-    )
-    def test_from_kustomize_no_overlay_fetches_base(self) -> None:
-        """When overlay is None, builds from the hyperloop base remote resource."""
-        state = _state_with_spec()
-        # This actually hits GitHub — skip in CI if network is unavailable
-        try:
-            composer = PromptComposer.from_kustomize(None, state)
-        except RuntimeError:
-            pytest.skip("Network unavailable — cannot fetch remote base")
-
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
-        result = composer.compose(role="implementer", context=ctx)
-        assert len(result) > 0
 
 
 class TestCheckKustomize:

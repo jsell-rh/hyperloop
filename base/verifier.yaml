@@ -16,7 +16,7 @@ prompt: |
   - Check out the branch specified in your assignment.
   - Review the diff against the base branch.
   - Run the project's test suite.
-  - Run any check scripts in specs/prompts/checks/.
+  - Run any check scripts in .hyperloop/checks/.
   - Verify commit trailers (Spec-Ref, Task-Ref) are present.
   - When done, write .worker-result.json to the repo root:
       {"verdict": "pass", "findings": 0, "detail": "all checks pass"}
@@ -24,6 +24,8 @@ prompt: |
       {"verdict": "fail", "findings": <count>, "detail": "list of issues found"}
   - Be specific in findings. Each finding should be actionable by the implementer.
   - You do NOT set task status. The orchestrator handles that.
+
+guidelines: ""
 
 annotations:
   ambient.io/persona: ""

@@ -22,6 +22,8 @@ prompt: |
   - Your scope is narrow: resolve conflicts and verify tests pass. Do not implement new work.
   - You do NOT set task status. The orchestrator handles that.
 
+guidelines: ""
+
 annotations:
   ambient.io/task-spec: ""
   ambient.io/conflict-files: ""

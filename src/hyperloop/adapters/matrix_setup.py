@@ -1,7 +1,8 @@
 """Matrix auto-setup — bot registration, room creation, credential caching.
 
 On first run: registers a bot user via the Matrix registration API, creates
-a notification room, and caches credentials in ``.hyperloop/matrix-state.json``.
+a notification room, and caches credentials in
+``~/.cache/hyperloop/{repo-hash}/matrix-state.json``.
 On subsequent runs: loads from cache and skips registration/room-creation.
 
 Explicit ``token_env`` and ``room_id`` in config always take precedence over
@@ -10,21 +11,22 @@ auto-setup and cache.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import secrets
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import httpx
 import structlog
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from hyperloop.config import MatrixConfig
 
 _log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
-_CACHE_FILE = ".hyperloop/matrix-state.json"
+_CACHE_FILENAME = "matrix-state.json"
 
 
 # ---------------------------------------------------------------------------
@@ -32,9 +34,16 @@ _CACHE_FILE = ".hyperloop/matrix-state.json"
 # ---------------------------------------------------------------------------
 
 
+def _cache_dir(repo_path: Path) -> Path:
+    """Return the XDG-compliant cache directory for this repo."""
+    xdg_cache = os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
+    repo_hash = hashlib.sha256(str(repo_path.resolve()).encode()).hexdigest()[:16]
+    return Path(xdg_cache) / "hyperloop" / repo_hash
+
+
 def _load_cache(repo_path: Path, homeserver: str) -> dict[str, str] | None:
     """Load cached Matrix credentials if they match the current homeserver."""
-    cache_path = repo_path / _CACHE_FILE
+    cache_path = _cache_dir(repo_path) / _CACHE_FILENAME
     if not cache_path.is_file():
         return None
     try:
@@ -49,23 +58,6 @@ def _load_cache(repo_path: Path, homeserver: str) -> dict[str, str] | None:
         return None
 
 
-def _ensure_gitignored(repo_path: Path) -> None:
-    """Ensure .hyperloop/ is in the target repo's .gitignore."""
-    gitignore = repo_path / ".gitignore"
-    entry = ".hyperloop/"
-    if not repo_path.is_dir():
-        return
-    if gitignore.is_file():
-        content = gitignore.read_text()
-        if entry in content.splitlines():
-            return
-        if not content.endswith("\n"):
-            content += "\n"
-        gitignore.write_text(content + entry + "\n")
-    else:
-        gitignore.write_text(entry + "\n")
-
-
 def _save_cache(
     repo_path: Path,
     *,
@@ -76,8 +68,7 @@ def _save_cache(
     password: str,
 ) -> None:
     """Persist Matrix credentials to the cache file."""
-    _ensure_gitignored(repo_path)
-    cache_path = repo_path / _CACHE_FILE
+    cache_path = _cache_dir(repo_path) / _CACHE_FILENAME
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
         json.dumps(

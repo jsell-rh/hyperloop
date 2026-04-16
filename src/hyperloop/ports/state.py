@@ -32,16 +32,20 @@ class StateStore(Protocol):
         """Update a task's status, phase, and optionally round."""
         ...
 
-    def store_findings(self, task_id: str, detail: str) -> None:
-        """Append findings detail text to the task file's Findings section on trunk."""
+    def store_review(
+        self,
+        task_id: str,
+        round: int,
+        role: str,
+        verdict: str,
+        findings_count: int,
+        detail: str,
+    ) -> None:
+        """Write a review file for a task round."""
         ...
 
     def get_findings(self, task_id: str) -> str:
-        """Return stored findings for a task. Empty string if none."""
-        ...
-
-    def clear_findings(self, task_id: str) -> None:
-        """Clear the findings section of a task file (on completion)."""
+        """Return findings from the latest review for a task. Empty string if none."""
         ...
 
     def get_epoch(self, key: str) -> str:

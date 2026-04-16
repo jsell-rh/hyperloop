@@ -105,8 +105,8 @@ class TestStateStoreTransition:
         assert updated.pr == "https://github.com/org/repo/pull/42"
 
 
-class TestStateStoreFindings:
-    def test_store_findings_appends(self):
+class TestStateStoreReview:
+    def test_store_review_then_get_findings(self):
         store = InMemoryStateStore()
         task = Task(
             id="task-001",
@@ -121,14 +121,11 @@ class TestStateStoreFindings:
         )
         store.add_task(task)
 
-        store.store_findings("task-001", "Test X failed: expected 3, got 5\n")
-        store.store_findings("task-001", "Lint error on line 42\n")
-
+        store.store_review("task-001", 1, "verifier", "fail", 2, "Test X failed: expected 3, got 5")
         findings = store.get_findings("task-001")
         assert "Test X failed: expected 3, got 5" in findings
-        assert "Lint error on line 42" in findings
 
-    def test_clear_findings(self):
+    def test_get_findings_returns_latest_review(self):
         store = InMemoryStateStore()
         task = Task(
             id="task-001",
@@ -137,19 +134,19 @@ class TestStateStoreFindings:
             status=TaskStatus.IN_PROGRESS,
             phase=Phase("verifier"),
             deps=(),
-            round=1,
+            round=2,
             branch=None,
             pr=None,
         )
         store.add_task(task)
 
-        store.store_findings("task-001", "Some findings\n")
-        store.clear_findings("task-001")
+        store.store_review("task-001", 1, "verifier", "fail", 1, "Round 1 failed")
+        store.store_review("task-001", 2, "verifier", "fail", 1, "Round 2 failed")
 
         findings = store.get_findings("task-001")
-        assert findings == ""
+        assert "Round 2 failed" in findings
 
-    def test_clear_findings_on_task_with_none(self):
+    def test_get_findings_empty_when_no_reviews(self):
         store = InMemoryStateStore()
         task = Task(
             id="task-001",
@@ -164,8 +161,6 @@ class TestStateStoreFindings:
         )
         store.add_task(task)
 
-        # Clearing findings when there are none should be a no-op
-        store.clear_findings("task-001")
         findings = store.get_findings("task-001")
         assert findings == ""
 

@@ -103,7 +103,8 @@ class GitStateStore:
     def __init__(self, repo_path: Path, specs_dir: str = "specs") -> None:
         self._repo = repo_path
         self._specs_dir = specs_dir
-        self._tasks_dir = repo_path / specs_dir / "tasks"
+        self._tasks_dir = repo_path / ".hyperloop" / "state" / "tasks"
+        self._reviews_dir = repo_path / ".hyperloop" / "state" / "reviews"
         self._epochs: dict[str, str] = {}
 
     def _task_file_path(self, task_id: str) -> Path:
@@ -170,22 +171,38 @@ class GitStateStore:
             fm["round"] = round
         self._write_task_file(task_id, fm, body)
 
-    def store_findings(self, task_id: str, detail: str) -> None:
-        """Append findings detail text to the task file's Findings section."""
-        fm, body = self._read_task_file(task_id)
-        body = _append_to_findings(body, detail)
-        self._write_task_file(task_id, fm, body)
+    def store_review(
+        self,
+        task_id: str,
+        round: int,
+        role: str,
+        verdict: str,
+        findings_count: int,
+        detail: str,
+    ) -> None:
+        """Write a review file for a task round."""
+        self._reviews_dir.mkdir(parents=True, exist_ok=True)
+        path = self._reviews_dir / f"{task_id}-round-{round}.md"
+        fm = {
+            "task_id": task_id,
+            "round": round,
+            "role": role,
+            "verdict": verdict,
+            "findings": findings_count,
+        }
+        fm_text = yaml.dump(fm, default_flow_style=False, sort_keys=False)
+        path.write_text(f"---\n{fm_text}---\n{detail}")
 
     def get_findings(self, task_id: str) -> str:
-        """Return stored findings for a task. Empty string if none."""
-        _fm, body = self._read_task_file(task_id)
-        return _extract_findings(body)
-
-    def clear_findings(self, task_id: str) -> None:
-        """Clear the findings section of a task file."""
-        fm, body = self._read_task_file(task_id)
-        body = _clear_findings(body)
-        self._write_task_file(task_id, fm, body)
+        """Return findings from the latest review for a task. Empty string if none."""
+        if not self._reviews_dir.exists():
+            return ""
+        review_files = sorted(self._reviews_dir.glob(f"{task_id}-round-*.md"))
+        if not review_files:
+            return ""
+        content = review_files[-1].read_text()
+        match = re.match(r"^---\n.*?\n---\n(.*)", content, re.DOTALL)
+        return match.group(1).strip() if match else content.strip()
 
     def get_epoch(self, key: str) -> str:
         """Return content fingerprint. 'head' returns git HEAD SHA. Others use in-memory dict."""
@@ -246,44 +263,3 @@ class GitStateStore:
             # after serial agents (process-improver, PM) that commit their
             # own changes before the orchestrator's cycle-update commit.
             self._git("commit", "--no-verify", "-m", message)
-
-
-# ---------------------------------------------------------------------------
-# Body manipulation helpers
-# ---------------------------------------------------------------------------
-
-
-def _append_to_findings(body: str, detail: str) -> str:
-    """Append text to the ## Findings section of the markdown body."""
-    # Find the ## Findings section
-    findings_match = re.search(r"(## Findings\n)", body)
-    if not findings_match:
-        # No findings section — append one
-        return body.rstrip() + "\n\n## Findings\n" + detail
-    # Insert the detail at the end of the body (after existing findings content)
-    # The findings section runs from the header to the end of the body
-    findings_start = findings_match.end()
-    existing = body[findings_start:]
-    if existing.strip():
-        # There's existing content — append after it
-        return body.rstrip() + "\n" + detail
-    else:
-        # Empty findings section — add content
-        return body[:findings_start] + detail
-
-
-def _extract_findings(body: str) -> str:
-    """Extract content from the ## Findings section. Returns empty string if none."""
-    findings_match = re.search(r"## Findings\n", body)
-    if not findings_match:
-        return ""
-    content = body[findings_match.end() :]
-    return content.strip()
-
-
-def _clear_findings(body: str) -> str:
-    """Clear the content of the ## Findings section, preserving the header."""
-    findings_match = re.search(r"(## Findings\n)", body)
-    if not findings_match:
-        return body
-    return body[: findings_match.end()]

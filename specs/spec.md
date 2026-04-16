@@ -20,7 +20,7 @@ An orchestrator that turns a backlog of tasks into completed, merged work using 
 
 ### Task
 
-Lives in the target repo at `specs/tasks/task-{id}.md`. Written only by the orchestrator on trunk.
+Lives in the target repo at `.hyperloop/state/tasks/task-{id}.md`. Written only by the orchestrator on trunk. Pure metadata — no body content.
 
 ```yaml
 ---
@@ -34,15 +34,26 @@ round: 0                          # incremented each time the loop restarts
 branch: null                      # set by orchestrator before first spawn
 pr: null                          # set by orchestrator when draft PR created
 ---
-
-## Spec
-(what to build — written by PM or human)
-
-## Findings
-(appended by orchestrator after each failed round, cleared on completion)
 ```
 
-Status is deliberately minimal: not started, being worked on, done, or failed. `phase` tracks where the task is in the pipeline so the orchestrator can resume after a crash. `spec_ref` traces this task back to the spec that originated it. `failed` is a terminal state — the task hit `max_rounds` without completing. The orchestrator halts when any task enters `failed`.
+Status is deliberately minimal: not started, being worked on, done, or failed. `phase` tracks where the task is in the pipeline so the orchestrator can resume after a crash. `spec_ref` traces this task back to the spec that originated it. `failed` is a terminal state — the task hit `max_task_rounds` without completing. The orchestrator halts when any task enters `failed`.
+
+### Review
+
+Lives at `.hyperloop/state/reviews/task-{id}-round-{n}.md`. Written by the orchestrator after each failed round. Preserved as historical record (never cleared).
+
+```yaml
+---
+task_id: task-027
+round: 0
+role: verifier
+verdict: fail
+findings: 3
+---
+Branch deletes 3 files from main that are out-of-scope for task-027...
+```
+
+Separating reviews from tasks keeps task files as pure metadata and preserves the full review history across rounds. The process-improver reads review files to identify systemic patterns.
 
 ### Worker Result
 
@@ -136,11 +147,12 @@ Every artifact traces back to its originating spec through an unbroken chain:
 
 ```
 spec (specs/*.md)
-  └── task (specs/tasks/task-{id}.md)     spec_ref: specs/persistence.md
-       └── commits (on worker branch)     Spec-Ref: specs/persistence.md
-            │                             Task-Ref: task-027
-            └── PR                        labels: spec/persistence, task/task-027
-                 └── merged to trunk      trailers preserved in squash commit
+  └── task (.hyperloop/state/tasks/task-{id}.md)   spec_ref: specs/persistence.md
+       ├── reviews (.hyperloop/state/reviews/)     task_id + round + findings
+       └── commits (on worker branch)              Spec-Ref: specs/persistence.md
+            │                                      Task-Ref: task-027
+            └── PR                                 labels: spec/persistence, task/task-027
+                 └── merged to trunk               trailers preserved in squash commit
 ```
 
 ### Commit Trailers
@@ -184,56 +196,26 @@ This means `git log --grep="Spec-Ref: specs/persistence.md"` returns every commi
 
 ## Prompt Composition
 
-Three layers, composed at spawn time:
+Three layers, all resolved via kustomize. See `specs/prompt-composition.md` for full design.
 
-| Layer | Source | What it provides | Who writes it |
+| Layer | Source | Field targeted | Who writes it |
 |---|---|---|---|
-| Base | hyperloop repo `base/` | Protocol (how to behave) | Orchestrator maintainers |
-| Project overlay | Project gitops repo `overlays/{project}/` | Persona (who you are) | Project team |
-| Process overlay | Target repo `specs/prompts/` | Learned rules (what to watch for) | Process-improver agent |
+| Base | hyperloop repo `base/` | `prompt` | Orchestrator maintainers |
+| Project overlay | gitops repo or in-repo patches | `guidelines`, `prompt` (can override) | Project team |
+| Process overlay | `.hyperloop/agents/process/` | `guidelines` | Process-improver agent |
 
-### Layer 1+2: Kustomize
+Agent resources have two text fields: `prompt` (core identity) and `guidelines` (additive rules). All three layers resolve in a single `kustomize build .hyperloop/agents/`. The process overlay is a kustomize Component that patches `guidelines` — additive by convention, replaceable by capability.
 
-Layers 1 and 2 are composed via kustomize. The project gitops repo contains a `kustomization.yaml` that references the hyperloop base as a remote resource and applies project-specific patches:
+At compose time, the orchestrator takes the resolved template and injects:
 
-```yaml
-# project-gitops/overlays/api/kustomization.yaml
-resources:
-  - github.com/org/hyperloop//base?ref=v1.2.0    # remote base, pinned by ref
-
-patches:
-  - path: implementer-patch.yaml
-    target:
-      kind: Agent
-      name: implementer
-
-  - path: verifier-patch.yaml
-    target:
-      kind: Agent
-      name: verifier
-
-  - path: process-patch.yaml
-    target:
-      kind: Process
-      name: default
-```
-
-At startup, the orchestrator runs `kustomize build <overlay-path>` and parses the output into resolved templates. This decouples the base agent definitions from the tool release — teams pin a base version via `?ref=` and upgrade when ready.
-
-### Layer 3: Process Overlay
-
-Process overlays live in the target repo at `specs/prompts/`. They are injected at spawn time (not via kustomize) because they change during the loop as the process-improver writes to them.
-
-### Spawn-time Injection
-
-At spawn time, the orchestrator takes a resolved template (from kustomize) and injects:
-
-- Process overlay from `specs/prompts/` (layer 3)
-- Task spec content
-- Findings from prior rounds
+- `prompt` + `guidelines` (from kustomize build)
+- Task spec content (read from `spec_ref`)
+- Findings from prior rounds (read from review files)
 - Traceability refs (`spec_ref`, `task_id`) for commit trailers
 
 The worker never needs to read the task file — everything it needs arrives in its prompt.
+
+When the process-improver modifies overlay files mid-run, the orchestrator re-runs `kustomize build` before spawning new workers. This is a mechanical guarantee: any agent spawned after a process improvement will see the updated guidelines.
 
 ## Concurrency Model
 
@@ -245,7 +227,7 @@ The orchestrator does all its work sequentially in one pass. No concurrent trunk
 
 1. **Reap** — collect results from finished workers.
 2. **Store findings** — append to task files on trunk for all failed tasks.
-3. **Process-improver** — runs once, serially, on trunk. Reads ALL findings from the current cycle. Improves prompts/checklists/check-scripts in `specs/prompts/`. One agent, one pass, consolidated.
+3. **Process-improver** — runs once, serially, on trunk. Reads ALL findings from the current cycle. Writes `guidelines` overlays to `.hyperloop/agents/process/` and check scripts to `.hyperloop/checks/`. One agent, one pass, consolidated.
 4. **Intake** — PM runs on trunk if new specs exist. Creates task files. Rejects dependency cycles.
 5. **Merge PRs** — squash-merge any ready PRs. Rebase, resolve conflicts, merge one at a time (see Merge Conflict Handling).
 6. **Decide** — determine which tasks to spawn. Create branches from the now-stable HEAD. Compose prompts.
@@ -264,7 +246,7 @@ Trunk is a shared mutable resource. Giving it a single writer eliminates:
 - Workers spawning from a moving HEAD.
 - Task phase updates racing with trunk mutations.
 
-Process-improver is NOT a pipeline step — it's an orchestrator-internal serial operation. It runs between reap and spawn, sees all findings from the current cycle at once, and makes a single consolidated improvement pass. What it improves is defined by its agent definition, which projects can overlay.
+Process-improver is NOT a pipeline step — it's an orchestrator-internal serial operation. It runs between reap and spawn, sees all findings from the current cycle at once, and makes a single consolidated improvement pass. It writes `guidelines` overlays to `.hyperloop/agents/process/` and check scripts to `.hyperloop/checks/`. What it improves is defined by its agent definition, which projects can overlay.
 
 ## Branch Lifecycle
 
@@ -311,22 +293,23 @@ Merge order: the serial section merges PRs one at a time, rebasing each onto the
 Findings serve two purposes: persistent audit trail and worker context.
 
 1. Verifier fails and reports findings in its `WorkerResult`.
-2. Orchestrator appends findings to the task file's `## Findings` section on trunk during the serial section.
-3. On next spawn, orchestrator reads findings from the task file and injects them into the worker's prompt context.
-4. Worker receives findings as prompt content — it never reads the task file or rebases to get them.
-5. On task completion, findings section is cleared.
+2. Orchestrator writes findings to `.hyperloop/state/reviews/task-{id}-round-{n}.md` on trunk during the serial section.
+3. On next spawn, orchestrator reads the latest review file and injects findings into the worker's prompt context.
+4. Worker receives findings as prompt content — it never reads the task or review files.
+5. On task completion, review files are preserved as historical record (not cleared).
+6. Process-improver reads all review files from the current cycle to identify systemic patterns.
 
-The task file is the ledger. Prompt injection is the delivery.
+The review file is the ledger. Prompt injection is the delivery.
 
 ## Recovery
 
 The orchestrator can crash and restart without losing progress.
 
 **What is persisted (survives crash):**
-- Task status and phase — in task file on trunk
+- Task status and phase — in `.hyperloop/state/tasks/` on trunk
 - Branch with accumulated commits — in git
 - Draft PR with labels — on GitHub
-- Findings — in task file on trunk
+- Review findings — in `.hyperloop/state/reviews/` on trunk
 - Traceability (spec_ref, trailers, labels) — in git + GitHub
 
 **What is ephemeral (lost on crash, reconstructed):**
@@ -334,7 +317,7 @@ The orchestrator can crash and restart without losing progress.
 
 **Recovery procedure:**
 
-1. Read `specs/tasks/*.md` from trunk → know all task statuses and phases.
+1. Read `.hyperloop/state/tasks/*.md` from trunk → know all task statuses and phases.
 2. List open draft PRs with orchestrator labels → find in-flight work.
 3. **Check for orphaned workers** — before spawning, verify no worker is already active for a task:
    - Local runtime: check if worktree/process exists for the branch.
@@ -351,17 +334,17 @@ The orchestrator can crash and restart without losing progress.
 
 ```
 getWorld()                → tasks, workers, epoch
-getTask(id)               → single task with status, phase, spec_ref, findings
-transitionTask(id, status, phase) → update status + phase, commit
-storeFindings(id, data)   → append findings to task file on trunk
-clearFindings(id)         → clear findings section on completion
+getTask(id)               → single task with status, phase, spec_ref
+transitionTask(id, status, phase) → update status + phase
+storeReview(id, round, review) → write review file to .hyperloop/state/reviews/
+getFindings(id)           → read latest review findings for prompt injection
 getEpoch(key)             → content fingerprint for skip logic
 setEpoch(key, value)      → record last-run marker
 readFile(path)            → read from trunk
 commit(message)           → persist state changes
 ```
 
-Implementations: `GitStateStore` (reads/writes task files, commits to git), `AmbientStateStore` (reads/writes annotations via API).
+Implementations: `GitStateStore` (reads/writes files in `.hyperloop/state/`, commits to git), `AmbientStateStore` (reads/writes annotations via API).
 
 ## Runtime Interface
 
@@ -380,7 +363,7 @@ Implementations: `LocalRuntime` (git worktrees + CLI), `AmbientRuntime` (ambient
 ```
 startup:
     read .hyperloop.yaml from target repo
-    kustomize build <overlay-path> → resolved templates
+    kustomize build .hyperloop/agents/ → resolved templates
     recovery (if resuming):
         read task files → reconstruct in-flight state
         match open PRs to tasks → recover phase
@@ -394,13 +377,14 @@ while true:
     │     for each result:                                    │
     │         if pass: advance to next pipeline step          │
     │         if fail: store findings on trunk                │
-    │         if task.round >= max_rounds: status → failed    │
+    │         if task.round >= max_task_rounds: → failed      │
     │                                                         │
     │  2. if any task failed → halt (needs human attention)   │
     │                                                         │
     │  3. if any failures this cycle:                         │
     │         run process-improver ONCE on trunk              │
-    │         (reads all findings, improves prompts)          │
+    │         (reads all findings, writes guidelines/checks)  │
+    │         re-run kustomize build to pick up changes       │
     │                                                         │
     │  4. run intake if configured + new specs exist          │
     │         (creates task files, rejects dep cycles)        │
@@ -421,7 +405,7 @@ while true:
     │         include: needs-rebase tasks (rebase-resolver)   │
     │         limit: max_workers                              │
     │         create branches from stable HEAD                │
-    │         compose prompts (template + overlay + context)  │
+    │         compose prompts (template + guidelines + context)│
     │         inject spec_ref + task_id for trailers          │
     │                                                         │
     │  8. update state                                        │
@@ -462,49 +446,32 @@ merge:
   delete_branch: true
 
 poll_interval: 30
-max_rounds: 50
+max_task_rounds: 50
+max_cycles: 200
 max_rebase_attempts: 3
 ```
 
 ### Adoption Levels
 
-**Level 0 — no config, all defaults:**
+All levels require `hyperloop init` first. See `specs/prompt-composition.md`.
+
+**Level 1 — base only:**
 
 ```bash
-uvx hyperloop --repo owner/repo --branch main
+hyperloop init
+hyperloop run
 ```
 
-Base prompts, default process, no overlay.
+`hyperloop init` scaffolds `.hyperloop/agents/` pointing at the base. Base prompts, default process. Process-improver can start learning immediately.
 
-**Level 1 — config file, no overlay:**
+**Level 2 — project overlay via gitops:**
 
-```yaml
-# .hyperloop.yaml
-target:
-  base_branch: main
-merge:
-  auto_merge: false
+```bash
+hyperloop init --overlay github.com/org/hyperfleet-gitops//overlays/api?ref=main
+hyperloop run
 ```
 
-Base prompts with tuned knobs.
-
-**Level 2 — in-repo overlay:**
-
-```yaml
-# .hyperloop.yaml
-overlay: .hyperloop/agents/
-```
-
-Agent patches live in the target repo itself. No separate gitops repo needed.
-
-**Level 3 — shared gitops overlay:**
-
-```yaml
-# .hyperloop.yaml
-overlay: git@gitlab.cee.redhat.com:hyperfleet/gitops//overlays/api
-```
-
-Agent definitions managed centrally across multiple target repos.
+`.hyperloop/agents/kustomization.yaml` references the gitops overlay (which references the base internally). Persona, custom pipeline, project-specific guidelines — all resolved by kustomize.
 
 ## Directory Structure
 
@@ -542,18 +509,25 @@ The `base/` directory is not bundled into the pip package. It lives in the repo 
 
 ### Target repo (prescribed structure)
 
+Created by `hyperloop init`. See `specs/prompt-composition.md` for full details.
+
 ```
 target-repo/
-├── .hyperloop.yaml      ← orchestrator config (overlay ref, runtime settings)
-├── .hyperloop/           ← optional: in-repo overlay (level 2 adoption)
-│   └── agents/
-│       ├── implementer-patch.yaml
-│       └── process-patch.yaml
+├── .hyperloop.yaml          ← orchestrator config
+├── .hyperloop/
+│   ├── agents/              ← kustomize composition point (all 3 layers resolve here)
+│   │   ├── kustomization.yaml
+│   │   └── process/         ← kustomize Component (process-improver writes here)
+│   │       └── kustomization.yaml
+│   ├── state/
+│   │   ├── tasks/           ← task metadata (orchestrator writes on trunk)
+│   │   │   └── task-*.md
+│   │   └── reviews/         ← review findings (orchestrator writes on trunk)
+│   │       └── task-{id}-round-{n}.md
+│   └── checks/              ← executable validations (process-improver writes on trunk)
+│       └── *.sh
 └── specs/
-    ├── *.md                  ← product specs (human-written, referenced by spec_ref)
-    ├── tasks/                ← task files (orchestrator writes status + findings)
-    ├── reviews/              ← review artifacts (verifier writes on branch)
-    └── prompts/              ← process overlays (process-improver writes on trunk)
+    └── *.md                 ← product specs only (human-written, referenced by spec_ref)
 ```
 
 ### Project gitops repo (level 3 adoption)

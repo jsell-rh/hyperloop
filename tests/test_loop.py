@@ -1057,7 +1057,7 @@ class TestPromptComposition:
         runtime = InMemoryRuntime()
         state.add_task(_task())
         state.set_file("specs/task-001.md", "Build a widget.")
-        state.store_findings("task-001", "Missing null check.\n")
+        state.store_review("task-001", 1, "verifier", "fail", 1, "Missing null check.")
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, composer=composer)

@@ -1,7 +1,7 @@
 """CLI entry point — typer app with rich output formatting.
 
-Provides the ``hyperloop run`` command that loads config, constructs
-the orchestrator, and runs the loop with rich status output.
+Provides ``hyperloop init`` (project scaffolding) and ``hyperloop run``
+(orchestrator loop) commands.
 """
 
 from __future__ import annotations
@@ -76,24 +76,41 @@ def _config_table(cfg: Config) -> Table:
     return table
 
 
-def _make_composer(cfg: Config, state: StateStore) -> tuple[PromptComposer, Process | None]:
+def _make_composer(
+    cfg: Config, state: StateStore, repo_path: Path
+) -> tuple[PromptComposer, Process | None]:
     """Construct a PromptComposer via kustomize build.
 
-    Runs ``kustomize build`` on the configured overlay (or the default
-    hyperloop base if no overlay is set).
+    Requires ``.hyperloop/agents/kustomization.yaml`` to exist.  If the
+    configured ``overlay`` points elsewhere that is used; otherwise the
+    default ``.hyperloop/agents/`` directory is used.
 
     Args:
         cfg: Config object with an ``overlay`` attribute.
-        state: StateStore instance for reading process overlays at spawn time.
+        state: StateStore instance for reading spec files at spawn time.
+        repo_path: Resolved path to the target repository.
 
     Returns:
         A tuple of (PromptComposer, Process | None).
+
+    Raises:
+        typer.Exit: If the kustomization directory does not exist.
     """
     from hyperloop.compose import PromptComposer, check_kustomize_available
 
     check_kustomize_available()
 
-    return PromptComposer.load_from_kustomize(cfg.overlay, state, base_ref=cfg.base_ref)
+    overlay = cfg.overlay or str(repo_path / ".hyperloop" / "agents")
+    kustomization = Path(overlay) / "kustomization.yaml"
+    if not kustomization.is_file():
+        console.print(
+            "[bold red]Error:[/bold red] "
+            f"{kustomization} not found.\n"
+            "Run [bold]hyperloop init[/bold] to set up the project."
+        )
+        raise typer.Exit(code=1)
+
+    return PromptComposer.load_from_kustomize(overlay, state)
 
 
 def _build_probe(obs_cfg: ObservabilityConfig, repo_path: Path) -> OrchestratorProbe:
@@ -129,6 +146,95 @@ def _build_probe(obs_cfg: ObservabilityConfig, repo_path: Path) -> OrchestratorP
     if len(probes) == 1:
         return probes[0]
     return MultiProbe(tuple(probes))
+
+
+@app.command()
+def init(
+    path: Path = typer.Option(
+        Path.cwd(),
+        help="Path to the target repo. Default: current directory.",
+    ),
+    base_ref: str = typer.Option(
+        "",
+        "--base-ref",
+        help="Kustomize remote resource for the base definitions.",
+    ),
+    overlay: str = typer.Option(
+        "",
+        "--overlay",
+        help="Kustomize remote resource for a project overlay (includes base).",
+    ),
+) -> None:
+    """Scaffold the required hyperloop structure in a target repo.
+
+    Creates ``.hyperloop/agents/kustomization.yaml`` (composition point),
+    ``.hyperloop/agents/process/kustomization.yaml`` (empty Component for the
+    process-improver), and ``.hyperloop.yaml`` (if absent).
+
+    Idempotent — running again does not overwrite existing files.
+    """
+    from hyperloop.compose import check_kustomize_available
+    from hyperloop.config import DEFAULT_BASE_REF
+
+    check_kustomize_available()
+
+    repo_path = path.resolve()
+    if not (repo_path / ".git").exists():
+        console.print(f"[bold red]Error:[/bold red] {repo_path} is not a git repository.")
+        raise typer.Exit(code=1)
+
+    resolved_base_ref = base_ref or DEFAULT_BASE_REF
+
+    # --- .hyperloop/agents/kustomization.yaml ---
+    agents_dir = repo_path / ".hyperloop" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
+    agents_kustomization = agents_dir / "kustomization.yaml"
+    if not agents_kustomization.exists():
+        resource = overlay if overlay else resolved_base_ref
+        content = f"resources:\n  - {resource}\n\ncomponents:\n  - process\n"
+        agents_kustomization.write_text(content)
+        console.print(f"  Created {agents_kustomization.relative_to(repo_path)}")
+    else:
+        console.print(f"  [dim]Exists[/dim]  {agents_kustomization.relative_to(repo_path)}")
+
+    # --- .hyperloop/agents/process/kustomization.yaml ---
+    process_dir = agents_dir / "process"
+    process_dir.mkdir(parents=True, exist_ok=True)
+
+    process_kustomization = process_dir / "kustomization.yaml"
+    if not process_kustomization.exists():
+        process_kustomization.write_text(
+            "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n"
+        )
+        console.print(f"  Created {process_kustomization.relative_to(repo_path)}")
+    else:
+        console.print(f"  [dim]Exists[/dim]  {process_kustomization.relative_to(repo_path)}")
+
+    # --- .hyperloop.yaml ---
+    config_file = repo_path / ".hyperloop.yaml"
+    if not config_file.exists():
+        config_file.write_text("overlay: .hyperloop/agents/\n")
+        console.print(f"  Created {config_file.relative_to(repo_path)}")
+    else:
+        console.print(f"  [dim]Exists[/dim]  {config_file.relative_to(repo_path)}")
+
+    # --- Validate ---
+    import subprocess
+
+    console.print()
+    console.print("  Validating kustomize build...")
+    result = subprocess.run(
+        ["kustomize", "build", str(agents_dir)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        console.print(f"[bold red]Validation failed:[/bold red] {result.stderr.strip()}")
+        raise typer.Exit(code=1)
+
+    console.print("  [bold green]Done.[/bold green] kustomize build succeeded.")
 
 
 @app.command()
@@ -241,7 +347,7 @@ def run(
         )
 
     # Resolve agent definitions and process via kustomize build
-    composer, parsed_process = _make_composer(cfg, state)
+    composer, parsed_process = _make_composer(cfg, state, repo_path)
     process = parsed_process if parsed_process is not None else default_process
 
     # Build observability probe

@@ -40,8 +40,8 @@ def _init_repo(path: Path) -> None:
 
 
 def _write_task_file(repo: Path, task_id: str, content: str) -> None:
-    """Write a task file into the repo's specs/tasks directory and commit it."""
-    tasks_dir = repo / "specs" / "tasks"
+    """Write a task file into the repo's .hyperloop/state/tasks directory and commit it."""
+    tasks_dir = repo / ".hyperloop" / "state" / "tasks"
     tasks_dir.mkdir(parents=True, exist_ok=True)
     (tasks_dir / f"{task_id}.md").write_text(content)
     subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
@@ -215,54 +215,67 @@ class TestTransitionTask:
         assert task.phase is None
 
 
-class TestStoreFindings:
-    def test_appends_findings_text(self, tmp_path: Path) -> None:
+class TestStoreReview:
+    def test_writes_review_file_with_frontmatter(self, tmp_path: Path) -> None:
         _init_repo(tmp_path)
         _write_task_file(tmp_path, "task-027", TASK_027_CONTENT)
 
         store = GitStateStore(repo_path=tmp_path)
-        store.store_findings("task-027", "Build failed: missing import.\n")
+        store.store_review("task-027", 0, "verifier", "fail", 3, "Build failed: missing import.")
 
-        # Verify on disk
-        content = (tmp_path / "specs" / "tasks" / "task-027.md").read_text()
+        review_path = tmp_path / ".hyperloop" / "state" / "reviews" / "task-027-round-0.md"
+        assert review_path.exists()
+        content = review_path.read_text()
+        assert "task_id: task-027" in content
+        assert "round: 0" in content
+        assert "role: verifier" in content
+        assert "verdict: fail" in content
+        assert "findings: 3" in content
         assert "Build failed: missing import." in content
 
-    def test_appends_multiple_times(self, tmp_path: Path) -> None:
+    def test_overwrites_review_for_same_round(self, tmp_path: Path) -> None:
         _init_repo(tmp_path)
         _write_task_file(tmp_path, "task-027", TASK_027_CONTENT)
 
         store = GitStateStore(repo_path=tmp_path)
-        store.store_findings("task-027", "Round 1: build failed.\n")
-        store.store_findings("task-027", "Round 2: tests failed.\n")
+        store.store_review("task-027", 0, "verifier", "fail", 2, "Round 0: build failed.")
+        store.store_review("task-027", 0, "verifier", "pass", 0, "Round 0: all clear.")
 
-        content = (tmp_path / "specs" / "tasks" / "task-027.md").read_text()
-        assert "Round 1: build failed." in content
-        assert "Round 2: tests failed." in content
+        review_path = tmp_path / ".hyperloop" / "state" / "reviews" / "task-027-round-0.md"
+        content = review_path.read_text()
+        assert "all clear" in content
+        assert "build failed" not in content
 
-    def test_preserves_existing_findings(self, tmp_path: Path) -> None:
+    def test_multiple_rounds_create_separate_files(self, tmp_path: Path) -> None:
         _init_repo(tmp_path)
-        _write_task_file(tmp_path, "task-028", TASK_028_CONTENT)
+        _write_task_file(tmp_path, "task-027", TASK_027_CONTENT)
 
         store = GitStateStore(repo_path=tmp_path)
-        store.store_findings("task-028", "Round 2: new failure.\n")
+        store.store_review("task-027", 0, "verifier", "fail", 2, "Round 0 findings.")
+        store.store_review("task-027", 1, "verifier", "fail", 1, "Round 1 findings.")
 
-        content = (tmp_path / "specs" / "tasks" / "task-028.md").read_text()
-        assert "Tests failed on round 1." in content
-        assert "Round 2: new failure." in content
+        assert (tmp_path / ".hyperloop" / "state" / "reviews" / "task-027-round-0.md").exists()
+        assert (tmp_path / ".hyperloop" / "state" / "reviews" / "task-027-round-1.md").exists()
 
 
-class TestClearFindings:
-    def test_clears_findings_section(self, tmp_path: Path) -> None:
+class TestGetFindings:
+    def test_returns_detail_from_latest_review(self, tmp_path: Path) -> None:
         _init_repo(tmp_path)
-        _write_task_file(tmp_path, "task-028", TASK_028_CONTENT)
+        _write_task_file(tmp_path, "task-027", TASK_027_CONTENT)
 
         store = GitStateStore(repo_path=tmp_path)
-        store.clear_findings("task-028")
+        store.store_review("task-027", 0, "verifier", "fail", 2, "Round 0 problem.")
+        store.store_review("task-027", 1, "verifier", "fail", 1, "Round 1 problem.")
 
-        content = (tmp_path / "specs" / "tasks" / "task-028.md").read_text()
-        # The ## Findings header should remain, but content should be empty
-        assert "## Findings" in content
-        assert "Tests failed on round 1." not in content
+        findings = store.get_findings("task-027")
+        assert findings == "Round 1 problem."
+
+    def test_returns_empty_string_when_no_reviews(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
+
+        store = GitStateStore(repo_path=tmp_path)
+        findings = store.get_findings("task-027")
+        assert findings == ""
 
 
 class TestEpoch:
@@ -340,8 +353,8 @@ class TestCommit:
         _write_task_file(tmp_path, "task-027", TASK_027_CONTENT)
 
         store = GitStateStore(repo_path=tmp_path)
-        store.store_findings("task-027", "Something broke.\n")
-        store.commit("chore: store findings")
+        store.store_review("task-027", 0, "verifier", "fail", 1, "Something broke.")
+        store.commit("chore: store review")
 
         # Verify the file is in the commit
         result = subprocess.run(
@@ -350,4 +363,4 @@ class TestCommit:
             capture_output=True,
             text=True,
         )
-        assert "specs/tasks/task-027.md" in result.stdout
+        assert ".hyperloop/state/reviews/task-027-round-0.md" in result.stdout

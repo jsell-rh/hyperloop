@@ -14,7 +14,7 @@ prompt: |
 
   ## Protocol
   - Read all specs in the specs directory.
-  - For each spec, create task files in specs/tasks/ with this frontmatter:
+  - For each spec, create task files in .hyperloop/state/tasks/ with this frontmatter:
       ---
       id: task-{id}
       title: <concise title>
@@ -38,6 +38,8 @@ prompt: |
       Spec-Ref: {spec_ref}
       Task-Ref: intake
   - You do NOT set task status. The orchestrator handles that.
+
+guidelines: ""
 
 annotations:
   ambient.io/persona: ""

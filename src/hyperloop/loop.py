@@ -252,7 +252,6 @@ class Orchestrator:
                 if self._pr_manager is not None and task.pr is not None:
                     self._pr_manager.mark_ready(task.pr)
                 self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
-                self._state.clear_findings(task_id)
                 self._probe.task_completed(
                     task_id=task_id,
                     spec_ref=task.spec_ref,
@@ -263,7 +262,14 @@ class Orchestrator:
 
             elif isinstance(pipe_action, PipelineFailed):
                 self._state.transition_task(task_id, TaskStatus.FAILED, phase=None)
-                self._state.store_findings(task_id, result.detail)
+                self._state.store_review(
+                    task_id,
+                    round=task.round,
+                    role=_handle.role,
+                    verdict=result.verdict.value,
+                    findings_count=result.findings,
+                    detail=result.detail,
+                )
                 halt_reason = f"task {task_id} pipeline failed: {pipe_action.reason}"
                 had_failures_this_cycle = True
                 self._probe.task_failed(
@@ -296,7 +302,14 @@ class Orchestrator:
                             cycle=cycle_num,
                         )
                         continue
-                    self._state.store_findings(task_id, result.detail)
+                    self._state.store_review(
+                        task_id,
+                        round=task.round,
+                        role=_handle.role,
+                        verdict=result.verdict.value,
+                        findings_count=result.findings,
+                        detail=result.detail,
+                    )
                     self._state.transition_task(
                         task_id,
                         TaskStatus.IN_PROGRESS,
@@ -531,7 +544,6 @@ class Orchestrator:
                     to_spawn.append((task.id, next_action.role, new_pos))
             else:
                 self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
-                self._state.clear_findings(task.id)
 
     def _merge_ready_prs(self) -> None:
         """Merge branches for tasks at the merge-pr action step.
@@ -600,8 +612,14 @@ class Orchestrator:
                 )
                 self._rebase_attempts.pop(task_id, None)
                 task = self._state.get_task(task_id)
-                self._state.store_findings(
-                    task_id, f"Rebase conflict after {self._max_rebase_attempts} attempts"
+                detail = f"Rebase conflict after {self._max_rebase_attempts} attempts"
+                self._state.store_review(
+                    task_id,
+                    round=task.round,
+                    role="orchestrator",
+                    verdict="fail",
+                    findings_count=1,
+                    detail=detail,
                 )
                 self._state.transition_task(
                     task_id,
@@ -633,8 +651,14 @@ class Orchestrator:
                 )
                 self._rebase_attempts.pop(task_id, None)
                 task = self._state.get_task(task_id)
-                self._state.store_findings(
-                    task_id, f"Merge conflict after {self._max_rebase_attempts} attempts"
+                detail = f"Merge conflict after {self._max_rebase_attempts} attempts"
+                self._state.store_review(
+                    task_id,
+                    round=task.round,
+                    role="orchestrator",
+                    verdict="fail",
+                    findings_count=1,
+                    detail=detail,
                 )
                 self._state.transition_task(
                     task_id,
@@ -649,7 +673,6 @@ class Orchestrator:
         # Merge succeeded — reset counter
         self._rebase_attempts.pop(task_id, None)
         self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
-        self._state.clear_findings(task_id)
         self._probe.merge_attempted(
             task_id=task_id,
             branch=branch,
@@ -680,7 +703,6 @@ class Orchestrator:
             )
             self._rebase_attempts.pop(task_id, None)
             self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
-            self._state.clear_findings(task_id)
             self._delete_local_branch(branch)
             self._probe.merge_attempted(
                 task_id=task_id,
@@ -716,8 +738,14 @@ class Orchestrator:
             )
             self._rebase_attempts.pop(task_id, None)
             task = self._state.get_task(task_id)
-            self._state.store_findings(
-                task_id, f"Merge conflict after {self._max_rebase_attempts} attempts"
+            detail = f"Merge conflict after {self._max_rebase_attempts} attempts"
+            self._state.store_review(
+                task_id,
+                round=task.round,
+                role="orchestrator",
+                verdict="fail",
+                findings_count=1,
+                detail=detail,
             )
             self._state.transition_task(
                 task_id,
@@ -744,9 +772,9 @@ class Orchestrator:
     def _unprocessed_specs(self) -> list[str]:
         """Return spec file paths that have no corresponding task.
 
-        Scans specs/*.md (excluding subdirectories like tasks/, reviews/,
-        prompts/) and checks whether any existing task references each spec
-        via its spec_ref field.
+        Scans specs/*.md (product specs only — tasks and reviews live under
+        .hyperloop/state/) and checks whether any existing task references
+        each spec via its spec_ref field.
         """
         all_specs = self._state.list_files("specs/*.md")
         world = self._state.get_world()
@@ -830,6 +858,9 @@ class Orchestrator:
         )
         if success:
             logger.info("process-improver: completed successfully")
+            # Re-resolve templates so agents spawned after this point
+            # see updated guidelines (mechanical guarantee from spec).
+            self._composer.rebuild()
         else:
             logger.warning("process-improver: agent failed")
 

@@ -5,6 +5,8 @@ A first-class fake, tested via contract tests, reusable across all tests.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from hyperloop.domain.model import (
     Phase,
     Task,
@@ -13,12 +15,24 @@ from hyperloop.domain.model import (
 )
 
 
+@dataclass(frozen=True)
+class ReviewRecord:
+    """In-memory representation of a review file."""
+
+    task_id: str
+    round: int
+    role: str
+    verdict: str
+    findings_count: int
+    detail: str
+
+
 class InMemoryStateStore:
     """In-memory implementation of the StateStore protocol."""
 
     def __init__(self) -> None:
         self._tasks: dict[str, Task] = {}
-        self._findings: dict[str, str] = {}
+        self._reviews: list[ReviewRecord] = []
         self._epochs: dict[str, str] = {}
         self._files: dict[str, str] = {}
         self.committed_messages: list[str] = []
@@ -28,18 +42,13 @@ class InMemoryStateStore:
     def add_task(self, task: Task) -> None:
         """Seed a task into the store (test helper, not part of the port)."""
         self._tasks[task.id] = task
-        self._findings.setdefault(task.id, "")
 
     def set_file(self, path: str, content: str) -> None:
         """Seed a file into the store (test helper, not part of the port)."""
         self._files[path] = content
 
-    def get_findings(self, task_id: str) -> str:
-        """Return stored findings for a task (test helper)."""
-        return self._findings.get(task_id, "")
-
     def set_task_pr(self, task_id: str, pr_url: str) -> None:
-        """Set the PR URL on a task (test helper, not part of the port)."""
+        """Set the PR URL on a task."""
         old = self._tasks[task_id]
         self._tasks[task_id] = Task(
             id=old.id,
@@ -103,13 +112,34 @@ class InMemoryStateStore:
             pr=old.pr,
         )
 
-    def store_findings(self, task_id: str, detail: str) -> None:
-        """Append findings to the task's findings string."""
-        self._findings[task_id] = self._findings.get(task_id, "") + detail
+    def store_review(
+        self,
+        task_id: str,
+        round: int,
+        role: str,
+        verdict: str,
+        findings_count: int,
+        detail: str,
+    ) -> None:
+        """Write a review record for a task round."""
+        self._reviews.append(
+            ReviewRecord(
+                task_id=task_id,
+                round=round,
+                role=role,
+                verdict=verdict,
+                findings_count=findings_count,
+                detail=detail,
+            )
+        )
 
-    def clear_findings(self, task_id: str) -> None:
-        """Clear findings for a task."""
-        self._findings[task_id] = ""
+    def get_findings(self, task_id: str) -> str:
+        """Return findings from the latest review for a task. Empty string if none."""
+        matching = [r for r in self._reviews if r.task_id == task_id]
+        if not matching:
+            return ""
+        latest = max(matching, key=lambda r: r.round)
+        return latest.detail
 
     def get_epoch(self, key: str) -> str:
         """Return the content fingerprint for skip logic. Empty string if unset."""

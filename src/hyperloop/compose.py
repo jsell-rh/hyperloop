@@ -1,20 +1,23 @@
-"""Prompt composition — kustomize-resolved templates + runtime context.
+"""Prompt composition — kustomize all the way down.
 
-Three layers composed at spawn time:
-1. Base + project overlay via kustomize (resolved at startup)
-2. Process overlay from specs/prompts/{role}-overlay.yaml (injected at spawn time)
-3. Task context: spec content, findings, traceability refs (spec_ref, task_id)
+All three prompt layers use kustomize resources with a consistent schema:
+1. Base definitions (hyperloop repo ``base/``)
+2. Project overlay (gitops repo or in-repo patches)
+3. Process overlay (``.hyperloop/agents/process/`` kustomize Component)
 
-The orchestrator runs ``kustomize build`` at startup to resolve layers 1+2 into
-AgentTemplate objects. Layer 3 (process overlay + task context) is injected at
-spawn time because it changes during the loop.
+A single ``kustomize build`` resolves all three layers into AgentTemplate
+objects with ``prompt`` + ``guidelines``.  At compose time the final prompt
+is: ``prompt + guidelines + spec + findings``.
+
+The ``rebuild()`` method re-runs ``kustomize build`` after the process-improver
+modifies overlay files mid-loop, so any agent spawned afterward is guaranteed
+to see the updated guidelines.
 """
 
 from __future__ import annotations
 
 import shutil
 import subprocess
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -40,8 +43,6 @@ if TYPE_CHECKING:
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger()
 
-HYPERLOOP_BASE_REF = "github.com/jsell-rh/hyperloop//base?ref=main"
-
 
 @dataclass(frozen=True)
 class AgentTemplate:
@@ -49,36 +50,41 @@ class AgentTemplate:
 
     name: str
     prompt: str
+    guidelines: str
     annotations: dict[str, str]
 
 
 class PromptComposer:
     """Composes agent prompts from kustomize-resolved templates + runtime context."""
 
-    def __init__(self, templates: dict[str, AgentTemplate], state: StateStore) -> None:
+    def __init__(
+        self,
+        templates: dict[str, AgentTemplate],
+        state: StateStore,
+        overlay: str | None = None,
+    ) -> None:
         """
         Args:
             templates: role name -> resolved agent definition (from kustomize build).
-            state: StateStore for reading process overlays and spec files at spawn time.
+            state: StateStore for reading spec files at spawn time.
+            overlay: Path to the kustomization directory (for rebuild).
         """
         self._templates = templates
         self._state = state
+        self._overlay = overlay
 
     @classmethod
     def load_from_kustomize(
         cls,
-        overlay: str | None,
+        overlay: str,
         state: StateStore,
-        base_ref: str = HYPERLOOP_BASE_REF,
     ) -> tuple[PromptComposer, Process | None]:
         """Resolve templates and parse Process via kustomize build.
 
         Args:
-            overlay: Path or git URL to a kustomization directory. If None,
-                     a temporary kustomization referencing the hyperloop base
-                     is created and built.
-            state: StateStore for reading process overlays at spawn time.
-            base_ref: Kustomize remote resource for the base definitions.
+            overlay: Path to the kustomization directory
+                     (e.g. ``.hyperloop/agents/``).
+            state: StateStore for reading spec files at spawn time.
 
         Returns:
             A tuple of (PromptComposer, Process | None). Process is None when
@@ -87,27 +93,23 @@ class PromptComposer:
         Raises:
             RuntimeError: If kustomize build fails.
         """
-        raw_yaml = _kustomize_build(overlay, base_ref=base_ref)
+        raw_yaml = _run_kustomize(overlay)
         templates = _parse_multi_doc(raw_yaml)
         process = parse_process(raw_yaml)
-        return cls(templates, state), process
+        return cls(templates, state, overlay=overlay), process
 
     @classmethod
     def from_kustomize(
         cls,
-        overlay: str | None,
+        overlay: str,
         state: StateStore,
-        base_ref: str = HYPERLOOP_BASE_REF,
     ) -> PromptComposer:
         """Resolve templates via kustomize build, then construct.
 
         Args:
-            overlay: Path or git URL to a kustomization directory. If None,
-                     a temporary kustomization referencing the hyperloop base
-                     is created and built.
-            state: StateStore for reading process overlays at spawn time.
-            base_ref: Kustomize remote resource for the base definitions.
-                      Configurable via .hyperloop.yaml or HYPERLOOP_BASE_REF env var.
+            overlay: Path to the kustomization directory
+                     (e.g. ``.hyperloop/agents/``).
+            state: StateStore for reading spec files at spawn time.
 
         Returns:
             A PromptComposer with resolved templates.
@@ -115,8 +117,20 @@ class PromptComposer:
         Raises:
             RuntimeError: If kustomize build fails.
         """
-        composer, _ = cls.load_from_kustomize(overlay, state, base_ref=base_ref)
+        composer, _ = cls.load_from_kustomize(overlay, state)
         return composer
+
+    def rebuild(self) -> None:
+        """Re-run kustomize build and update templates in place.
+
+        Called after the process-improver modifies overlay files so that
+        any agent spawned afterward sees the updated guidelines.
+        """
+        if self._overlay is None:
+            logger.warning("rebuild: no overlay path — skipping")
+            return
+        raw_yaml = _run_kustomize(self._overlay)
+        self._templates = _parse_multi_doc(raw_yaml)
 
     def compose(
         self,
@@ -164,17 +178,14 @@ class PromptComposer:
             "{task_id}", context.task_id
         )
 
-        # Layer 2: Process overlay (from target repo specs/prompts/)
-        overlay_text = self._read_overlay(role)
-
-        # Layer 3: Task context -- spec content
+        # Read spec content from state store
         spec_content = self._state.read_file(context.spec_ref)
 
-        # Assemble the final prompt
+        # Assemble: prompt + guidelines + spec + findings
         sections: list[str] = [prompt.rstrip()]
 
-        if overlay_text:
-            sections.append(f"## Process Overlay\n{overlay_text}")
+        if template.guidelines:
+            sections.append(f"## Guidelines\n{template.guidelines}")
 
         if spec_content is not None:
             sections.append(f"## Spec\n{spec_content}")
@@ -198,13 +209,10 @@ class PromptComposer:
         """Compose prompt for PM intake."""
         prompt = template.prompt
 
-        # Layer 2: Process overlay
-        overlay_text = self._read_overlay(role)
-
         sections: list[str] = [prompt.rstrip()]
 
-        if overlay_text:
-            sections.append(f"## Process Overlay\n{overlay_text}")
+        if template.guidelines:
+            sections.append(f"## Guidelines\n{template.guidelines}")
 
         spec_list = "\n".join(f"- {s}" for s in context.unprocessed_specs)
         sections.append(f"## Specs to Process\n\n{spec_list}")
@@ -220,67 +228,15 @@ class PromptComposer:
         """Compose prompt for process-improver."""
         prompt = template.prompt
 
-        # Layer 2: Process overlay
-        overlay_text = self._read_overlay(role)
-
         sections: list[str] = [prompt.rstrip()]
 
-        if overlay_text:
-            sections.append(f"## Process Overlay\n{overlay_text}")
+        if template.guidelines:
+            sections.append(f"## Guidelines\n{template.guidelines}")
 
         if context.findings:
             sections.append(f"## Findings\n{context.findings}")
 
         return "\n\n".join(sections) + "\n"
-
-    def _read_overlay(self, role: str) -> str:
-        """Read and extract the process overlay for a given role."""
-        overlay_path = f"specs/prompts/{role}-overlay.yaml"
-        overlay_content = self._state.read_file(overlay_path)
-        if overlay_content is not None:
-            return self._extract_overlay_prompt(overlay_content)
-        return ""
-
-    @staticmethod
-    def _extract_overlay_prompt(raw_yaml: str) -> str:
-        """Extract prompt or content from overlay YAML.
-
-        Overlay files may contain a 'prompt' field (like agent definitions)
-        or raw text content. Handles both.
-        """
-        try:
-            doc = yaml.safe_load(raw_yaml)
-            if isinstance(doc, dict) and "prompt" in doc:
-                return str(cast("dict[str, object]", doc)["prompt"]).strip()
-        except yaml.YAMLError:
-            pass
-        # Fall back to raw content
-        return raw_yaml.strip()
-
-
-def _kustomize_build(overlay: str | None, base_ref: str = HYPERLOOP_BASE_REF) -> str:
-    """Run ``kustomize build`` and return the raw YAML output.
-
-    Args:
-        overlay: Path or git URL to a kustomization directory.
-                 If None, builds from a temporary kustomization that
-                 references the hyperloop base.
-        base_ref: Kustomize remote resource for the base definitions.
-
-    Returns:
-        The multi-document YAML output from kustomize build.
-
-    Raises:
-        RuntimeError: If kustomize build exits non-zero.
-    """
-    if overlay is not None:
-        return _run_kustomize(overlay)
-
-    # No overlay -- build a temp kustomization referencing the base
-    with tempfile.TemporaryDirectory() as tmp:
-        kustomization = Path(tmp) / "kustomization.yaml"
-        kustomization.write_text(f"resources:\n  - {base_ref}\n")
-        return _run_kustomize(tmp)
 
 
 def _run_kustomize(target: str) -> str:
@@ -335,6 +291,7 @@ def _parse_multi_doc(raw: str) -> dict[str, AgentTemplate]:
             continue
         name = _extract_name(doc)
         prompt = doc.get("prompt", "")
+        guidelines = doc.get("guidelines", "")
         raw_annotations = doc.get("annotations", {})
         if not isinstance(raw_annotations, dict):
             raw_annotations = {}
@@ -342,6 +299,7 @@ def _parse_multi_doc(raw: str) -> dict[str, AgentTemplate]:
         templates[name] = AgentTemplate(
             name=name,
             prompt=str(prompt),
+            guidelines=str(guidelines).strip(),
             annotations={str(k): str(v) for k, v in annotations.items()},
         )
     return templates
@@ -476,6 +434,7 @@ def load_templates_from_dir(base_dir: str | Path) -> dict[str, AgentTemplate]:
             doc = cast("dict[str, object]", raw_doc)
             if doc.get("kind") == "Agent" and "prompt" in doc:
                 name = _extract_name(doc)
+                guidelines = doc.get("guidelines", "")
                 raw_annotations = doc.get("annotations", {})
                 if not isinstance(raw_annotations, dict):
                     raw_annotations = {}
@@ -483,6 +442,7 @@ def load_templates_from_dir(base_dir: str | Path) -> dict[str, AgentTemplate]:
                 templates[name] = AgentTemplate(
                     name=name,
                     prompt=str(doc["prompt"]),
+                    guidelines=str(guidelines).strip() if guidelines else "",
                     annotations={str(k): str(v) for k, v in annotations.items()},
                 )
     return templates
