@@ -121,7 +121,7 @@ Future signal sources (webhooks, CI status, ambient annotations) can be added be
 
 ### Agent Definition
 
-Follows the ambient platform resource model. Base definitions live in the hyperloop repo, referenced by git URL. Projects overlay with personas and project-specific rules via kustomize patches in a gitops repo.
+Follows the Ambient platform resource model. Base definitions live in the hyperloop repo, referenced by git URL. Projects overlay with personas and project-specific rules via kustomize patches in a gitops repo.
 
 ```yaml
 kind: Agent
@@ -133,6 +133,8 @@ prompt: |
   You do NOT set task status.
 guidelines: ""
 ```
+
+`name` is top-level (matching Ambient's schema). `guidelines` is hyperloop-specific — the Ambient adapter concatenates it into `prompt` when syncing to the platform. Labels, annotations, and inbox are runtime state managed by the adapter, not part of the committed resource definition.
 
 ## Traceability
 
@@ -349,7 +351,7 @@ cancel(handle)                     → void
 findOrphan(task, branch)           → WorkerHandle | null  (for crash recovery)
 ```
 
-Implementations: `AgentSdkRuntime` (Claude Agent SDK + git worktrees).
+Implementations: `AgentSdkRuntime` (Claude Agent SDK + git worktrees), `AmbientRuntime` (Ambient Code Platform sessions). See `specs/ambient-runtime.md`.
 
 ## Orchestrator Loop
 
@@ -429,9 +431,12 @@ target:
   base_branch: main
   specs_dir: specs
 
-runtime:
-  default: local         # local | ambient
-  max_workers: 6
+runtime: local             # local | ambient
+max_workers: 6
+
+ambient:                   # required when runtime: ambient
+  project_id: my-project   # Ambient project name
+  acpctl: acpctl           # path to acpctl binary
 
 merge:
   auto_merge: true
@@ -491,8 +496,8 @@ hyperloop/
 │   │   └── git.py
 │   └── runtime/
 │       ├── interface.py
-│       ├── local.py
-│       └── ambient.py
+│       ├── agent_sdk.py       # local (worktrees + Claude Agent SDK)
+│       └── ambient.py         # remote (Ambient Code Platform sessions)
 └── tests/
     ├── test_decide.py       ← decision function is pure, fully testable
     └── test_pipeline.py     ← pipeline execution against mock runtime
