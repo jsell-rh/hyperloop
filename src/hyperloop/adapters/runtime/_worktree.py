@@ -52,49 +52,57 @@ def ensure_worktrees_gitignored(repo_path: str) -> None:
 
 
 def create_worktree(repo_path: str, worktree_path: str, branch: str) -> None:
-    """Create a git worktree, handling stale branches from previous runs.
+    """Create a git worktree, handling stale state from previous runs.
 
-    Three-step flow:
-    1. Try ``git worktree add <path> <branch>`` (branch already exists).
-    2. If that fails, try ``git worktree add -b <branch> <path> HEAD`` (new branch).
-    3. If that also fails (branch exists but not as a worktree), force-reset the
-       branch to HEAD and attach via ``git worktree add``.
+    Cleans up any stale worktree directory or branch before creating.
     """
     env = clean_git_env()
+
+    # Clean up stale worktree directory from a previous run
+    if os.path.exists(worktree_path):
+        cleanup_worktree(repo_path, worktree_path)
+
+    # Try attaching to an existing branch
     result = subprocess.run(
         ["git", "-C", repo_path, "worktree", "add", worktree_path, branch],
         capture_output=True,
         env=env,
     )
-    if result.returncode != 0:
-        create = subprocess.run(
-            [
-                "git",
-                "-C",
-                repo_path,
-                "worktree",
-                "add",
-                worktree_path,
-                "-b",
-                branch,
-                "HEAD",
-            ],
-            capture_output=True,
-            env=env,
-        )
-        if create.returncode != 0:
-            subprocess.run(
-                ["git", "-C", repo_path, "branch", "-f", branch, "HEAD"],
-                check=True,
-                capture_output=True,
-                env=env,
-            )
-            subprocess.run(
-                ["git", "-C", repo_path, "worktree", "add", worktree_path, branch],
-                check=True,
-                capture_output=True,
-                env=env,
-            )
+    if result.returncode == 0:
+        return
+
+    # Branch doesn't exist — create it
+    create = subprocess.run(
+        [
+            "git",
+            "-C",
+            repo_path,
+            "worktree",
+            "add",
+            worktree_path,
+            "-b",
+            branch,
+            "HEAD",
+        ],
+        capture_output=True,
+        env=env,
+    )
+    if create.returncode == 0:
+        return
+
+    # Branch name exists but isn't a worktree — force-reset and attach
+    subprocess.run(
+        ["git", "-C", repo_path, "branch", "-f", branch, "HEAD"],
+        check=True,
+        capture_output=True,
+        env=env,
+    )
+    subprocess.run(
+        ["git", "-C", repo_path, "worktree", "add", worktree_path, branch],
+        check=True,
+        capture_output=True,
+        env=env,
+    )
 
 
 def get_worktree_branch(worktree_path: str) -> str | None:
