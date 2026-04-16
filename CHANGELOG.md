@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.11.0 (2026-04-16)
+
+### Bug Fixes
+
+- Key tmux session to repo name (hyperloop-{repo})
+  ([`8902b2d`](https://github.com/jsell-rh/hyperloop/commit/8902b2da46fd0d5422fe0b63261ba836cc65ef5f))
+
+### Features
+
+- TmuxRuntime adapter + restructure adapters/ into subdirectories
+  ([`9ca65ad`](https://github.com/jsell-rh/hyperloop/commit/9ca65adad6b223b9262c706c60cbb56e8bfce259))
+
+
 ## v0.10.1 (2026-04-16)
 
 
