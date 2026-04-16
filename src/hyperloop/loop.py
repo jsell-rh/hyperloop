@@ -438,11 +438,13 @@ class Orchestrator:
                     )
                     to_spawn.append((action.task_id, "rebase-resolver", pos))
                 elif task.status == TaskStatus.IN_PROGRESS and task.phase is not None:
-                    # Only spawn for role steps — gates and actions don't need workers
-                    pos = self._position_from_phase(executor, task)
-                    step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
-                    if isinstance(step, RoleStep):
-                        to_spawn.append((action.task_id, str(task.phase), pos))
+                    # Only spawn for role steps — gates and actions wait, not spawn
+                    phase_name = str(task.phase)
+                    pos = self._find_position_for_step(executor, phase_name)
+                    if pos is not None:
+                        step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
+                        if isinstance(step, RoleStep):
+                            to_spawn.append((action.task_id, phase_name, pos))
                 else:
                     pos = executor.initial_position()
                     pipe_action, pos = executor.next_action(pos, result=None)
