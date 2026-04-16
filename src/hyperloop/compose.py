@@ -136,6 +136,7 @@ class PromptComposer:
         self,
         role: str,
         context: AgentContext,
+        epilogue: str = "",
     ) -> str:
         """Compose the full prompt for a worker.
 
@@ -143,11 +144,13 @@ class PromptComposer:
         1. Resolved template prompt + guidelines (from kustomize build,
            includes base + project overlay + process overlay)
         2. Context-specific injection (spec content, findings, spec list)
+        3. Optional runtime epilogue (for task workers only)
 
         Args:
             role: Agent role name (e.g. "implementer", "verifier", "pm").
             context: Typed context object -- TaskContext, IntakeContext, or
                      ImprovementContext -- carrying the data needed for this spawn.
+            epilogue: Runtime-specific instructions appended to task worker prompts.
 
         Returns:
             The composed prompt string ready to pass to a worker.
@@ -162,7 +165,7 @@ class PromptComposer:
         template = self._templates[role]
 
         if isinstance(context, TaskContext):
-            return self._compose_task(role, template, context)
+            return self._compose_task(role, template, context, epilogue=epilogue)
         if isinstance(context, IntakeContext):
             return self._compose_intake(role, template, context)
         return self._compose_improvement(role, template, context)
@@ -172,16 +175,19 @@ class PromptComposer:
         role: str,
         template: AgentTemplate,
         context: TaskContext,
+        epilogue: str = "",
     ) -> str:
         """Compose prompt for a per-task worker (implementer, verifier, rebase-resolver)."""
-        prompt = template.prompt.replace("{spec_ref}", context.spec_ref).replace(
-            "{task_id}", context.task_id
+        prompt = (
+            template.prompt.replace("{spec_ref}", context.spec_ref)
+            .replace("{task_id}", context.task_id)
+            .replace("{round}", str(context.round))
         )
 
         # Read spec content from state store
         spec_content = self._state.read_file(context.spec_ref)
 
-        # Assemble: prompt + guidelines + spec + findings
+        # Assemble: prompt + guidelines + spec + findings + epilogue
         sections: list[str] = [prompt.rstrip()]
 
         if template.guidelines:
@@ -197,6 +203,9 @@ class PromptComposer:
 
         if context.findings:
             sections.append(f"## Findings\n{context.findings}")
+
+        if epilogue:
+            sections.append(f"## Runtime\n{epilogue}")
 
         return "\n\n".join(sections) + "\n"
 

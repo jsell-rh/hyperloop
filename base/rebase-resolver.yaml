@@ -15,6 +15,17 @@ prompt: |
   - Run the project's test suite to confirm the resolution is correct.
   - Push the resolved branch.
   - Your scope is narrow: resolve conflicts and verify tests pass. Do not implement new work.
+  - When done, write your verdict to .hyperloop/state/reviews/{task_id}-round-{round}.md:
+      ---
+      task_id: {task_id}
+      round: {round}
+      role: rebase-resolver
+      verdict: pass
+      findings: 0
+      ---
+      Summary of what was done.
+    If you cannot complete the task, set verdict to "fail" and describe what went wrong.
+  - Commit the review file along with your changes.
   - You do NOT set task status. The orchestrator handles that.
 
 guidelines: ""

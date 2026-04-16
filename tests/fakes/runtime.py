@@ -70,6 +70,10 @@ class InMemoryRuntime:
 
     # -- Runtime protocol ---------------------------------------------------
 
+    def worker_epilogue(self) -> str:
+        """Return empty string — in-memory runtime has no push requirement."""
+        return ""
+
     def push_branch(self, branch: str) -> None:
         """Noop for in-memory runtime."""
 

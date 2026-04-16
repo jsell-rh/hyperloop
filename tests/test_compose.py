@@ -50,7 +50,7 @@ class TestBasePromptOnly:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
 
         # Base prompt content should be present
@@ -60,7 +60,7 @@ class TestBasePromptOnly:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
 
         assert "Build a widget." in result
@@ -69,7 +69,7 @@ class TestBasePromptOnly:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
 
         # Should not have a findings section with content
@@ -83,7 +83,7 @@ class TestTemplateVariables:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-027", spec_ref="specs/persistence.md", findings="")
+        ctx = TaskContext(task_id="task-027", spec_ref="specs/persistence.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
 
         assert "specs/persistence.md" in result
@@ -93,7 +93,7 @@ class TestTemplateVariables:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-027", spec_ref="specs/persistence.md", findings="")
+        ctx = TaskContext(task_id="task-027", spec_ref="specs/persistence.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
 
         assert "task-027" in result
@@ -116,7 +116,7 @@ class TestProcessOverlay:
 
         composer = PromptComposer(templates=templates, state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
 
         assert "## Guidelines" in result
@@ -129,7 +129,7 @@ class TestProcessOverlay:
 
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
 
         # Should still have the base prompt
@@ -147,6 +147,7 @@ class TestFindings:
             task_id="task-001",
             spec_ref="specs/widget.md",
             findings="Test suite failed: missing null check in widget.py line 42",
+            round=0,
         )
         result = composer.compose(role="implementer", context=ctx)
 
@@ -161,7 +162,7 @@ class TestUnknownRole:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
         with pytest.raises(ValueError, match=r"(?i)unknown.*role.*nonexistent"):
             composer.compose(role="nonexistent", context=ctx)
 
@@ -174,7 +175,7 @@ class TestMissingSpecRef:
         # No spec file set — spec_ref points to nothing
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/nonexistent.md", findings="")
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/nonexistent.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
 
         # Should still compose with the base prompt
@@ -184,7 +185,7 @@ class TestMissingSpecRef:
         state = InMemoryStateStore()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/nonexistent.md", findings="")
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/nonexistent.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
 
         # Should note that the spec file could not be read
@@ -212,7 +213,7 @@ class TestAllRoles:
         elif role == "process-improver":
             ctx = ImprovementContext(findings="Some findings")
         else:
-            ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+            ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
 
         result = composer.compose(role=role, context=ctx)
 
@@ -324,7 +325,7 @@ class TestKustomizeIntegration:
         state = _state_with_spec()
         composer = PromptComposer.from_kustomize(str(tmp_path), state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="")
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
         assert "You are a worker agent implementing a task" in result
 

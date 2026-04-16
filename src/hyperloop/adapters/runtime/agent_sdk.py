@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import glob
 import os
+import re
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import structlog
+import yaml
 
 from hyperloop.adapters.runtime._worktree import (
     clean_git_env,
@@ -58,6 +61,10 @@ class AgentSdkRuntime:
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
         self._thread.start()
+
+    def worker_epilogue(self) -> str:
+        """Return empty string — local SDK runtime has no push requirement."""
+        return ""
 
     def push_branch(self, branch: str) -> None:
         """Noop — SDK runtime uses local worktrees."""
@@ -111,22 +118,32 @@ class AgentSdkRuntime:
         return "done"
 
     def reap(self, handle: WorkerHandle) -> WorkerResult:
-        """Collect the result from a completed SDK agent."""
+        """Collect the result from a completed SDK agent.
+
+        Prefers the review file written by the worker in the worktree.
+        Falls back to the SDK future result if no review file is found.
+        """
         task_id = handle.task_id
         worktree_path = self._worktrees.get(task_id)
 
         if worktree_path is None:
             worktree_path = os.path.join(self._worktree_base, task_id)
 
-        future = self._futures.get(task_id)
-        if future is not None and future.done() and future.exception() is None:
-            result = future.result()
+        # Try reading the worker-written review file first
+        review_result = _read_review_from_worktree(worktree_path, task_id)
+        if review_result is not None:
+            result = review_result
         else:
-            result = WorkerResult(
-                verdict=Verdict.ERROR,
-                findings=0,
-                detail="Agent future missing or failed",
-            )
+            # Fall back to SDK future result
+            future = self._futures.get(task_id)
+            if future is not None and future.done() and future.exception() is None:
+                result = future.result()
+            else:
+                result = WorkerResult(
+                    verdict=Verdict.ERROR,
+                    findings=0,
+                    detail="Agent future missing or failed",
+                )
 
         # Clean up
         self._futures.pop(task_id, None)
@@ -236,3 +253,42 @@ class AgentSdkRuntime:
             findings=0,
             detail=result_text or "Agent completed",
         )
+
+
+def _read_review_from_worktree(worktree_path: str, task_id: str) -> WorkerResult | None:
+    """Read and parse a worker-written review file from a worktree.
+
+    Globs for ``.hyperloop/state/reviews/{task_id}-round-*.md`` in the worktree,
+    takes the last one (highest round), and parses YAML frontmatter for verdict,
+    findings, and body detail.
+
+    Returns None if no review file is found or if parsing fails.
+    """
+    pattern = os.path.join(worktree_path, ".hyperloop", "state", "reviews", f"{task_id}-round-*.md")
+    matches = sorted(glob.glob(pattern))
+    if not matches:
+        return None
+
+    review_path = matches[-1]
+    try:
+        with open(review_path) as f:
+            content = f.read()
+
+        match = re.match(r"^---\n(.*?\n)---\n(.*)", content, re.DOTALL)
+        if match is None:
+            return None
+
+        fm_raw = yaml.safe_load(match.group(1))
+        if not isinstance(fm_raw, dict):
+            return None
+
+        fm = cast("dict[str, object]", fm_raw)
+        body = match.group(2)
+        return WorkerResult(
+            verdict=Verdict(str(fm["verdict"])),
+            findings=int(str(fm["findings"])),
+            detail=body.strip(),
+        )
+    except Exception:
+        log.warning("review_parse_failed", worktree_path=worktree_path, task_id=task_id)
+        return None

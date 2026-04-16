@@ -891,8 +891,12 @@ class Orchestrator:
             return ""
 
         findings = self._state.get_findings(task.id)
-        context = TaskContext(task_id=task.id, spec_ref=task.spec_ref, findings=findings)
-        return self._composer.compose(role=role, context=context)
+        context = TaskContext(
+            task_id=task.id, spec_ref=task.spec_ref, findings=findings, round=task.round
+        )
+        return self._composer.compose(
+            role=role, context=context, epilogue=self._runtime.worker_epilogue()
+        )
 
     # -----------------------------------------------------------------------
     # Pipeline position helpers

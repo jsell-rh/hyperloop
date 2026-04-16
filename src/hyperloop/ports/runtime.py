@@ -44,6 +44,14 @@ class Runtime(Protocol):
         """Find a worker left running from a previous orchestrator session (crash recovery)."""
         ...
 
+    def worker_epilogue(self) -> str:
+        """Runtime-specific instructions appended to every worker prompt.
+
+        Returns an empty string for local runtimes. Remote runtimes (e.g. ambient)
+        return instructions like 'Push your branch when done.'
+        """
+        ...
+
     def run_serial(self, role: str, prompt: str) -> bool:
         """Run an agent serially on trunk. Blocks until complete.
 

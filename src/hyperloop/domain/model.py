@@ -233,6 +233,7 @@ class TaskContext:
     task_id: str
     spec_ref: str
     findings: str
+    round: int
 
 
 @dataclass(frozen=True)
