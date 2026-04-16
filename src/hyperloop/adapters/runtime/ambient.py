@@ -513,12 +513,13 @@ class AmbientRuntime:
                 if not line:
                     continue
                 try:
-                    event = json.loads(line)
+                    raw_event: object = json.loads(line)
                 except json.JSONDecodeError:
                     continue
 
-                if not isinstance(event, dict):
+                if not isinstance(raw_event, dict):
                     continue
+                event = cast("dict[str, object]", raw_event)
                 got_any_event = True
                 if event.get("type") == "RUN_FINISHED":
                     with self._lock:
@@ -586,14 +587,15 @@ class AmbientRuntime:
                     if not line:
                         continue
                     try:
-                        event = json.loads(line)
+                        raw_event: object = json.loads(line)
                     except json.JSONDecodeError:
                         continue
 
-                    if not isinstance(event, dict):
+                    if not isinstance(raw_event, dict):
                         continue
+                    fg_event = cast("dict[str, object]", raw_event)
                     got_any_event = True
-                    if event.get("type") == "RUN_FINISHED":
+                    if fg_event.get("type") == "RUN_FINISHED":
                         return True
 
                 # Process exited without RUN_FINISHED
