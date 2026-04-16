@@ -69,7 +69,8 @@ def _config_table(cfg: Config) -> Table:
     table.add_row("merge_strategy", cfg.merge_strategy)
     table.add_row("delete_branch", str(cfg.delete_branch))
     table.add_row("poll_interval", f"{cfg.poll_interval}s")
-    table.add_row("max_rounds", str(cfg.max_rounds))
+    table.add_row("max_task_rounds", str(cfg.max_task_rounds))
+    table.add_row("max_cycles", str(cfg.max_cycles))
     table.add_row("max_rebase_attempts", str(cfg.max_rebase_attempts))
 
     return table
@@ -257,7 +258,7 @@ def run(
         runtime=runtime,
         process=process,
         max_workers=cfg.max_workers,
-        max_rounds=cfg.max_rounds,
+        max_task_rounds=cfg.max_task_rounds,
         pr_manager=pr_manager,
         composer=composer,
         repo_path=str(repo_path),
@@ -275,7 +276,7 @@ def run(
     console.print("[bold green]Starting orchestrator loop[/bold green]")
     console.print()
 
-    reason = orchestrator.run_loop()
+    reason = orchestrator.run_loop(max_cycles=cfg.max_cycles)
 
     # 7. Final summary
     console.print()

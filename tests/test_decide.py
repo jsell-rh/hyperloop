@@ -59,14 +59,14 @@ def _world(
 
 class TestEmptyWorld:
     def test_no_tasks_no_actions(self):
-        actions = decide(_world(), max_workers=4, max_rounds=50)
+        actions = decide(_world(), max_workers=4, max_task_rounds=50)
         assert actions == []
 
 
 class TestSingleTaskSpawning:
     def test_not_started_no_deps_spawns_worker(self):
         t = _task()
-        actions = decide(_world(tasks={t.id: t}), max_workers=4, max_rounds=50)
+        actions = decide(_world(tasks={t.id: t}), max_workers=4, max_task_rounds=50)
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
         assert len(spawns) == 1
         assert spawns[0].task_id == "task-001"
@@ -76,7 +76,9 @@ class TestSingleTaskSpawning:
         dep = _task(id="task-002", status=TaskStatus.IN_PROGRESS, branch="worker/task-002")
         worker = WorkerState(task_id="task-002", role="implementer", status="running")
         tasks = {t.id: t, dep.id: dep}
-        actions = decide(_world(tasks=tasks, workers={"w1": worker}), max_workers=4, max_rounds=50)
+        actions = decide(
+            _world(tasks=tasks, workers={"w1": worker}), max_workers=4, max_task_rounds=50
+        )
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
         # task-001 should not spawn because its dep (task-002) is not complete
         # task-002 should not spawn because it already has a running worker
@@ -86,7 +88,7 @@ class TestSingleTaskSpawning:
         dep = _task(id="task-002", status=TaskStatus.COMPLETE)
         t = _task(deps=("task-002",))
         tasks = {t.id: t, dep.id: dep}
-        actions = decide(_world(tasks=tasks), max_workers=4, max_rounds=50)
+        actions = decide(_world(tasks=tasks), max_workers=4, max_task_rounds=50)
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
         assert len(spawns) == 1
         assert spawns[0].task_id == "task-001"
@@ -99,7 +101,7 @@ class TestAlreadyRunning:
         actions = decide(
             _world(tasks={t.id: t}, workers={"w1": worker}),
             max_workers=4,
-            max_rounds=50,
+            max_task_rounds=50,
         )
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
         reaps = [a for a in actions if isinstance(a, ReapWorker)]
@@ -114,7 +116,7 @@ class TestReaping:
         actions = decide(
             _world(tasks={t.id: t}, workers={"w1": worker}),
             max_workers=4,
-            max_rounds=50,
+            max_task_rounds=50,
         )
         reaps = [a for a in actions if isinstance(a, ReapWorker)]
         assert len(reaps) == 1
@@ -126,7 +128,7 @@ class TestReaping:
         actions = decide(
             _world(tasks={t.id: t}, workers={"w1": worker}),
             max_workers=4,
-            max_rounds=50,
+            max_task_rounds=50,
         )
         reaps = [a for a in actions if isinstance(a, ReapWorker)]
         assert len(reaps) == 1
@@ -140,7 +142,7 @@ class TestConvergence:
         actions = decide(
             _world(tasks={t1.id: t1, t2.id: t2}),
             max_workers=4,
-            max_rounds=50,
+            max_task_rounds=50,
         )
         halts = [a for a in actions if isinstance(a, Halt)]
         assert len(halts) == 1
@@ -153,7 +155,7 @@ class TestMaxWorkers:
         for i in range(5):
             t = _task(id=f"task-{i:03d}")
             tasks[t.id] = t
-        actions = decide(_world(tasks=tasks), max_workers=2, max_rounds=50)
+        actions = decide(_world(tasks=tasks), max_workers=2, max_task_rounds=50)
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
         assert len(spawns) == 2
 
@@ -165,7 +167,7 @@ class TestMaxWorkers:
         actions = decide(
             _world(tasks={t1.id: t1, t2.id: t2, t3.id: t3}, workers={"w1": worker}),
             max_workers=2,
-            max_rounds=50,
+            max_task_rounds=50,
         )
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
         assert len(spawns) == 1
@@ -180,7 +182,7 @@ class TestPriorityOrdering:
         actions = decide(
             _world(tasks={resuming.id: resuming, fresh.id: fresh}),
             max_workers=1,
-            max_rounds=50,
+            max_task_rounds=50,
         )
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
         assert len(spawns) == 1
@@ -188,22 +190,22 @@ class TestPriorityOrdering:
 
 
 class TestMaxRounds:
-    def test_task_at_max_rounds_advances_to_failed_and_halts(self):
+    def test_task_at_max_task_rounds_advances_to_failed_and_halts(self):
         t = _task(status=TaskStatus.IN_PROGRESS, round=50, branch="worker/task-001")
-        actions = decide(_world(tasks={t.id: t}), max_workers=4, max_rounds=50)
+        actions = decide(_world(tasks={t.id: t}), max_workers=4, max_task_rounds=50)
         advances = [a for a in actions if isinstance(a, AdvanceTask)]
         halts = [a for a in actions if isinstance(a, Halt)]
         assert len(advances) == 1
         assert advances[0].task_id == "task-001"
         assert advances[0].to_status == TaskStatus.FAILED
         assert len(halts) == 1
-        assert "max_rounds" in halts[0].reason.lower()
+        assert "max_task_rounds" in halts[0].reason.lower()
 
 
 class TestNeedsRebase:
     def test_needs_rebase_spawns_rebase_resolver(self):
         t = _task(status=TaskStatus.NEEDS_REBASE, branch="worker/task-001")
-        actions = decide(_world(tasks={t.id: t}), max_workers=4, max_rounds=50)
+        actions = decide(_world(tasks={t.id: t}), max_workers=4, max_task_rounds=50)
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
         assert len(spawns) == 1
         assert spawns[0].task_id == "task-001"
@@ -215,7 +217,7 @@ class TestNeedsRebase:
         actions = decide(
             _world(tasks={rebase.id: rebase, fresh.id: fresh}),
             max_workers=1,
-            max_rounds=50,
+            max_task_rounds=50,
         )
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
         assert len(spawns) == 1
@@ -228,7 +230,7 @@ class TestNeedsRebase:
         actions = decide(
             _world(tasks={t.id: t}, workers={"w1": worker}),
             max_workers=4,
-            max_rounds=50,
+            max_task_rounds=50,
         )
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
         assert len(spawns) == 0
@@ -238,7 +240,7 @@ class TestDependencyCycles:
     def test_deps_not_in_task_list_are_treated_as_unmet(self):
         """A dep referencing a task not in the world should be treated as unmet."""
         t = _task(deps=("task-nonexistent",))
-        actions = decide(_world(tasks={t.id: t}), max_workers=4, max_rounds=50)
+        actions = decide(_world(tasks={t.id: t}), max_workers=4, max_task_rounds=50)
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
         assert len(spawns) == 0
 
@@ -255,7 +257,7 @@ class TestMixedScenarios:
                 workers={"w1": done_worker},
             ),
             max_workers=4,
-            max_rounds=50,
+            max_task_rounds=50,
         )
         reaps = [a for a in actions if isinstance(a, ReapWorker)]
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
@@ -275,7 +277,7 @@ class TestMixedScenarios:
                 workers={"w1": done_worker},
             ),
             max_workers=4,
-            max_rounds=50,
+            max_task_rounds=50,
         )
         reap_indices = [i for i, a in enumerate(actions) if isinstance(a, ReapWorker)]
         spawn_indices = [i for i, a in enumerate(actions) if isinstance(a, SpawnWorker)]
@@ -288,7 +290,7 @@ class TestMixedScenarios:
         failed = _task(id="task-002", status=TaskStatus.FAILED)
         ready = _task(id="task-003")
         tasks = {complete.id: complete, failed.id: failed, ready.id: ready}
-        actions = decide(_world(tasks=tasks), max_workers=4, max_rounds=50)
+        actions = decide(_world(tasks=tasks), max_workers=4, max_task_rounds=50)
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
         spawn_ids = {s.task_id for s in spawns}
         assert "task-001" not in spawn_ids

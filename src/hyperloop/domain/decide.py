@@ -37,7 +37,7 @@ def _task_has_worker(task_id: str, world: World) -> bool:
     return any(ws.task_id == task_id for ws in world.workers.values())
 
 
-def decide(world: World, max_workers: int, max_rounds: int) -> list[Action]:
+def decide(world: World, max_workers: int, max_task_rounds: int) -> list[Action]:
     """Decide what actions to take given the current world state.
 
     Returns an ordered list of actions: reaps first, then advances, then spawns,
@@ -50,11 +50,12 @@ def decide(world: World, max_workers: int, max_rounds: int) -> list[Action]:
         if ws.status in ("done", "failed"):
             actions.append(ReapWorker(task_id=ws.task_id))
 
-    # ---- 2. Check for tasks that hit max_rounds → AdvanceTask + Halt ------
+    # ---- 2. Check for tasks that hit max_task_rounds → AdvanceTask + Halt ------
     for task in world.tasks.values():
-        if task.status == TaskStatus.IN_PROGRESS and task.round >= max_rounds:
+        if task.status == TaskStatus.IN_PROGRESS and task.round >= max_task_rounds:
             actions.append(AdvanceTask(task_id=task.id, to_status=TaskStatus.FAILED, to_phase=None))
-            actions.append(Halt(reason=f"task {task.id} exceeded max_rounds ({max_rounds})"))
+            reason = f"task {task.id} exceeded max_task_rounds ({max_task_rounds})"
+            actions.append(Halt(reason=reason))
             return actions
 
     # ---- 3. Count active (running) workers ---------------------------------

@@ -225,7 +225,8 @@ merge:
   delete_branch: true              # delete worker branch after merge
 
 poll_interval: 30                  # seconds between orchestrator cycles
-max_rounds: 50                     # max retry rounds per task before failure
+max_task_rounds: 50                # max retry rounds per task before failure
+max_cycles: 200                    # max total orchestrator cycles
 max_rebase_attempts: 3             # max rebase retries before full loop retry
 
 observability:

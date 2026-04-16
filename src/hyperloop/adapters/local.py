@@ -53,8 +53,9 @@ class LocalRuntime:
         """Create a worktree, write the prompt, start the subprocess, return a handle."""
         worktree_path = os.path.join(self._worktree_base, task_id)
 
-        # Ensure the parent directory exists
+        # Ensure the parent directory exists and is gitignored
         os.makedirs(self._worktree_base, exist_ok=True)
+        self._ensure_worktrees_gitignored()
 
         # Create the git worktree — reuse existing branch if it survived
         # a previous pipeline step, otherwise create a new one.
@@ -204,6 +205,26 @@ class LocalRuntime:
         )
 
     # -- Private helpers -------------------------------------------------------
+
+    def _ensure_worktrees_gitignored(self) -> None:
+        """Ensure worktrees/ is in the target repo's .gitignore.
+
+        Without this, ``git add -A`` in the state store's commit() would
+        stage worktree gitlink files, polluting the repo and causing
+        spurious merge conflicts.
+        """
+        repo = Path(self._repo_path)
+        gitignore = repo / ".gitignore"
+        entry = "worktrees/"
+        if gitignore.is_file():
+            content = gitignore.read_text()
+            if entry in content.splitlines():
+                return
+            if not content.endswith("\n"):
+                content += "\n"
+            gitignore.write_text(content + entry + "\n")
+        else:
+            gitignore.write_text(entry + "\n")
 
     def _read_result(self, worktree_path: str) -> WorkerResult:
         """Read and parse .worker-result.json from the worktree."""

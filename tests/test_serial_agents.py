@@ -77,14 +77,14 @@ def _make_orchestrator(
     runtime: InMemoryRuntime,
     serial_runner: FakeSerialRunner | None = None,
     composer: PromptComposer | None = None,
-    max_rounds: int = 50,
+    max_task_rounds: int = 50,
 ) -> Orchestrator:
     return Orchestrator(
         state=state,
         runtime=runtime,
         process=DEFAULT_PROCESS,
         max_workers=6,
-        max_rounds=max_rounds,
+        max_task_rounds=max_task_rounds,
         serial_runner=serial_runner,
         composer=composer,
     )
@@ -318,7 +318,7 @@ class TestProcessImprover:
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(
-            state, runtime, serial_runner=serial, composer=composer, max_rounds=50
+            state, runtime, serial_runner=serial, composer=composer, max_task_rounds=50
         )
 
         # Cycle 1: spawn implementer

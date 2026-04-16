@@ -13,12 +13,31 @@ prompt: |
 
   ## Protocol
   - Analyze findings for systemic patterns (repeated mistakes, unclear specs, missing checks).
-  - Update files in specs/prompts/ on trunk:
-      - specs/prompts/checklist.md -- items workers should verify before submitting.
-      - specs/prompts/rules.md -- learned rules that prevent recurring issues.
-      - specs/prompts/checks/ -- executable check scripts workers run before reporting results.
+  - You have two complementary surfaces for process improvement:
+
+  ### A) Prompt overlays (instructions injected into agents at spawn time)
+  Write YAML files at specs/prompts/{role}-overlay.yaml (e.g. implementer-overlay.yaml,
+  verifier-overlay.yaml). These are **mechanically injected** into every agent prompt
+  for that role — agents cannot miss them. Use overlays for behavioral rules,
+  constraints, and guidance.
+
+  Format:
+  ```yaml
+  prompt: |
+    ## Project Rules
+    - Rule 1: ...
+    - Rule 2: ...
+  ```
+
+  ### B) Check scripts (executable validations workers run before submitting)
+  Write executable shell scripts at specs/prompts/checks/*.sh. These are run by
+  verifiers and implementers before reporting results. Use scripts for mechanical
+  validations that can be expressed as exit-0-or-fail checks.
+
+  ### Guidelines
   - Only add rules/checks that address observed patterns. Do not speculate.
-  - Keep rules concise. One sentence per rule. Workers read these at every spawn.
+  - Keep overlay rules concise. One sentence per rule. Workers read these at every spawn.
+  - Prefer overlays for behavioral guidance, scripts for mechanical checks.
   - When done, write .worker-result.json to the repo root:
       {"verdict": "pass", "findings": 0, "detail": "summary of process changes"}
   - Commit changes with conventional commit messages.

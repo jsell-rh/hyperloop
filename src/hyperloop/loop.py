@@ -77,7 +77,7 @@ class Orchestrator:
         runtime: Runtime,
         process: Process,
         max_workers: int = 6,
-        max_rounds: int = 50,
+        max_task_rounds: int = 50,
         pr_manager: PRPort | None = None,
         composer: PromptComposer | None = None,
         repo_path: str | None = None,
@@ -91,7 +91,7 @@ class Orchestrator:
         self._runtime = runtime
         self._process = process
         self._max_workers = max_workers
-        self._max_rounds = max_rounds
+        self._max_task_rounds = max_task_rounds
         self._pr_manager = pr_manager
         self._composer = composer
         self._repo_path = repo_path
@@ -108,13 +108,13 @@ class Orchestrator:
         # Current cycle number — set at the start of each run_cycle
         self._current_cycle: int = 0
 
-    def run_loop(self, max_cycles: int = 1000) -> str:
+    def run_loop(self, max_cycles: int = 200) -> str:
         """Run the orchestrator loop until halt or max_cycles. Returns halt reason."""
         world = self._state.get_world()
         self._probe.orchestrator_started(
             task_count=len(world.tasks),
             max_workers=self._max_workers,
-            max_rounds=self._max_rounds,
+            max_rounds=self._max_task_rounds,
             overlay=None,
         )
         for cycle_num in range(max_cycles):
@@ -214,7 +214,7 @@ class Orchestrator:
         reaped_results: dict[str, WorkerResult] = {}
         had_failures_this_cycle = False
 
-        actions = decide(world, self._max_workers, self._max_rounds)
+        actions = decide(world, self._max_workers, self._max_task_rounds)
 
         # Process ReapWorker actions from decide()
         for action in actions:
@@ -278,18 +278,20 @@ class Orchestrator:
                 if result.verdict in (Verdict.FAIL, Verdict.ERROR, Verdict.TIMEOUT):
                     had_failures_this_cycle = True
                     new_round = task.round + 1
-                    if new_round >= self._max_rounds:
+                    if new_round >= self._max_task_rounds:
                         self._state.transition_task(
                             task_id,
                             TaskStatus.FAILED,
                             phase=None,
                             round=new_round,
                         )
-                        halt_reason = f"task {task_id} exceeded max_rounds ({self._max_rounds})"
+                        halt_reason = (
+                            f"task {task_id} exceeded max_task_rounds ({self._max_task_rounds})"
+                        )
                         self._probe.task_failed(
                             task_id=task_id,
                             spec_ref=task.spec_ref,
-                            reason=f"exceeded max_rounds ({self._max_rounds})",
+                            reason=f"exceeded max_task_rounds ({self._max_task_rounds})",
                             round=new_round,
                             cycle=cycle_num,
                         )
@@ -375,9 +377,9 @@ class Orchestrator:
         # ---- 7. Decide what to spawn (via decide()) -------------------------
         # Rebuild world after reaping + gates + merges (tasks may have changed)
         world_after_reap = self._build_world()
-        spawn_actions = decide(world_after_reap, self._max_workers, self._max_rounds)
+        spawn_actions = decide(world_after_reap, self._max_workers, self._max_task_rounds)
 
-        # Check for Halt from decide() (convergence or max_rounds)
+        # Check for Halt from decide() (convergence or max_task_rounds)
         for action in spawn_actions:
             if isinstance(action, Halt):
                 self._state.commit("orchestrator: halt")
@@ -569,7 +571,7 @@ class Orchestrator:
             if self._pr_manager is not None and task.pr is not None:
                 self._merge_via_pr(task.id, task.pr, task.spec_ref, branch)
             else:
-                self._merge_local(task.id, branch)
+                self._merge_local(task.id, branch, task.spec_ref)
 
     def _merge_via_pr(self, task_id: str, pr_url: str, spec_ref: str, branch: str) -> None:
         """Merge via GitHub PR: mark ready, rebase, then squash-merge."""
@@ -658,8 +660,12 @@ class Orchestrator:
         )
         logger.info("Merged PR for task %s", task_id)
 
-    def _merge_local(self, task_id: str, branch: str) -> None:
-        """Merge worker branch into base branch locally (no PR)."""
+    def _merge_local(self, task_id: str, branch: str, spec_ref: str) -> None:
+        """Merge worker branch into base branch locally (no PR).
+
+        On conflict, transitions to NEEDS_REBASE so the rebase-resolver
+        agent can handle it on the next cycle.
+        """
         import subprocess
 
         git_cmd = ["git"]
@@ -679,44 +685,48 @@ class Orchestrator:
             self._probe.merge_attempted(
                 task_id=task_id,
                 branch=branch,
-                spec_ref="",
+                spec_ref=spec_ref,
                 outcome="merged",
                 attempt=0,
                 cycle=self._current_cycle,
             )
             logger.info("Local merge of %s into base branch", task_id)
         except subprocess.CalledProcessError:
-            logger.warning("Local merge conflict for task %s, marking NEEDS_REBASE", task_id)
             subprocess.run([*git_cmd, "merge", "--abort"], capture_output=True, check=False)
-            self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
-            looping_back = self._rebase_attempts[task_id] >= self._max_rebase_attempts
-            self._probe.rebase_conflict(
-                task_id=task_id,
-                branch=branch,
-                attempt=self._rebase_attempts[task_id],
-                max_attempts=self._max_rebase_attempts,
-                looping_back=looping_back,
-                cycle=self._current_cycle,
+            self._handle_local_merge_conflict(task_id, branch, git_cmd)
+
+    def _handle_local_merge_conflict(self, task_id: str, branch: str, git_cmd: list[str]) -> None:
+        """Handle a local merge conflict — increment rebase counter or loop back."""
+        logger.warning("Local merge conflict for task %s, marking NEEDS_REBASE", task_id)
+        self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
+        looping_back = self._rebase_attempts[task_id] >= self._max_rebase_attempts
+        self._probe.rebase_conflict(
+            task_id=task_id,
+            branch=branch,
+            attempt=self._rebase_attempts[task_id],
+            max_attempts=self._max_rebase_attempts,
+            looping_back=looping_back,
+            cycle=self._current_cycle,
+        )
+        if looping_back:
+            logger.warning(
+                "Task %s exceeded max_rebase_attempts (%d), looping back",
+                task_id,
+                self._max_rebase_attempts,
             )
-            if looping_back:
-                logger.warning(
-                    "Task %s exceeded max_rebase_attempts (%d), looping back",
-                    task_id,
-                    self._max_rebase_attempts,
-                )
-                self._rebase_attempts.pop(task_id, None)
-                task = self._state.get_task(task_id)
-                self._state.store_findings(
-                    task_id, f"Merge conflict after {self._max_rebase_attempts} attempts"
-                )
-                self._state.transition_task(
-                    task_id,
-                    TaskStatus.IN_PROGRESS,
-                    phase=Phase("implementer"),
-                    round=task.round + 1,
-                )
-                return
-            self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
+            self._rebase_attempts.pop(task_id, None)
+            task = self._state.get_task(task_id)
+            self._state.store_findings(
+                task_id, f"Merge conflict after {self._max_rebase_attempts} attempts"
+            )
+            self._state.transition_task(
+                task_id,
+                TaskStatus.IN_PROGRESS,
+                phase=Phase("implementer"),
+                round=task.round + 1,
+            )
+            return
+        self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
 
     def _delete_local_branch(self, branch: str) -> None:
         """Delete a local branch after merge (best-effort)."""

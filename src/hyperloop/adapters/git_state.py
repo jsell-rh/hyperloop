@@ -234,9 +234,18 @@ class GitStateStore:
         orchestrator bookkeeping (task status transitions, findings), not
         code changes — running linters and tests on them is incorrect and
         can cause infinite recursion when pre-commit hooks include pytest.
+
+        No-ops gracefully when there is nothing to commit (e.g. after a
+        serial agent that already committed its own changes).
         """
+        import contextlib
+
         self._git("add", "-A")
-        self._git("commit", "--no-verify", "-m", message)
+        with contextlib.suppress(subprocess.CalledProcessError):
+            # Nothing to commit → git returns exit code 1. This is normal
+            # after serial agents (process-improver, PM) that commit their
+            # own changes before the orchestrator's cycle-update commit.
+            self._git("commit", "--no-verify", "-m", message)
 
 
 # ---------------------------------------------------------------------------

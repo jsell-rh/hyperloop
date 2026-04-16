@@ -254,7 +254,7 @@ class TestSingleTaskCompletesE2E:
             runtime=runtime,
             process=E2E_PIPELINE,
             max_workers=2,
-            max_rounds=10,
+            max_task_rounds=10,
             poll_interval=0,
         )
 
@@ -322,7 +322,7 @@ fi
             runtime=runtime,
             process=E2E_PIPELINE,
             max_workers=2,
-            max_rounds=10,
+            max_task_rounds=10,
             poll_interval=0,
         )
 
@@ -364,7 +364,7 @@ class TestTwoTasksRunInParallelE2E:
             runtime=runtime,
             process=E2E_PIPELINE,
             max_workers=4,
-            max_rounds=10,
+            max_task_rounds=10,
             poll_interval=0,
         )
 
@@ -412,7 +412,7 @@ class TestLocalMergeLandsCodeOnBaseBranch:
             runtime=runtime,
             process=E2E_MERGE_PIPELINE,
             max_workers=2,
-            max_rounds=10,
+            max_task_rounds=10,
             repo_path=str(repo),
             poll_interval=0,
         )
@@ -487,7 +487,7 @@ class TestPRFlowWithFakePRManager:
             runtime=runtime,
             process=E2E_MERGE_PIPELINE,
             max_workers=2,
-            max_rounds=10,
+            max_task_rounds=10,
             pr_manager=pr_manager,
             poll_interval=0,
         )
@@ -563,7 +563,7 @@ class TestGateBlocksUntilLgtm:
             runtime=runtime,
             process=E2E_GATE_PIPELINE,
             max_workers=2,
-            max_rounds=10,
+            max_task_rounds=10,
             pr_manager=pr_manager,
             poll_interval=0,
         )

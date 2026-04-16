@@ -73,7 +73,7 @@ def _make_orchestrator(
     runtime: InMemoryRuntime,
     process: Process = DEFAULT_PROCESS,
     max_workers: int = 6,
-    max_rounds: int = 50,
+    max_task_rounds: int = 50,
     pr_manager: FakePRManager | None = None,
     composer: PromptComposer | None = None,
     poll_interval: float = 0,
@@ -85,7 +85,7 @@ def _make_orchestrator(
         runtime=runtime,
         process=process,
         max_workers=max_workers,
-        max_rounds=max_rounds,
+        max_task_rounds=max_task_rounds,
         pr_manager=pr_manager,
         composer=composer,
         poll_interval=poll_interval,
@@ -210,15 +210,15 @@ class TestFailedVerificationLoopsBack:
 
 
 class TestMaxRoundsHalts:
-    """Task hits max_rounds, status -> failed, loop halts."""
+    """Task hits max_task_rounds, status -> failed, loop halts."""
 
-    def test_max_rounds_transitions_to_failed(self) -> None:
+    def test_max_task_rounds_transitions_to_failed(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        # Task already at round max_rounds - 1, one more fail will exceed
+        # Task already at round max_task_rounds - 1, one more fail will exceed
         state.add_task(_task(status=TaskStatus.IN_PROGRESS, round=2, phase=Phase("implementer")))
 
-        orch = _make_orchestrator(state, runtime, max_rounds=3)
+        orch = _make_orchestrator(state, runtime, max_task_rounds=3)
 
         # Cycle 1: should spawn implementer (round 2, max is 3)
         orch.run_cycle()
@@ -228,7 +228,7 @@ class TestMaxRoundsHalts:
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
 
-        # Verifier fails -> round becomes 3 == max_rounds
+        # Verifier fails -> round becomes 3 == max_task_rounds
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", FAIL_RESULT)
         orch.run_cycle()
@@ -236,13 +236,13 @@ class TestMaxRoundsHalts:
         task = state.get_task("task-001")
         assert task.status == TaskStatus.FAILED
 
-    def test_run_loop_halts_on_max_rounds(self) -> None:
-        """run_loop returns a halt reason when max_rounds is hit via step-by-step."""
+    def test_run_loop_halts_on_max_task_rounds(self) -> None:
+        """run_loop returns a halt reason when max_task_rounds is hit via step-by-step."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task(round=2))
 
-        orch = _make_orchestrator(state, runtime, max_rounds=3)
+        orch = _make_orchestrator(state, runtime, max_task_rounds=3)
 
         # Cycle 1: spawn implementer
         orch.run_cycle()
@@ -252,13 +252,13 @@ class TestMaxRoundsHalts:
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
 
-        # Verifier fails -> round becomes 3 == max_rounds -> FAILED
+        # Verifier fails -> round becomes 3 == max_task_rounds -> FAILED
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", FAIL_RESULT)
         reason = orch.run_cycle()
 
         assert reason is not None
-        assert "max_rounds" in reason.lower()
+        assert "max_task_rounds" in reason.lower()
 
 
 class TestMultipleTasksInParallel:

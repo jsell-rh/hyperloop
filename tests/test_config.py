@@ -36,7 +36,7 @@ merge:
   delete_branch: false
 
 poll_interval: 60
-max_rounds: 100
+max_task_rounds: 100
 max_rebase_attempts: 5
 """
         )
@@ -53,7 +53,7 @@ max_rebase_attempts: 5
         assert cfg.merge_strategy == "merge"
         assert cfg.delete_branch is False
         assert cfg.poll_interval == 60
-        assert cfg.max_rounds == 100
+        assert cfg.max_task_rounds == 100
         assert cfg.max_rebase_attempts == 5
 
 
@@ -73,7 +73,8 @@ class TestLoadConfigDefaults:
         assert cfg.merge_strategy == "squash"
         assert cfg.delete_branch is True
         assert cfg.poll_interval == 30
-        assert cfg.max_rounds == 50
+        assert cfg.max_task_rounds == 50
+        assert cfg.max_cycles == 200
         assert cfg.max_rebase_attempts == 3
 
     def test_all_defaults_when_file_not_found(self, tmp_path: Path) -> None:
@@ -148,7 +149,7 @@ runtime:
         config_file.write_text(
             """\
 poll_interval: 45
-max_rounds: 20
+max_task_rounds: 20
 max_rebase_attempts: 1
 """
         )
@@ -156,7 +157,7 @@ max_rebase_attempts: 1
         cfg = load_config(config_file)
 
         assert cfg.poll_interval == 45
-        assert cfg.max_rounds == 20
+        assert cfg.max_task_rounds == 20
         assert cfg.max_rebase_attempts == 1
 
 

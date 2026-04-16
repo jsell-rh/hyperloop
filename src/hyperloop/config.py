@@ -58,7 +58,8 @@ class Config:
     merge_strategy: str  # default: "squash"
     delete_branch: bool  # default: True
     poll_interval: int  # default: 30
-    max_rounds: int  # default: 50
+    max_task_rounds: int  # default: 50
+    max_cycles: int  # default: 200
     max_rebase_attempts: int  # default: 3
     observability: ObservabilityConfig = field(
         default_factory=lambda: ObservabilityConfig(
@@ -81,7 +82,8 @@ def _defaults() -> dict[str, object]:
         "merge_strategy": "squash",
         "delete_branch": True,
         "poll_interval": 30,
-        "max_rounds": 50,
+        "max_task_rounds": 50,
+        "max_cycles": 200,
         "max_rebase_attempts": 3,
         "log_format": "console",
         "log_level": "info",
@@ -96,7 +98,14 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
     flat: dict[str, object] = {}
 
     # Top-level scalars
-    for key in ("overlay", "base_ref", "poll_interval", "max_rounds", "max_rebase_attempts"):
+    for key in (
+        "overlay",
+        "base_ref",
+        "poll_interval",
+        "max_task_rounds",
+        "max_cycles",
+        "max_rebase_attempts",
+    ):
         if key in raw:
             flat[key] = raw[key]
 
@@ -229,7 +238,8 @@ def load_config(
         merge_strategy=str(values["merge_strategy"]),
         delete_branch=bool(values["delete_branch"]),
         poll_interval=int(values["poll_interval"]),  # type: ignore[arg-type]
-        max_rounds=int(values["max_rounds"]),  # type: ignore[arg-type]
+        max_task_rounds=int(values["max_task_rounds"]),  # type: ignore[arg-type]
+        max_cycles=int(values["max_cycles"]),  # type: ignore[arg-type]
         max_rebase_attempts=int(values["max_rebase_attempts"]),  # type: ignore[arg-type]
         observability=obs_cfg,
     )
