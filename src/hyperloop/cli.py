@@ -332,14 +332,14 @@ def run(
 
     state = GitStateStore(repo_path)
 
-    if cfg.runtime == "tmux":
-        from hyperloop.adapters.runtime import TmuxRuntime
-
-        runtime = TmuxRuntime(repo_path=str(repo_path))
-    else:
+    if cfg.runtime == "subprocess":
         from hyperloop.adapters.runtime import LocalRuntime
 
         runtime = LocalRuntime(repo_path=str(repo_path))
+    else:
+        from hyperloop.adapters.runtime import AgentSdkRuntime
+
+        runtime = AgentSdkRuntime(repo_path=str(repo_path))
 
     pr_manager = None
     if cfg.repo is not None:
