@@ -35,3 +35,10 @@ class Runtime(Protocol):
     def find_orphan(self, task_id: str, branch: str) -> WorkerHandle | None:
         """Find a worker left running from a previous orchestrator session (crash recovery)."""
         ...
+
+    def run_serial(self, role: str, prompt: str) -> bool:
+        """Run an agent serially on trunk. Blocks until complete.
+
+        Used for PM intake and process-improver. Returns True on success.
+        """
+        ...

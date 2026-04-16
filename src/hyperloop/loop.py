@@ -49,7 +49,6 @@ if TYPE_CHECKING:
     from hyperloop.ports.pr import PRPort
     from hyperloop.ports.probe import OrchestratorProbe
     from hyperloop.ports.runtime import Runtime
-    from hyperloop.ports.serial import SerialRunner
     from hyperloop.ports.state import StateStore
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger()
@@ -85,7 +84,6 @@ class Orchestrator:
         repo_path: str | None = None,
         poll_interval: float = 30.0,
         probe: OrchestratorProbe | None = None,
-        serial_runner: SerialRunner | None = None,
         max_rebase_attempts: int = 3,
         auto_merge: bool = True,
     ) -> None:
@@ -99,7 +97,6 @@ class Orchestrator:
         self._repo_path = repo_path
         self._poll_interval = poll_interval
         self._probe = probe or NullProbe()
-        self._serial_runner = serial_runner
         self._max_rebase_attempts = max_rebase_attempts
         self._auto_merge = auto_merge
 
@@ -805,9 +802,9 @@ class Orchestrator:
         return "\n\n".join(sections)
 
     def _run_intake(self) -> None:
-        """Run PM intake if there are unprocessed specs and a serial runner + composer."""
-        if self._serial_runner is None or self._composer is None:
-            logger.debug("intake: no serial_runner or composer — skipping")
+        """Run PM intake if there are unprocessed specs."""
+        if self._composer is None:
+            logger.debug("intake: no composer — skipping")
             return
 
         unprocessed = self._unprocessed_specs()
@@ -822,7 +819,7 @@ class Orchestrator:
 
         task_count_before = len(self._state.get_world().tasks)
         intake_start = time.monotonic()
-        success = self._serial_runner.run("pm", prompt)
+        success = self._runtime.run_serial("pm", prompt)
 
         # Count how many tasks were created by comparing before/after
         task_count_after = len(self._state.get_world().tasks)
@@ -836,15 +833,10 @@ class Orchestrator:
             duration_s=time.monotonic() - intake_start,
         )
 
-        if success:
-            logger.info("intake: PM completed successfully")
-        else:
-            logger.warning("intake: PM agent failed")
-
     def _run_process_improver(self, reaped_results: dict[str, WorkerResult]) -> None:
         """Run process-improver with findings from failed results this cycle."""
-        if self._serial_runner is None or self._composer is None:
-            logger.info("process-improver: no serial_runner or composer — skipping")
+        if self._composer is None:
+            logger.info("process-improver: no composer — skipping")
             return
 
         findings_text = self._collect_cycle_findings(reaped_results)
@@ -864,7 +856,7 @@ class Orchestrator:
         )
 
         improver_start = time.monotonic()
-        success = self._serial_runner.run("process-improver", prompt)
+        success = self._runtime.run_serial("process-improver", prompt)
         self._probe.process_improver_ran(
             failed_task_ids=failed_ids,
             success=success,
@@ -872,12 +864,9 @@ class Orchestrator:
             duration_s=time.monotonic() - improver_start,
         )
         if success:
-            logger.info("process-improver: completed successfully")
             # Re-resolve templates so agents spawned after this point
             # see updated guidelines (mechanical guarantee from spec).
             self._composer.rebuild()
-        else:
-            logger.warning("process-improver: agent failed")
 
     # -----------------------------------------------------------------------
     # World building

@@ -284,3 +284,127 @@ class TmuxRuntime:
             ["tmux", "kill-window", "-t", f"{self._session}:{task_id}"],
             capture_output=True,
         )
+
+    def run_serial(self, role: str, prompt: str) -> bool:
+        """Run a serial agent in a tmux window on trunk. Blocks until complete.
+
+        Creates a window named after the role (e.g. ``pm``, ``process-improver``),
+        writes the prompt to a temp file in the repo, sends the command, and polls
+        until the pane process exits.
+        """
+        import time
+
+        self._ensure_session()
+
+        # Write prompt to the repo (serial agents run on trunk)
+        prompt_path = os.path.join(self._repo_path, f".{role}-prompt.md")
+        Path(prompt_path).write_text(prompt)
+
+        window_name = role
+
+        # Kill any stale window with the same name
+        self._kill_window(window_name)
+
+        # Create a tmux window for this serial agent
+        subprocess.run(
+            [
+                "tmux",
+                "new-window",
+                "-t",
+                self._session,
+                "-n",
+                window_name,
+                "-c",
+                self._repo_path,
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+        # Set remain-on-exit so the user can see the final output
+        subprocess.run(
+            [
+                "tmux",
+                "set-option",
+                "-w",
+                "-t",
+                f"{self._session}:{window_name}",
+                "remain-on-exit",
+                "on",
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+        # Send the command
+        subprocess.run(
+            [
+                "tmux",
+                "send-keys",
+                "-t",
+                f"{self._session}:{window_name}",
+                f"{self._command} < .{role}-prompt.md",
+                "Enter",
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+        attach_cmd = f"tmux attach -t {self._session}:{window_name}"
+        log.info("tmux_serial_started", role=role, attach=attach_cmd)
+
+        # Poll until the pane process exits
+        timeout = 600.0
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            result = subprocess.run(
+                [
+                    "tmux",
+                    "list-panes",
+                    "-t",
+                    f"{self._session}:{window_name}",
+                    "-F",
+                    "#{pane_dead}",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                # Window gone entirely
+                log.warning("tmux_serial_window_lost", role=role)
+                return False
+            pane_dead = result.stdout.strip()
+            if pane_dead == "1":
+                break
+            time.sleep(2)
+        else:
+            log.warning("tmux_serial_timeout", role=role, timeout_s=timeout)
+            self._kill_window(window_name)
+            return False
+
+        # Check exit code via pane_dead_status
+        result = subprocess.run(
+            [
+                "tmux",
+                "list-panes",
+                "-t",
+                f"{self._session}:{window_name}",
+                "-F",
+                "#{pane_dead_status}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        exit_code = result.stdout.strip()
+
+        # Clean up
+        self._kill_window(window_name)
+        # Remove the prompt file
+        Path(prompt_path).unlink(missing_ok=True)
+
+        success = exit_code == "0"
+        if success:
+            log.info("tmux_serial_completed", role=role)
+        else:
+            log.warning("tmux_serial_failed", role=role, exit_code=exit_code)
+        return success

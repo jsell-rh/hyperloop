@@ -2,7 +2,7 @@
 
 Tests the detection logic (which specs need tasks, which findings to collect)
 and the wiring (that serial agents are invoked with correct prompts).
-Uses InMemoryStateStore, InMemoryRuntime, and FakeSerialRunner. No mocks.
+Uses InMemoryStateStore and InMemoryRuntime. No mocks.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from hyperloop.domain.model import (
 )
 from hyperloop.loop import Orchestrator
 from tests.fakes.runtime import InMemoryRuntime
-from tests.fakes.serial import FakeSerialRunner
 from tests.fakes.state import InMemoryStateStore
 
 # ---------------------------------------------------------------------------
@@ -75,7 +74,6 @@ def _task(
 def _make_orchestrator(
     state: InMemoryStateStore,
     runtime: InMemoryRuntime,
-    serial_runner: FakeSerialRunner | None = None,
     composer: PromptComposer | None = None,
     max_task_rounds: int = 50,
 ) -> Orchestrator:
@@ -85,7 +83,6 @@ def _make_orchestrator(
         process=DEFAULT_PROCESS,
         max_workers=6,
         max_task_rounds=max_task_rounds,
-        serial_runner=serial_runner,
         composer=composer,
     )
 
@@ -222,78 +219,62 @@ class TestCollectCycleFindings:
 
 
 class TestPMIntake:
-    """PM intake runs when unprocessed specs exist and serial_runner is configured."""
+    """PM intake runs when unprocessed specs exist and composer is configured."""
 
     def test_intake_runs_pm_when_unprocessed_specs_exist(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        serial = FakeSerialRunner()
         state.set_file("specs/widget.md", "Widget spec content")
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
-        orch = _make_orchestrator(state, runtime, serial_runner=serial, composer=composer)
+        orch = _make_orchestrator(state, runtime, composer=composer)
 
         orch.run_cycle()
 
-        assert len(serial.runs) == 1
-        assert serial.runs[0].role == "pm"
-        assert "specs/widget.md" in serial.runs[0].prompt
+        pm_runs = [r for r in runtime.serial_runs if r.role == "pm"]
+        assert len(pm_runs) == 1
+        assert "specs/widget.md" in pm_runs[0].prompt
 
     def test_intake_skips_when_all_specs_covered(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        serial = FakeSerialRunner()
         state.set_file("specs/widget.md", "Widget spec content")
         state.add_task(_task(spec_ref="specs/widget.md"))
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
-        orch = _make_orchestrator(state, runtime, serial_runner=serial, composer=composer)
+        orch = _make_orchestrator(state, runtime, composer=composer)
 
         orch.run_cycle()
 
-        # No PM run because all specs are covered
-        pm_runs = [r for r in serial.runs if r.role == "pm"]
+        pm_runs = [r for r in runtime.serial_runs if r.role == "pm"]
         assert len(pm_runs) == 0
-
-    def test_intake_skips_when_no_serial_runner(self) -> None:
-        """Without a serial_runner, intake is a no-op (backward compat)."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        state.set_file("specs/widget.md", "Widget spec content")
-
-        orch = _make_orchestrator(state, runtime, serial_runner=None)
-
-        # Should not crash
-        orch.run_cycle()
 
     def test_intake_skips_when_no_composer(self) -> None:
         """Without a composer, intake is a no-op."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        serial = FakeSerialRunner()
         state.set_file("specs/widget.md", "Widget spec content")
 
-        orch = _make_orchestrator(state, runtime, serial_runner=serial, composer=None)
+        orch = _make_orchestrator(state, runtime, composer=None)
 
         orch.run_cycle()
 
-        assert len(serial.runs) == 0
+        assert len(runtime.serial_runs) == 0
 
     def test_intake_lists_all_unprocessed_specs_in_prompt(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        serial = FakeSerialRunner()
         state.set_file("specs/api.md", "API spec")
         state.set_file("specs/auth.md", "Auth spec")
         state.set_file("specs/widget.md", "Widget spec")
         state.add_task(_task(spec_ref="specs/widget.md"))
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
-        orch = _make_orchestrator(state, runtime, serial_runner=serial, composer=composer)
+        orch = _make_orchestrator(state, runtime, composer=composer)
 
         orch.run_cycle()
 
-        pm_runs = [r for r in serial.runs if r.role == "pm"]
+        pm_runs = [r for r in runtime.serial_runs if r.role == "pm"]
         assert len(pm_runs) == 1
         prompt = pm_runs[0].prompt
         assert "specs/api.md" in prompt
@@ -312,14 +293,11 @@ class TestProcessImprover:
     def test_process_improver_runs_on_failure(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        serial = FakeSerialRunner()
         state.add_task(_task())
         state.set_file("specs/widget.md", "Widget spec")
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
-        orch = _make_orchestrator(
-            state, runtime, serial_runner=serial, composer=composer, max_task_rounds=50
-        )
+        orch = _make_orchestrator(state, runtime, composer=composer, max_task_rounds=50)
 
         # Cycle 1: spawn implementer
         orch.run_cycle()
@@ -334,19 +312,18 @@ class TestProcessImprover:
         runtime.set_result("task-001", FAIL_RESULT)
         orch.run_cycle()
 
-        pi_runs = [r for r in serial.runs if r.role == "process-improver"]
+        pi_runs = [r for r in runtime.serial_runs if r.role == "process-improver"]
         assert len(pi_runs) == 1
         assert "missing null check" in pi_runs[0].prompt
 
     def test_process_improver_skips_on_all_pass(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        serial = FakeSerialRunner()
         state.add_task(_task())
         state.set_file("specs/widget.md", "Widget spec")
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
-        orch = _make_orchestrator(state, runtime, serial_runner=serial, composer=composer)
+        orch = _make_orchestrator(state, runtime, composer=composer)
 
         # Cycle 1: spawn implementer
         orch.run_cycle()
@@ -361,16 +338,16 @@ class TestProcessImprover:
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
 
-        pi_runs = [r for r in serial.runs if r.role == "process-improver"]
+        pi_runs = [r for r in runtime.serial_runs if r.role == "process-improver"]
         assert len(pi_runs) == 0
 
-    def test_process_improver_skips_when_no_serial_runner(self) -> None:
-        """Without a serial_runner, process-improver is a no-op."""
+    def test_process_improver_skips_when_no_composer(self) -> None:
+        """Without a composer, process-improver is a no-op."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task())
 
-        orch = _make_orchestrator(state, runtime, serial_runner=None)
+        orch = _make_orchestrator(state, runtime, composer=None)
 
         # Cycle 1: spawn implementer
         orch.run_cycle()
@@ -380,47 +357,47 @@ class TestProcessImprover:
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
 
-        # Verifier fails -> should not crash without serial_runner
+        # Verifier fails -> should not crash without composer
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", FAIL_RESULT)
         orch.run_cycle()
 
 
 # ---------------------------------------------------------------------------
-# FakeSerialRunner contract
+# InMemoryRuntime.run_serial contract
 # ---------------------------------------------------------------------------
 
 
-class TestFakeSerialRunner:
-    """FakeSerialRunner records invocations and supports callbacks."""
+class TestInMemoryRuntimeSerial:
+    """InMemoryRuntime.run_serial records invocations and supports callbacks."""
 
     def test_records_runs(self) -> None:
-        runner = FakeSerialRunner()
-        runner.run("pm", "prompt text")
+        runtime = InMemoryRuntime()
+        runtime.run_serial("pm", "prompt text")
 
-        assert len(runner.runs) == 1
-        assert runner.runs[0].role == "pm"
-        assert runner.runs[0].prompt == "prompt text"
+        assert len(runtime.serial_runs) == 1
+        assert runtime.serial_runs[0].role == "pm"
+        assert runtime.serial_runs[0].prompt == "prompt text"
 
     def test_default_success(self) -> None:
-        runner = FakeSerialRunner()
-        assert runner.run("pm", "prompt") is True
+        runtime = InMemoryRuntime()
+        assert runtime.run_serial("pm", "prompt") is True
 
     def test_configurable_failure(self) -> None:
-        runner = FakeSerialRunner()
-        runner.set_default_success(False)
-        assert runner.run("pm", "prompt") is False
+        runtime = InMemoryRuntime()
+        runtime.set_serial_default_success(False)
+        assert runtime.run_serial("pm", "prompt") is False
 
     def test_callback_for_role(self) -> None:
-        runner = FakeSerialRunner()
+        runtime = InMemoryRuntime()
         callback_called_with: list[str] = []
 
         def callback(prompt: str) -> bool:
             callback_called_with.append(prompt)
             return True
 
-        runner.set_callback("pm", callback)
-        runner.run("pm", "my prompt")
+        runtime.set_serial_callback("pm", callback)
+        runtime.run_serial("pm", "my prompt")
 
         assert callback_called_with == ["my prompt"]
 

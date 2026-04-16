@@ -11,6 +11,8 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import structlog
+
 from hyperloop.adapters.runtime._worktree import (
     clean_git_env,
     cleanup_worktree,
@@ -21,6 +23,8 @@ from hyperloop.adapters.runtime._worktree import (
     read_result,
 )
 from hyperloop.domain.model import WorkerHandle, WorkerResult
+
+logger: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 if TYPE_CHECKING:
     from hyperloop.ports.runtime import WorkerPollStatus
@@ -170,3 +174,29 @@ class LocalRuntime:
             agent_id="orphan",
             session_id=None,
         )
+
+    def run_serial(self, role: str, prompt: str) -> bool:
+        """Run a serial agent as a subprocess on trunk. Blocks until complete."""
+        logger.info("Running serial agent: %s", role)
+        try:
+            result = subprocess.run(
+                self._command.split(),
+                input=prompt,
+                capture_output=True,
+                text=True,
+                cwd=self._repo_path,
+                timeout=600,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "Serial agent %s failed (exit %d): %s",
+                    role,
+                    result.returncode,
+                    result.stderr[:500],
+                )
+                return False
+            logger.info("Serial agent %s completed successfully", role)
+            return True
+        except subprocess.TimeoutExpired:
+            logger.warning("Serial agent %s timed out after 600s", role)
+            return False

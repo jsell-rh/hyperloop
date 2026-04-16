@@ -311,7 +311,6 @@ def run(
         )
 
     # 5. Construct runtime and state store, run loop
-    from hyperloop.adapters.serial import SubprocessSerialRunner
     from hyperloop.adapters.state import GitStateStore
     from hyperloop.domain.model import ActionStep, LoopStep, Process, RoleStep
     from hyperloop.loop import Orchestrator
@@ -341,8 +340,6 @@ def run(
         from hyperloop.adapters.runtime import LocalRuntime
 
         runtime = LocalRuntime(repo_path=str(repo_path))
-
-    serial_runner = SubprocessSerialRunner(repo_path=str(repo_path))
 
     pr_manager = None
     if cfg.repo is not None:
@@ -375,7 +372,6 @@ def run(
         pr_manager=pr_manager,
         composer=composer,
         repo_path=str(repo_path),
-        serial_runner=serial_runner,
         poll_interval=cfg.poll_interval,
         probe=probe,
         max_rebase_attempts=cfg.max_rebase_attempts,

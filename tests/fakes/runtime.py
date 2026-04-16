@@ -5,12 +5,23 @@ A first-class fake, tested via contract tests, reusable across all tests.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from hyperloop.domain.model import WorkerHandle, WorkerResult
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from hyperloop.ports.runtime import WorkerPollStatus
+
+
+@dataclass(frozen=True)
+class SerialRunRecord:
+    """Record of a serial agent invocation."""
+
+    role: str
+    prompt: str
 
 
 class InMemoryRuntime:
@@ -23,6 +34,9 @@ class InMemoryRuntime:
         self._reaped: set[str] = set()
         self._cancelled: set[str] = set()
         self._spawn_counter: int = 0
+        self.serial_runs: list[SerialRunRecord] = []
+        self._serial_callbacks: dict[str, Callable[[str], bool]] = {}
+        self._serial_default_success: bool = True
 
     # -- Public accessors (for test assertions) -------------------------------
 
@@ -45,6 +59,14 @@ class InMemoryRuntime:
     def set_poll_status(self, task_id: str, status: WorkerPollStatus) -> None:
         """Pre-configure what poll() returns for a task."""
         self._poll_statuses[task_id] = status
+
+    def set_serial_callback(self, role: str, callback: Callable[[str], bool]) -> None:
+        """Register a callback for run_serial. Called with the prompt, returns success."""
+        self._serial_callbacks[role] = callback
+
+    def set_serial_default_success(self, success: bool) -> None:
+        """Set the default return value for run_serial when no callback is registered."""
+        self._serial_default_success = success
 
     # -- Runtime protocol ---------------------------------------------------
 
@@ -95,3 +117,10 @@ class InMemoryRuntime:
         if task_id in self._cancelled:
             return None
         return self._handles[task_id]
+
+    def run_serial(self, role: str, prompt: str) -> bool:
+        """Record the invocation and optionally execute a callback."""
+        self.serial_runs.append(SerialRunRecord(role=role, prompt=prompt))
+        if role in self._serial_callbacks:
+            return self._serial_callbacks[role](prompt)
+        return self._serial_default_success
