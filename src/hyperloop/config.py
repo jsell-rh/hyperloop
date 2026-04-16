@@ -51,7 +51,6 @@ class Config:
     base_branch: str  # default: "main"
     overlay: str | None  # path to kustomization dir (default: .hyperloop/agents/)
     base_ref: str  # kustomize remote base ref, used by `hyperloop init`
-    runtime: str  # "local" (v1 only)
     max_workers: int  # default: 6
     auto_merge: bool  # default: True
     merge_strategy: str  # default: "squash"
@@ -74,7 +73,6 @@ def _defaults() -> dict[str, object]:
         "base_branch": "main",
         "overlay": None,
         "base_ref": os.environ.get("HYPERLOOP_BASE_REF", DEFAULT_BASE_REF),
-        "runtime": "local",
         "max_workers": 6,
         "auto_merge": True,
         "merge_strategy": "squash",
@@ -116,11 +114,8 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
             flat["base_branch"] = target["base_branch"]
     # runtime section
     runtime = raw.get("runtime")
-    if isinstance(runtime, dict):
-        if "default" in runtime:
-            flat["runtime"] = runtime["default"]
-        if "max_workers" in runtime:
-            flat["max_workers"] = runtime["max_workers"]
+    if isinstance(runtime, dict) and "max_workers" in runtime:
+        flat["max_workers"] = runtime["max_workers"]
 
     # merge section
     merge = raw.get("merge")
@@ -226,7 +221,6 @@ def load_config(
         base_branch=str(values["base_branch"]),
         overlay=values["overlay"] if values["overlay"] is not None else None,  # type: ignore[arg-type]
         base_ref=str(values["base_ref"]),
-        runtime=str(values["runtime"]),
         max_workers=int(values["max_workers"]),  # type: ignore[arg-type]
         auto_merge=bool(values["auto_merge"]),
         merge_strategy=str(values["merge_strategy"]),

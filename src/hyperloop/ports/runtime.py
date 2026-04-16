@@ -1,6 +1,6 @@
 """Runtime port — interface for managing worker agent sessions.
 
-Implementations: LocalRuntime (worktrees + CLI), AmbientRuntime (platform API).
+Implementations: AgentSdkRuntime (worktrees + Claude Agent SDK).
 """
 
 from __future__ import annotations

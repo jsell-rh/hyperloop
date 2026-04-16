@@ -14,10 +14,6 @@ prompt: |
   - Resolve all conflict markers. Preserve the intent of both sides.
   - Run the project's test suite to confirm the resolution is correct.
   - Push the resolved branch.
-  - When done, write .worker-result.json to the repo root:
-      {"verdict": "pass", "findings": 0, "detail": "conflicts resolved"}
-  - If you cannot resolve cleanly, write:
-      {"verdict": "fail", "findings": <count>, "detail": "what could not be resolved"}
   - Your scope is narrow: resolve conflicts and verify tests pass. Do not implement new work.
   - You do NOT set task status. The orchestrator handles that.
 

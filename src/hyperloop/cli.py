@@ -62,7 +62,6 @@ def _config_table(cfg: Config) -> Table:
     table.add_row("base_branch", cfg.base_branch)
     table.add_row("overlay", cfg.overlay or "[dim].hyperloop/agents/[/dim]")
     table.add_row("base_ref", cfg.base_ref)
-    table.add_row("runtime", cfg.runtime)
     table.add_row("max_workers", str(cfg.max_workers))
     table.add_row("auto_merge", str(cfg.auto_merge))
     table.add_row("merge_strategy", cfg.merge_strategy)
@@ -332,14 +331,9 @@ def run(
 
     state = GitStateStore(repo_path)
 
-    if cfg.runtime == "subprocess":
-        from hyperloop.adapters.runtime import LocalRuntime
+    from hyperloop.adapters.runtime import AgentSdkRuntime
 
-        runtime = LocalRuntime(repo_path=str(repo_path))
-    else:
-        from hyperloop.adapters.runtime import AgentSdkRuntime
-
-        runtime = AgentSdkRuntime(repo_path=str(repo_path))
+    runtime = AgentSdkRuntime(repo_path=str(repo_path))
 
     pr_manager = None
     if cfg.repo is not None:

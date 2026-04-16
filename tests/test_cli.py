@@ -88,7 +88,6 @@ target:
 
         assert result.exit_code == 0
         assert "main" in result.output
-        assert "local" in result.output
 
 
 class TestRunRequiresRepo:

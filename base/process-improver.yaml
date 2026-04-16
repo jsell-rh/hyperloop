@@ -52,8 +52,6 @@ prompt: |
   - Only add rules/checks that address observed patterns. Do not speculate.
   - Keep overlay rules concise. One sentence per rule. Workers read these at every spawn.
   - Prefer overlays for behavioral guidance, scripts for mechanical checks.
-  - When done, write .worker-result.json to the repo root:
-      {"verdict": "pass", "findings": 0, "detail": "summary of process changes"}
   - Commit changes with conventional commit messages.
   - Include these trailers in every commit:
       Spec-Ref: .hyperloop/agents/process

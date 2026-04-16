@@ -3,11 +3,10 @@
 Uses ``claude_agent_sdk.query()`` to run agents in-process.  Each parallel
 worker gets its own worktree; serial agents run on trunk.  The SDK handles
 tool execution, context management, and clean exit — no subprocess polling
-or result-file conventions needed for completion detection.
+or result-file conventions needed.
 
-Workers still write ``.worker-result.json`` for verdict reporting (the
-agent prompts instruct this).  The SDK's natural completion replaces the
-old process-exit polling.
+Completion and verdict are derived from the SDK's ``ResultMessage``:
+``is_error`` maps to ``Verdict.ERROR``, otherwise ``Verdict.PASS``.
 """
 
 from __future__ import annotations
@@ -27,7 +26,6 @@ from hyperloop.adapters.runtime._worktree import (
     delete_branch,
     ensure_worktrees_gitignored,
     get_worktree_branch,
-    read_result,
 )
 from hyperloop.domain.model import Verdict, WorkerHandle, WorkerResult
 
@@ -120,15 +118,15 @@ class AgentSdkRuntime:
         if worktree_path is None:
             worktree_path = os.path.join(self._worktree_base, task_id)
 
-        # Try reading .worker-result.json (agents write this per protocol)
-        result = read_result(worktree_path)
-
-        # If the agent completed but didn't write a result file, check
-        # whether the SDK returned a result we can use as a fallback
-        if result.verdict == Verdict.ERROR and "not found" in result.detail:
-            future = self._futures.get(task_id)
-            if future is not None and future.done() and future.exception() is None:
-                result = future.result()
+        future = self._futures.get(task_id)
+        if future is not None and future.done() and future.exception() is None:
+            result = future.result()
+        else:
+            result = WorkerResult(
+                verdict=Verdict.ERROR,
+                findings=0,
+                detail="Agent future missing or failed",
+            )
 
         # Clean up
         self._futures.pop(task_id, None)
@@ -221,12 +219,6 @@ class AgentSdkRuntime:
                 result_text = message.result or ""
                 is_error = message.is_error
 
-        # Read .worker-result.json if the agent wrote one
-        file_result = read_result(cwd)
-        if file_result.verdict != Verdict.ERROR or "not found" not in file_result.detail:
-            return file_result
-
-        # Fallback: derive result from SDK completion status
         if is_error:
             return WorkerResult(
                 verdict=Verdict.ERROR,

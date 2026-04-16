@@ -1,8 +1,7 @@
 """Shared worktree helpers for Runtime adapters.
 
-Extracted from LocalRuntime so that both LocalRuntime and TmuxRuntime
-can reuse the same git-worktree, result-reading, and cleanup logic
-without coupling to each other.
+Provides git-worktree creation, cleanup, and branch management logic
+used by AgentSdkRuntime.
 
 All functions are module-level and take ``repo_path`` as a parameter
 instead of referencing ``self``.
@@ -10,13 +9,10 @@ instead of referencing ``self``.
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
 from pathlib import Path
-
-from hyperloop.domain.model import Verdict, WorkerResult
 
 
 def clean_git_env() -> dict[str, str]:
@@ -99,33 +95,6 @@ def create_worktree(repo_path: str, worktree_path: str, branch: str) -> None:
                 capture_output=True,
                 env=env,
             )
-
-
-def read_result(worktree_path: str) -> WorkerResult:
-    """Read and parse .worker-result.json from the worktree."""
-    result_path = os.path.join(worktree_path, ".worker-result.json")
-
-    if not os.path.exists(result_path):
-        return WorkerResult(
-            verdict=Verdict.ERROR,
-            findings=0,
-            detail="Worker result file not found",
-        )
-
-    try:
-        with open(result_path) as f:
-            data = json.load(f)
-        return WorkerResult(
-            verdict=Verdict(data["verdict"]),
-            findings=int(data["findings"]),
-            detail=str(data["detail"]),
-        )
-    except (json.JSONDecodeError, KeyError, ValueError) as exc:
-        return WorkerResult(
-            verdict=Verdict.ERROR,
-            findings=0,
-            detail=f"Failed to parse worker result: {exc}",
-        )
 
 
 def get_worktree_branch(worktree_path: str) -> str | None:

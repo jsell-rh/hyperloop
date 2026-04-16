@@ -44,7 +44,6 @@ max_rebase_attempts: 5
         assert cfg.repo == "acme/widgets"
         assert cfg.base_branch == "develop"
         assert cfg.overlay == ".hyperloop/agents/"
-        assert cfg.runtime == "local"
         assert cfg.max_workers == 4
         assert cfg.auto_merge is False
         assert cfg.merge_strategy == "merge"
@@ -63,7 +62,6 @@ class TestLoadConfigDefaults:
         assert cfg.repo is None
         assert cfg.base_branch == "main"
         assert cfg.overlay is None
-        assert cfg.runtime == "local"
         assert cfg.max_workers == 6
         assert cfg.auto_merge is True
         assert cfg.merge_strategy == "squash"
@@ -128,7 +126,6 @@ runtime:
         cfg = load_config(config_file)
 
         assert cfg.max_workers == 2
-        assert cfg.runtime == "local"
 
     def test_overlay_only(self, tmp_path: Path) -> None:
         config_file = tmp_path / ".hyperloop.yaml"
