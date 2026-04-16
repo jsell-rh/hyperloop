@@ -137,7 +137,7 @@ def git_repo(tmp_path: Path) -> str:
     """Create a bare-minimum git repo for git operations."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True)
     subprocess.run(
         ["git", "-C", str(repo), "commit", "--allow-empty", "-m", "init"],
         check=True,
@@ -279,7 +279,7 @@ class TestReap:
             "GIT_COMMITTER_NAME": "test",
             "GIT_COMMITTER_EMAIL": "t@t",
         }
-        subprocess.run(["git", "init", str(remote)], check=True, capture_output=True)
+        subprocess.run(["git", "init", "-b", "main", str(remote)], check=True, capture_output=True)
         subprocess.run(
             ["git", "-C", str(remote), "commit", "--allow-empty", "-m", "init"],
             check=True,
@@ -357,7 +357,7 @@ class TestReap:
             "GIT_COMMITTER_NAME": "test",
             "GIT_COMMITTER_EMAIL": "t@t",
         }
-        subprocess.run(["git", "init", str(remote)], check=True, capture_output=True)
+        subprocess.run(["git", "init", "-b", "main", str(remote)], check=True, capture_output=True)
         subprocess.run(
             ["git", "-C", str(remote), "commit", "--allow-empty", "-m", "init"],
             check=True,
@@ -456,7 +456,7 @@ class TestFindOrphan:
         acpctl_path = _write_fake_acpctl(tmp_path / "acpctl_orphan", behaviour)
         repo = tmp_path / "repo"
         repo.mkdir()
-        subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+        subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True)
         subprocess.run(
             ["git", "-C", str(repo), "commit", "--allow-empty", "-m", "init"],
             check=True,
@@ -504,7 +504,9 @@ class TestPushBranch:
             "GIT_COMMITTER_NAME": "test",
             "GIT_COMMITTER_EMAIL": "t@t",
         }
-        subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "init", "-b", "main", "--bare", str(remote)], check=True, capture_output=True
+        )
 
         local = tmp_path / "local"
         subprocess.run(["git", "clone", str(remote), str(local)], check=True, capture_output=True)
