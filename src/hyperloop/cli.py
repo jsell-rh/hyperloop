@@ -120,7 +120,7 @@ def _build_probe(obs_cfg: ObservabilityConfig, repo_path: Path) -> OrchestratorP
     token, cached credentials, or auto-registration).
     """
     from hyperloop.adapters.probe import MultiProbe
-    from hyperloop.adapters.structlog_probe import StructlogProbe
+    from hyperloop.adapters.probe.structlog import StructlogProbe
     from hyperloop.logging import configure_logging
 
     configure_logging(log_format=obs_cfg.log_format, log_level=obs_cfg.log_level)
@@ -128,8 +128,8 @@ def _build_probe(obs_cfg: ObservabilityConfig, repo_path: Path) -> OrchestratorP
     probes: list[OrchestratorProbe] = [StructlogProbe()]
 
     if obs_cfg.matrix is not None:
-        from hyperloop.adapters.matrix_probe import MatrixProbe
-        from hyperloop.adapters.matrix_setup import ensure_matrix_ready
+        from hyperloop.adapters.probe.matrix import MatrixProbe
+        from hyperloop.adapters.probe.matrix_setup import ensure_matrix_ready
 
         access_token, room_id = ensure_matrix_ready(obs_cfg.matrix, repo_path)
         if access_token and room_id:
@@ -311,9 +311,8 @@ def run(
         )
 
     # 5. Construct runtime and state store, run loop
-    from hyperloop.adapters.git_state import GitStateStore
-    from hyperloop.adapters.local import LocalRuntime
     from hyperloop.adapters.serial import SubprocessSerialRunner
+    from hyperloop.adapters.state import GitStateStore
     from hyperloop.domain.model import ActionStep, LoopStep, Process, RoleStep
     from hyperloop.loop import Orchestrator
 
@@ -333,7 +332,16 @@ def run(
     )
 
     state = GitStateStore(repo_path)
-    runtime = LocalRuntime(repo_path=str(repo_path))
+
+    if cfg.runtime == "tmux":
+        from hyperloop.adapters.runtime import TmuxRuntime
+
+        runtime = TmuxRuntime(repo_path=str(repo_path))
+    else:
+        from hyperloop.adapters.runtime import LocalRuntime
+
+        runtime = LocalRuntime(repo_path=str(repo_path))
+
     serial_runner = SubprocessSerialRunner(repo_path=str(repo_path))
 
     pr_manager = None

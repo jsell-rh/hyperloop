@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import structlog.testing
 
-from hyperloop.adapters.structlog_probe import StructlogProbe
+from hyperloop.adapters.probe.structlog import StructlogProbe
 
 
 class TestWorkerReaped:

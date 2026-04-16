@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hyperloop.adapters.git_state import GitStateStore
+from hyperloop.adapters.state import GitStateStore
 from hyperloop.domain.model import Phase, TaskStatus
 
 if TYPE_CHECKING:

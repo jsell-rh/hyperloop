@@ -1,0 +1,187 @@
+"""Shared worktree helpers for Runtime adapters.
+
+Extracted from LocalRuntime so that both LocalRuntime and TmuxRuntime
+can reuse the same git-worktree, result-reading, and cleanup logic
+without coupling to each other.
+
+All functions are module-level and take ``repo_path`` as a parameter
+instead of referencing ``self``.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+from hyperloop.domain.model import Verdict, WorkerResult
+
+
+def clean_git_env() -> dict[str, str]:
+    """Return a copy of the environment with interfering GIT_* variables removed.
+
+    Git sets variables like GIT_INDEX_FILE, GIT_DIR, etc. when running hooks
+    or inside worktrees. These interfere when we spawn new git operations
+    targeting a different repo. Stripping them ensures each git command
+    operates on the repo specified via -C.
+    """
+    env = os.environ.copy()
+    for key in list(env):
+        if key.startswith("GIT_"):
+            del env[key]
+    return env
+
+
+def ensure_worktrees_gitignored(repo_path: str) -> None:
+    """Ensure worktrees/ is in the target repo's .gitignore.
+
+    Without this, ``git add -A`` in the state store's commit() would
+    stage worktree gitlink files, polluting the repo and causing
+    spurious merge conflicts.
+    """
+    repo = Path(repo_path)
+    gitignore = repo / ".gitignore"
+    entry = "worktrees/"
+    if gitignore.is_file():
+        content = gitignore.read_text()
+        if entry in content.splitlines():
+            return
+        if not content.endswith("\n"):
+            content += "\n"
+        gitignore.write_text(content + entry + "\n")
+    else:
+        gitignore.write_text(entry + "\n")
+
+
+def create_worktree(repo_path: str, worktree_path: str, branch: str) -> None:
+    """Create a git worktree, handling stale branches from previous runs.
+
+    Three-step flow:
+    1. Try ``git worktree add <path> <branch>`` (branch already exists).
+    2. If that fails, try ``git worktree add -b <branch> <path> HEAD`` (new branch).
+    3. If that also fails (branch exists but not as a worktree), force-reset the
+       branch to HEAD and attach via ``git worktree add``.
+    """
+    env = clean_git_env()
+    result = subprocess.run(
+        ["git", "-C", repo_path, "worktree", "add", worktree_path, branch],
+        capture_output=True,
+        env=env,
+    )
+    if result.returncode != 0:
+        create = subprocess.run(
+            [
+                "git",
+                "-C",
+                repo_path,
+                "worktree",
+                "add",
+                worktree_path,
+                "-b",
+                branch,
+                "HEAD",
+            ],
+            capture_output=True,
+            env=env,
+        )
+        if create.returncode != 0:
+            subprocess.run(
+                ["git", "-C", repo_path, "branch", "-f", branch, "HEAD"],
+                check=True,
+                capture_output=True,
+                env=env,
+            )
+            subprocess.run(
+                ["git", "-C", repo_path, "worktree", "add", worktree_path, branch],
+                check=True,
+                capture_output=True,
+                env=env,
+            )
+
+
+def read_result(worktree_path: str) -> WorkerResult:
+    """Read and parse .worker-result.json from the worktree."""
+    result_path = os.path.join(worktree_path, ".worker-result.json")
+
+    if not os.path.exists(result_path):
+        return WorkerResult(
+            verdict=Verdict.ERROR,
+            findings=0,
+            detail="Worker result file not found",
+        )
+
+    try:
+        with open(result_path) as f:
+            data = json.load(f)
+        return WorkerResult(
+            verdict=Verdict(data["verdict"]),
+            findings=int(data["findings"]),
+            detail=str(data["detail"]),
+        )
+    except (json.JSONDecodeError, KeyError, ValueError) as exc:
+        return WorkerResult(
+            verdict=Verdict.ERROR,
+            findings=0,
+            detail=f"Failed to parse worker result: {exc}",
+        )
+
+
+def get_worktree_branch(worktree_path: str) -> str | None:
+    """Get the branch name for a worktree, or None if it can't be determined."""
+    if not os.path.isdir(worktree_path):
+        return None
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", worktree_path, "branch", "--show-current"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=clean_git_env(),
+        )
+        branch = result.stdout.strip()
+        return branch if branch else None
+    except subprocess.CalledProcessError:
+        return None
+
+
+def cleanup_worktree(repo_path: str, worktree_path: str) -> None:
+    """Remove the worktree directory. Does not touch internal tracking dicts."""
+    if not os.path.isdir(worktree_path):
+        return
+
+    env = clean_git_env()
+    try:
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                repo_path,
+                "worktree",
+                "remove",
+                "--force",
+                worktree_path,
+            ],
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+    except subprocess.CalledProcessError:
+        shutil.rmtree(worktree_path, ignore_errors=True)
+        subprocess.run(
+            ["git", "-C", repo_path, "worktree", "prune"],
+            capture_output=True,
+            env=env,
+        )
+
+
+def delete_branch(repo_path: str, branch: str | None) -> None:
+    """Delete a branch from the repo (best-effort, used by cancel)."""
+    if branch:
+        subprocess.run(
+            ["git", "-C", repo_path, "branch", "-D", branch],
+            capture_output=True,
+            env=clean_git_env(),
+        )

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hyperloop.adapters.local import LocalRuntime
+from hyperloop.adapters.runtime import LocalRuntime
 from hyperloop.domain.model import Verdict
 
 if TYPE_CHECKING:

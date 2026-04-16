@@ -12,7 +12,7 @@ import json
 import httpx
 import structlog
 
-from hyperloop.adapters.matrix_probe import MatrixProbe
+from hyperloop.adapters.probe.matrix import MatrixProbe
 
 
 def _configure_structlog_for_tests() -> None:
