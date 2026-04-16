@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.9.2 (2026-04-16)
+
+### Bug Fixes
+
+- Crash on empty commit, rename max_rounds, worktree gitignore, local merge fixes
+  ([`2e368ea`](https://github.com/jsell-rh/hyperloop/commit/2e368ea1ccf99c20758a3d3298d604e4ad860286))
+
+
 ## v0.9.1 (2026-04-15)
 
 ### Bug Fixes
