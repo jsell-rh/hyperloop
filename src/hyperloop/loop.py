@@ -356,7 +356,8 @@ class Orchestrator:
                         pr_url = self._pr_manager.create_draft(
                             task_id, branch, task.title, task.spec_ref
                         )
-                        self._state.set_task_pr(task_id, pr_url)
+                        if pr_url:
+                            self._state.set_task_pr(task_id, pr_url)
 
                     self._state.transition_task(
                         task_id,

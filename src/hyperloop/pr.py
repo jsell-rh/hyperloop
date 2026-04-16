@@ -29,7 +29,40 @@ class PRManager:
         self.delete_branch = delete_branch
 
     def create_draft(self, task_id: str, branch: str, title: str, spec_ref: str) -> str:
-        """Create a draft PR. Returns PR URL. Adds spec/task labels."""
+        """Create a draft PR. Returns PR URL. Adds spec/task labels.
+
+        If the branch already has a PR, returns the existing PR URL.
+        Label failures are logged and swallowed (labels may not exist on the repo).
+        """
+        # Check if a PR already exists for this branch
+        existing = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "view",
+                branch,
+                "--json",
+                "url",
+                "--repo",
+                self.repo,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if existing.returncode == 0:
+            data = json.loads(existing.stdout)
+            pr_url = str(data.get("url", ""))
+            if pr_url:
+                logger.info("PR already exists for %s: %s", branch, pr_url)
+                return pr_url
+
+        # Push the branch first (gh pr create needs it on the remote)
+        subprocess.run(
+            ["git", "push", "-u", "origin", branch],
+            capture_output=True,
+            text=True,
+        )
+
         result = subprocess.run(
             [
                 "gh",
@@ -47,12 +80,16 @@ class PRManager:
             ],
             capture_output=True,
             text=True,
-            check=True,
         )
+        if result.returncode != 0:
+            logger.warning("Failed to create draft PR for %s: %s", task_id, result.stderr.strip())
+            return ""
+
         pr_url = result.stdout.strip()
 
+        # Add labels (best-effort — labels may not exist on the repo)
         spec_name = _spec_name_from_ref(spec_ref)
-        subprocess.run(
+        label_result = subprocess.run(
             [
                 "gh",
                 "pr",
@@ -67,8 +104,9 @@ class PRManager:
             ],
             capture_output=True,
             text=True,
-            check=True,
         )
+        if label_result.returncode != 0:
+            logger.warning("Failed to add labels to PR %s: %s", pr_url, label_result.stderr.strip())
 
         logger.info("Created draft PR %s for task %s", pr_url, task_id)
         return pr_url
