@@ -531,7 +531,11 @@ class AmbientRuntime:
                             )
                     return True
 
-            # Process exited without RUN_FINISHED
+            # Process exited without RUN_FINISHED — log stderr for diagnostics
+            if not got_any_event and proc.stderr is not None:
+                stderr = proc.stderr.read().strip()
+                if stderr:
+                    log.warning("sse_empty_stream", session_id=session_id, stderr=stderr)
             return got_any_event  # Retry only if we got nothing
         finally:
             proc.terminate()
@@ -598,7 +602,11 @@ class AmbientRuntime:
                     if fg_event.get("type") == "RUN_FINISHED":
                         return True
 
-                # Process exited without RUN_FINISHED
+                # Process exited without RUN_FINISHED — log stderr for diagnostics
+                if not got_any_event and proc.stderr is not None:
+                    stderr = proc.stderr.read().strip()
+                    if stderr:
+                        log.warning("serial_sse_empty_stream", session_id=session_id, stderr=stderr)
                 return None if not got_any_event else False
             finally:
                 proc.terminate()
