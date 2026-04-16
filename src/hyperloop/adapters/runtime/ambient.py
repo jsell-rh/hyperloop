@@ -92,7 +92,36 @@ class AmbientRuntime:
             return parsed
         return result.stdout.strip()
 
-    # -- Agent lifecycle ------------------------------------------------------
+    # -- Project + agent lifecycle ---------------------------------------------
+
+    def ensure_project(self, repo_url: str = "") -> None:
+        """Create the Ambient project if it doesn't exist.
+
+        Idempotent — updates the project if it already exists.
+        """
+        # Check if project exists
+        try:
+            self._run_acpctl(
+                ["project", "update", self._project_id, "--description", "hyperloop-managed"],
+            )
+            log.info("ambient_project_exists", project_id=self._project_id)
+            return
+        except subprocess.CalledProcessError:
+            pass
+
+        # Create it
+        args = [
+            "create",
+            "project",
+            "--name",
+            self._project_id,
+            "--description",
+            "hyperloop-managed",
+        ]
+        if repo_url:
+            args.extend(["--repo-url", repo_url])
+        self._run_acpctl(args)
+        log.info("ambient_project_created", project_id=self._project_id, repo_url=repo_url)
 
     def sync_agents(self, templates: dict[str, AgentTemplate]) -> None:
         """Create/update Ambient agents from resolved templates.

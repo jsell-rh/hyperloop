@@ -49,6 +49,7 @@ class AmbientConfig:
 
     project_id: str
     acpctl: str  # path to acpctl binary, default "acpctl"
+    repo_url: str  # git repo URL for the Ambient project
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,7 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
         ambient_dict = cast("dict[str, object]", ambient)
         flat["ambient_project_id"] = str(ambient_dict.get("project_id", ""))
         flat["ambient_acpctl"] = str(ambient_dict.get("acpctl", "acpctl"))
+        flat["ambient_repo_url"] = str(ambient_dict.get("repo_url", ""))
 
     # merge section
     merge = raw.get("merge")
@@ -247,6 +249,7 @@ def load_config(
         ambient_cfg = AmbientConfig(
             project_id=ambient_project_id,
             acpctl=str(values.get("ambient_acpctl", "acpctl")),
+            repo_url=str(values.get("ambient_repo_url", "")),
         )
 
     return Config(

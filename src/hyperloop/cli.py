@@ -365,7 +365,9 @@ def run(
     composer, parsed_process = _make_composer(cfg, state, repo_path)
     process = parsed_process if parsed_process is not None else default_process
 
-    if cfg.runtime == "ambient" and hasattr(runtime, "sync_agents"):
+    if cfg.runtime == "ambient" and hasattr(runtime, "ensure_project"):
+        repo_url = cfg.ambient.repo_url if cfg.ambient else ""
+        runtime.ensure_project(repo_url)  # type: ignore[attr-defined]
         runtime.sync_agents(composer._templates)  # type: ignore[attr-defined]
 
     # Build observability probe
