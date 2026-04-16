@@ -439,7 +439,20 @@ class Orchestrator:
             if task.branch is None:
                 self._state.set_task_branch(task_id, branch)
             prompt = self._compose_prompt(task, role)
-            handle = self._runtime.spawn(task_id, role, prompt=prompt, branch=branch)
+            try:
+                handle = self._runtime.spawn(task_id, role, prompt=prompt, branch=branch)
+            except Exception:
+                reason = f"spawn failed for {role} on branch {branch}"
+                logger.exception("spawn_failed task=%s role=%s branch=%s", task_id, role, branch)
+                self._state.transition_task(task_id, TaskStatus.FAILED, phase=None)
+                self._probe.task_failed(
+                    task_id=task_id,
+                    spec_ref=task.spec_ref,
+                    reason=reason,
+                    round=task.round,
+                    cycle=cycle_num,
+                )
+                continue
             self._workers[task_id] = (handle, position, time.monotonic())
             self._probe.worker_spawned(
                 task_id=task_id,
