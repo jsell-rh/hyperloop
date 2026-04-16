@@ -256,6 +256,28 @@ class MatrixProbe:
         body = f"\u267b\ufe0f recovery started: {in_progress} in-progress task(s)"
         self._send(body)
 
+    def worker_message(self, **kw: object) -> None:
+        if not self._verbose:
+            return
+        task_id = str(kw.get("task_id", ""))
+        role = str(kw.get("role", ""))
+        msg_type = str(kw.get("message_type", ""))
+        content = str(kw.get("content", ""))
+
+        # Truncate long content for Matrix readability
+        if len(content) > 300:
+            content = content[:297] + "..."
+
+        icons = {
+            "text": "\U0001f4ac",
+            "tool_use": "\U0001f527",
+            "tool_result": "\U0001f4cb",
+            "result": "\U0001f3c1",
+        }
+        icon = icons.get(msg_type, "\u2022")
+        body = f"{icon} {task_id} \u00b7 {role} [{msg_type}] {content}"
+        self._send(body, task_id=task_id)
+
     # ------------------------------------------------------------------
     # Never sent (too noisy)
     # ------------------------------------------------------------------

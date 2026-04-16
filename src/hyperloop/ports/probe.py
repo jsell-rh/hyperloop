@@ -268,6 +268,21 @@ class OrchestratorProbe(Protocol):
     # Prompt composition
     # ------------------------------------------------------------------
 
+    def worker_message(
+        self,
+        *,
+        task_id: str,
+        role: str,
+        message_type: str,
+        content: str,
+    ) -> None:
+        """Individual message from a running worker (text, tool use, result).
+
+        Emitted in real-time as the agent streams messages. Verbose-only
+        in Matrix (thread reply under worker_spawned).
+        """
+        ...
+
     def prompt_composed(
         self,
         *,

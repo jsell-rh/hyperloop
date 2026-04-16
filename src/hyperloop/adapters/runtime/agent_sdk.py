@@ -33,6 +33,7 @@ from hyperloop.adapters.runtime._worktree import (
 from hyperloop.domain.model import Verdict, WorkerHandle, WorkerResult
 
 if TYPE_CHECKING:
+    from hyperloop.ports.probe import OrchestratorProbe
     from hyperloop.ports.runtime import WorkerPollStatus
 
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
@@ -50,10 +51,12 @@ class AgentSdkRuntime:
         repo_path: str,
         worktree_base: str | None = None,
         model: str | None = None,
+        probe: OrchestratorProbe | None = None,
     ) -> None:
         self._repo_path = repo_path
         self._worktree_base = worktree_base or f"{repo_path}/worktrees/workers"
         self._model = model
+        self._probe = probe
         self._worktrees: dict[str, str] = {}  # task_id -> worktree_path
         self._futures: dict[str, concurrent.futures.Future[WorkerResult]] = {}
 
@@ -89,7 +92,7 @@ class AgentSdkRuntime:
 
         # Submit the agent to the background event loop
         future = asyncio.run_coroutine_threadsafe(
-            self._run_agent(prompt, worktree_path), self._loop
+            self._run_agent(prompt, worktree_path, task_id=task_id, role=role), self._loop
         )
         self._futures[task_id] = future
         self._worktrees[task_id] = worktree_path
@@ -211,7 +214,8 @@ class AgentSdkRuntime:
         log.info("sdk_serial_started", role=role)
 
         future = asyncio.run_coroutine_threadsafe(
-            self._run_agent(prompt, self._repo_path), self._loop
+            self._run_agent(prompt, self._repo_path, task_id=f"serial-{role}", role=role),
+            self._loop,
         )
 
         try:
@@ -228,9 +232,16 @@ class AgentSdkRuntime:
 
     # -- Private helpers -------------------------------------------------------
 
-    async def _run_agent(self, prompt: str, cwd: str) -> WorkerResult:
+    async def _run_agent(
+        self, prompt: str, cwd: str, task_id: str = "", role: str = ""
+    ) -> WorkerResult:
         """Run a single agent query via the SDK. Returns a WorkerResult."""
-        from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+        from claude_agent_sdk import (
+            AssistantMessage,
+            ClaudeAgentOptions,
+            ResultMessage,
+            query,
+        )
 
         # Clean GIT_* env vars so agents in worktrees don't inherit
         # stale GIT_DIR/GIT_INDEX_FILE from the orchestrator's context.
@@ -245,24 +256,68 @@ class AgentSdkRuntime:
 
         result_text = ""
         is_error = False
+        cost_usd: float | None = None
+        num_turns: int | None = None
+        api_duration_ms: float | None = None
 
         async for message in query(prompt=prompt, options=options):
-            if isinstance(message, ResultMessage):
+            if isinstance(message, AssistantMessage):
+                self._emit_assistant_messages(message, task_id, role)
+            elif isinstance(message, ResultMessage):
                 result_text = message.result or ""
                 is_error = message.is_error
+                cost_usd = message.total_cost_usd
+                num_turns = message.num_turns
+                api_duration_ms = float(message.duration_api_ms)
+                self._emit_probe(
+                    task_id, role, "result", result_text[:200] if result_text else "done"
+                )
 
         if is_error:
             return WorkerResult(
                 verdict=Verdict.ERROR,
                 findings=0,
                 detail=result_text or "Agent completed with error",
+                cost_usd=cost_usd,
+                num_turns=num_turns,
+                api_duration_ms=api_duration_ms,
             )
 
         return WorkerResult(
             verdict=Verdict.PASS,
             findings=0,
             detail=result_text or "Agent completed",
+            cost_usd=cost_usd,
+            num_turns=num_turns,
+            api_duration_ms=api_duration_ms,
         )
+
+    def _emit_assistant_messages(self, message: object, task_id: str, role: str) -> None:
+        """Extract text and tool_use blocks from an AssistantMessage and emit probe events."""
+        from claude_agent_sdk.types import TextBlock, ToolUseBlock
+
+        content = getattr(message, "content", None)
+        if not isinstance(content, list):
+            return
+        for block in cast("list[object]", content):
+            if isinstance(block, TextBlock) and block.text:
+                self._emit_probe(task_id, role, "text", block.text[:200])
+            elif isinstance(block, ToolUseBlock):
+                self._emit_probe(task_id, role, "tool_use", block.name)
+
+    def _emit_probe(self, task_id: str, role: str, message_type: str, content: str) -> None:
+        """Emit a worker_message probe event if a probe is configured."""
+        if self._probe is None:
+            return
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self._probe.worker_message(
+                task_id=task_id,
+                role=role,
+                message_type=message_type,
+                content=content,
+            )
 
 
 def _read_review_from_worktree(worktree_path: str, task_id: str) -> WorkerResult | None:

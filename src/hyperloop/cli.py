@@ -332,6 +332,15 @@ def run(
 
     state = GitStateStore(repo_path)
 
+    # Build observability probe (before runtime so it can be passed in)
+    obs_cfg = getattr(cfg, "observability", None)
+    if obs_cfg is not None:
+        probe = _build_probe(obs_cfg, repo_path)
+    else:
+        from hyperloop.adapters.probe import NullProbe
+
+        probe = NullProbe()
+
     if cfg.runtime == "ambient":
         if cfg.ambient is None:
             console.print(
@@ -351,7 +360,7 @@ def run(
     else:
         from hyperloop.adapters.runtime import AgentSdkRuntime
 
-        runtime = AgentSdkRuntime(repo_path=str(repo_path))
+        runtime = AgentSdkRuntime(repo_path=str(repo_path), probe=probe)
 
     pr_manager = None
     if cfg.repo is not None:
@@ -368,15 +377,6 @@ def run(
 
     if cfg.runtime == "ambient" and hasattr(runtime, "ensure_project"):
         runtime.ensure_project()  # type: ignore[attr-defined]
-
-    # Build observability probe
-    obs_cfg = getattr(cfg, "observability", None)
-    if obs_cfg is not None:
-        probe = _build_probe(obs_cfg, repo_path)
-    else:
-        from hyperloop.adapters.probe import NullProbe
-
-        probe = NullProbe()
 
     orchestrator = Orchestrator(
         state=state,
