@@ -260,3 +260,19 @@ class OrchestratorProbe(Protocol):
     ) -> None:
         """An orphaned worker was found and cancelled."""
         ...
+
+    # ------------------------------------------------------------------
+    # Prompt composition
+    # ------------------------------------------------------------------
+
+    def prompt_composed(
+        self,
+        *,
+        task_id: str,
+        role: str,
+        prompt_text: str,
+        round: int,
+        cycle: int,
+    ) -> None:
+        """Full composed prompt for a worker, for debugging/observability."""
+        ...

@@ -70,6 +70,9 @@ class NullProbe:
     def orphan_found(self, **_: object) -> None:
         pass
 
+    def prompt_composed(self, **_: object) -> None:
+        pass
+
 
 class MultiProbe:
     """Fans out all probe calls to N child probes.
@@ -138,3 +141,6 @@ class MultiProbe:
 
     def orphan_found(self, **kw: object) -> None:
         self._call("orphan_found", **kw)
+
+    def prompt_composed(self, **kw: object) -> None:
+        self._call("prompt_composed", **kw)

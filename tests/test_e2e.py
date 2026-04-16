@@ -1,0 +1,226 @@
+"""End-to-end tests -- real GitStateStore + InMemoryRuntime.
+
+Validates the full orchestrator loop against a real git repo without
+requiring the Agent SDK or API credentials.
+"""
+
+from __future__ import annotations
+
+import subprocess
+from textwrap import dedent
+from typing import TYPE_CHECKING
+
+from hyperloop.adapters.state import GitStateStore
+from hyperloop.domain.model import (
+    LoopStep,
+    Process,
+    RoleStep,
+    TaskStatus,
+    Verdict,
+    WorkerResult,
+)
+from hyperloop.loop import Orchestrator
+from tests.fakes.probe import RecordingProbe
+from tests.fakes.runtime import InMemoryRuntime
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+PASS_RESULT = WorkerResult(verdict=Verdict.PASS, findings=0, detail="All tests pass")
+FAIL_RESULT = WorkerResult(verdict=Verdict.FAIL, findings=1, detail="Tests failed")
+
+DEFAULT_PROCESS = Process(
+    name="default",
+    intake=(),
+    pipeline=(
+        LoopStep(
+            steps=(
+                RoleStep(role="implementer", on_pass=None, on_fail=None),
+                RoleStep(role="verifier", on_pass=None, on_fail=None),
+            ),
+        ),
+    ),
+)
+
+TASK_001_CONTENT = dedent("""\
+    ---
+    id: task-001
+    title: Implement feature
+    spec_ref: specs/example.md
+    status: not-started
+    phase: null
+    deps: []
+    round: 0
+    branch: null
+    pr: null
+    ---
+    """)
+
+
+def _init_repo(path: Path) -> None:
+    """Create a git repo with an initial empty commit."""
+    subprocess.run(["git", "init", str(path)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.email", "test@test.com"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "config", "user.name", "Test"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(path), "commit", "--no-verify", "--allow-empty", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _write_task_file(repo: Path, task_id: str, content: str) -> None:
+    """Write a task file into the repo's .hyperloop/state/tasks directory."""
+    tasks_dir = repo / ".hyperloop" / "state" / "tasks"
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    (tasks_dir / f"{task_id}.md").write_text(content)
+
+
+def _commit_all(repo: Path, message: str) -> None:
+    """Stage all changes and commit."""
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "--no-verify", "-m", message],
+        check=True,
+        capture_output=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+class TestSingleTaskCompletesE2E:
+    """Full loop: not-started -> implementer -> verifier -> complete,
+    with a real GitStateStore and fake runtime."""
+
+    def test_single_task_completes(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+
+        # Write a spec file so the task's spec_ref is resolvable
+        specs_dir = repo / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "example.md").write_text("# Example spec\nBuild a widget.")
+
+        # Write task file and commit
+        _write_task_file(repo, "task-001", TASK_001_CONTENT)
+        _commit_all(repo, "add task-001 and spec")
+
+        # Construct real state store and fake runtime
+        state = GitStateStore(repo_path=repo)
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        orch = Orchestrator(
+            state=state,
+            runtime=runtime,
+            process=DEFAULT_PROCESS,
+            poll_interval=0,
+            probe=probe,
+        )
+
+        # Cycle 1: orchestrator spawns implementer
+        orch.run_cycle(cycle_num=1)
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.phase is not None
+        assert str(task.phase) == "implementer"
+
+        # Simulate implementer completing with pass
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", PASS_RESULT)
+
+        # Cycle 2: reap implementer, advance to verifier
+        orch.run_cycle(cycle_num=2)
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.phase is not None
+        assert str(task.phase) == "verifier"
+
+        # Simulate verifier completing with pass
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", PASS_RESULT)
+
+        # Cycle 3: reap verifier, pipeline complete, task complete
+        orch.run_cycle(cycle_num=3)
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.COMPLETE
+
+        # Verify probe events were recorded
+        spawned = probe.of_method("worker_spawned")
+        assert len(spawned) >= 2
+        completed = probe.of_method("task_completed")
+        assert len(completed) == 1
+        assert completed[0]["task_id"] == "task-001"
+
+
+class TestFailedVerificationRetriesE2E:
+    """Verifier fails -> round increments, task loops back to implementer."""
+
+    def test_failed_verification_increments_round(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+
+        specs_dir = repo / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "example.md").write_text("# Example spec\nBuild a widget.")
+
+        _write_task_file(repo, "task-001", TASK_001_CONTENT)
+        _commit_all(repo, "add task-001 and spec")
+
+        state = GitStateStore(repo_path=repo)
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        orch = Orchestrator(
+            state=state,
+            runtime=runtime,
+            process=DEFAULT_PROCESS,
+            poll_interval=0,
+            probe=probe,
+        )
+
+        # Cycle 1: spawn implementer
+        orch.run_cycle(cycle_num=1)
+        task = state.get_task("task-001")
+        assert str(task.phase) == "implementer"
+
+        # Implementer passes
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", PASS_RESULT)
+
+        # Cycle 2: reap implementer, advance to verifier
+        orch.run_cycle(cycle_num=2)
+        task = state.get_task("task-001")
+        assert str(task.phase) == "verifier"
+
+        # Verifier fails
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", FAIL_RESULT)
+
+        # Cycle 3: reap verifier failure, loop back, round increments
+        orch.run_cycle(cycle_num=3)
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.round == 1
+        assert str(task.phase) == "implementer"
+
+        # Verify loop-back probe event
+        looped = probe.of_method("task_looped_back")
+        assert len(looped) == 1
+        assert looped[0]["task_id"] == "task-001"
+        assert looped[0]["round"] == 1

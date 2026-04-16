@@ -120,3 +120,10 @@ class StructlogProbe:
 
     def orphan_found(self, **kw: object) -> None:
         self._log.warning("orphan_found", **kw)
+
+    # ------------------------------------------------------------------
+    # Prompt composition
+    # ------------------------------------------------------------------
+
+    def prompt_composed(self, **kw: object) -> None:
+        self._log.debug("prompt_composed", **kw)

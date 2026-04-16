@@ -434,7 +434,7 @@ class Orchestrator:
             branch = task.branch or f"{BRANCH_PREFIX}/{task_id}"
             if task.branch is None:
                 self._state.set_task_branch(task_id, branch)
-            prompt = self._compose_prompt(task, role)
+            prompt = self._compose_prompt(task, role, cycle=cycle_num)
             try:
                 self._runtime.push_branch(branch)
                 handle = self._runtime.spawn(task_id, role, prompt=prompt, branch=branch)
@@ -885,7 +885,7 @@ class Orchestrator:
     # Prompt composition
     # -----------------------------------------------------------------------
 
-    def _compose_prompt(self, task: Task, role: str) -> str:
+    def _compose_prompt(self, task: Task, role: str, cycle: int) -> str:
         """Compose a prompt for a worker using PromptComposer if available."""
         if self._composer is None:
             return ""
@@ -894,9 +894,17 @@ class Orchestrator:
         context = TaskContext(
             task_id=task.id, spec_ref=task.spec_ref, findings=findings, round=task.round
         )
-        return self._composer.compose(
+        prompt = self._composer.compose(
             role=role, context=context, epilogue=self._runtime.worker_epilogue()
         )
+        self._probe.prompt_composed(
+            task_id=task.id,
+            role=role,
+            prompt_text=prompt,
+            round=task.round,
+            cycle=cycle,
+        )
+        return prompt
 
     # -----------------------------------------------------------------------
     # Pipeline position helpers

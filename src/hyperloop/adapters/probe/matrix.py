@@ -262,3 +262,6 @@ class MatrixProbe:
 
     def task_advanced(self, **kw: object) -> None:
         pass
+
+    def prompt_composed(self, **kw: object) -> None:
+        pass  # Too verbose for Matrix

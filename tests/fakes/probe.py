@@ -86,3 +86,6 @@ class RecordingProbe:
 
     def orphan_found(self, **kw: object) -> None:
         self._record("orphan_found", **kw)
+
+    def prompt_composed(self, **kw: object) -> None:
+        self._record("prompt_composed", **kw)
