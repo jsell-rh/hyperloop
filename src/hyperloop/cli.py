@@ -204,7 +204,7 @@ def init(
     process_kustomization = process_dir / "kustomization.yaml"
     if not process_kustomization.exists():
         process_kustomization.write_text(
-            "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\n"
+            "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\npatches: []\n"
         )
         console.print(f"  Created {process_kustomization.relative_to(repo_path)}")
     else:
