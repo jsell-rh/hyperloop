@@ -461,48 +461,67 @@ class AmbientRuntime:
     # -- Private helpers -------------------------------------------------------
 
     def _stream_sse(self, session_id: str) -> None:
-        """Background thread: stream AG-UI events and watch for RUN_FINISHED."""
-        try:
-            proc = subprocess.Popen(
-                [self._acpctl, "session", "events", session_id],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
+        """Background thread: stream AG-UI events and watch for RUN_FINISHED.
+
+        Retries the connection with backoff — the session may not be ready
+        for SSE immediately after ``agent start`` returns.
+        """
+        for attempt, delay in enumerate(_BACKOFF_SCHEDULE):
             try:
-                if proc.stdout is None:
-                    with self._lock:
-                        self._completion[session_id] = "failed"
-                    return
+                if self._stream_sse_once(session_id):
+                    return  # RUN_FINISHED received
+            except Exception:
+                log.warning(
+                    "sse_connect_retry",
+                    session_id=session_id,
+                    attempt=attempt + 1,
+                )
+            time.sleep(delay)
 
-                for line in proc.stdout:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-
-                    if not isinstance(event, dict):
-                        continue
-                    if event.get("type") == "RUN_FINISHED":
-                        with self._lock:
-                            self._completion[session_id] = "done"
-                            result_payload = event.get("result")
-                            if isinstance(result_payload, dict):
-                                self._run_finished_data[session_id] = cast(
-                                    "dict[str, object]", result_payload
-                                )
-                        return
-            finally:
-                proc.terminate()
-                proc.wait()
-        except Exception:
-            log.exception("sse_stream_error", session_id=session_id)
-
+        log.warning("sse_stream_exhausted", session_id=session_id)
         with self._lock:
             self._completion[session_id] = "failed"
+
+    def _stream_sse_once(self, session_id: str) -> bool:
+        """Attempt one SSE stream connection. Returns True if RUN_FINISHED seen."""
+        proc = subprocess.Popen(
+            [self._acpctl, "session", "events", session_id],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            if proc.stdout is None:
+                return False
+
+            got_any_event = False
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if not isinstance(event, dict):
+                    continue
+                got_any_event = True
+                if event.get("type") == "RUN_FINISHED":
+                    with self._lock:
+                        self._completion[session_id] = "done"
+                        result_payload = event.get("result")
+                        if isinstance(result_payload, dict):
+                            self._run_finished_data[session_id] = cast(
+                                "dict[str, object]", result_payload
+                            )
+                    return True
+
+            # Process exited without RUN_FINISHED
+            return got_any_event  # Retry only if we got nothing
+        finally:
+            proc.terminate()
+            proc.wait()
 
     def _stream_sse_foreground(self, session_id: str) -> bool:
         """Foreground SSE stream for serial agents. Blocks until done or timeout."""
