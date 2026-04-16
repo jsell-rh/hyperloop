@@ -193,20 +193,20 @@ This is the adapter's responsibility, not a schema change. The committed kustomi
 
 ## Schema Alignment
 
-Agent resource schema aligns with Ambient's format:
+Our kustomize resources use `metadata.name` (required by kustomize). Ambient uses top-level `name`. The adapter translates between the two — no schema change to committed resources.
 
-| Field | Our schema | Ambient schema | Action |
+| Field | Our schema (kustomize) | Ambient schema | Adapter action |
 |---|---|---|---|
-| `name` | `metadata.name` | top-level `name` | Move to top level |
+| `name` | `metadata.name` | top-level `name` | Adapter extracts from `metadata.name` |
 | `kind` | `kind: Agent` | `kind: Agent` | Already matches |
-| `apiVersion` | `hyperloop.io/v1` | (ignored) | Keep for our tooling |
+| `apiVersion` | `hyperloop.io/v1` | (ignored) | Keep for kustomize |
 | `prompt` | `prompt` | `prompt` | Already matches |
-| `guidelines` | `guidelines` | (none) | Keep in our schema; adapter folds into `prompt` |
+| `guidelines` | `guidelines` | (none) | Adapter folds into `prompt` |
 | `labels` | (none) | `labels` | Runtime state, NOT in schema |
 | `annotations` | (none) | `annotations` | Runtime state, NOT in schema |
 | `inbox` | (none) | `inbox` | Runtime state, NOT in schema |
 
-The `metadata.name` → top-level `name` change applies to all resources (Agent, Process). The `_extract_name` helper in `compose.py` already supports both forms.
+The `_extract_name` helper in `compose.py` supports both `metadata.name` and top-level `name` for parsing flexibility.
 
 ## Configuration
 

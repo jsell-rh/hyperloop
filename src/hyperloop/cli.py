@@ -70,6 +70,7 @@ def _config_table(cfg: Config) -> Table:
     table.add_row("max_task_rounds", str(cfg.max_task_rounds))
     table.add_row("max_cycles", str(cfg.max_cycles))
     table.add_row("max_rebase_attempts", str(cfg.max_rebase_attempts))
+    table.add_row("runtime", cfg.runtime)
 
     return table
 
@@ -331,9 +332,25 @@ def run(
 
     state = GitStateStore(repo_path)
 
-    from hyperloop.adapters.runtime import AgentSdkRuntime
+    if cfg.runtime == "ambient":
+        if cfg.ambient is None:
+            console.print(
+                "[bold red]Error:[/bold red] runtime: ambient requires"
+                " an 'ambient' section in config."
+            )
+            raise typer.Exit(code=1)
+        from hyperloop.adapters.runtime.ambient import AmbientRuntime
 
-    runtime = AgentSdkRuntime(repo_path=str(repo_path))
+        runtime = AmbientRuntime(
+            repo_path=str(repo_path),
+            project_id=cfg.ambient.project_id,
+            acpctl=cfg.ambient.acpctl,
+            base_branch=cfg.base_branch,
+        )
+    else:
+        from hyperloop.adapters.runtime import AgentSdkRuntime
+
+        runtime = AgentSdkRuntime(repo_path=str(repo_path))
 
     pr_manager = None
     if cfg.repo is not None:
@@ -347,6 +364,9 @@ def run(
     # Resolve agent definitions and process via kustomize build
     composer, parsed_process = _make_composer(cfg, state, repo_path)
     process = parsed_process if parsed_process is not None else default_process
+
+    if cfg.runtime == "ambient" and hasattr(runtime, "sync_agents"):
+        runtime.sync_agents(composer._templates)  # type: ignore[attr-defined]
 
     # Build observability probe
     obs_cfg = getattr(cfg, "observability", None)

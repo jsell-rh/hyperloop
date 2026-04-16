@@ -67,6 +67,9 @@ class WorkerResult:
     verdict: Verdict
     findings: int
     detail: str
+    cost_usd: float | None = None
+    num_turns: int | None = None
+    api_duration_ms: float | None = None
 
 
 @dataclass(frozen=True)

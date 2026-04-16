@@ -134,7 +134,7 @@ prompt: |
 guidelines: ""
 ```
 
-`name` is top-level (matching Ambient's schema). `guidelines` is hyperloop-specific — the Ambient adapter concatenates it into `prompt` when syncing to the platform. Labels, annotations, and inbox are runtime state managed by the adapter, not part of the committed resource definition.
+`guidelines` is hyperloop-specific — the Ambient adapter concatenates it into `prompt` when syncing to the platform. Labels, annotations, and inbox are runtime state managed by the adapter, not part of the committed resource definition. Our resources use `metadata.name` (required by kustomize); the Ambient adapter extracts the name when syncing.
 
 ## Traceability
 

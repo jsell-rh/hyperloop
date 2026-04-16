@@ -13,7 +13,8 @@ All three layers use kustomize resources with a consistent schema. A new `guidel
 ```yaml
 apiVersion: hyperloop.io/v1
 kind: Agent
-name: implementer
+metadata:
+  name: implementer
 prompt: |
   You are a worker agent...
 guidelines: ""
@@ -198,7 +199,8 @@ patches:
 # .hyperloop/agents/process/implementer-overlay.yaml
 apiVersion: hyperloop.io/v1
 kind: Agent
-name: implementer
+metadata:
+  name: implementer
 guidelines: |
   - Do not delete files your task did not create.
   - Run .hyperloop/checks/no-unscoped-deletions.sh before submitting.

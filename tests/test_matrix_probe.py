@@ -84,6 +84,50 @@ class TestHighSignalCalls:
         assert body["msgtype"] == "m.text"
         assert "task-001" in body["body"]
 
+    def test_worker_reaped_includes_cost_when_present(self) -> None:
+        requests: list[httpx.Request] = []
+        probe = _make_probe(requests)
+
+        probe.worker_reaped(
+            task_id="task-001",
+            role="implementer",
+            verdict="pass",
+            round=0,
+            cycle=1,
+            spec_ref="specs/task-001.md",
+            findings_count=0,
+            detail="All good",
+            duration_s=30.0,
+            cost_usd=1.23,
+            num_turns=5,
+            api_duration_ms=25000.0,
+        )
+
+        assert len(requests) == 1
+        body = json.loads(requests[0].content)["body"]
+        assert "$1.23" in body
+
+    def test_worker_reaped_omits_cost_when_none(self) -> None:
+        requests: list[httpx.Request] = []
+        probe = _make_probe(requests)
+
+        probe.worker_reaped(
+            task_id="task-001",
+            role="implementer",
+            verdict="pass",
+            round=0,
+            cycle=1,
+            spec_ref="specs/task-001.md",
+            findings_count=0,
+            detail="All good",
+            duration_s=30.0,
+            cost_usd=None,
+        )
+
+        assert len(requests) == 1
+        body = json.loads(requests[0].content)["body"]
+        assert "$" not in body
+
     def test_task_completed_sends_request(self) -> None:
         requests: list[httpx.Request] = []
         probe = _make_probe(requests)

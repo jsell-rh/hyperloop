@@ -241,6 +241,9 @@ class Orchestrator:
                 findings_count=result.findings,
                 detail=result.detail,
                 duration_s=time.monotonic() - spawn_time,
+                cost_usd=result.cost_usd,
+                num_turns=result.num_turns,
+                api_duration_ms=result.api_duration_ms,
             )
 
             pipe_action, new_pos = executor.next_action(position, result)

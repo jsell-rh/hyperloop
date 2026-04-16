@@ -106,10 +106,13 @@ class MatrixProbe:
         rnd = kw.get("round", 0)
         duration_s = kw.get("duration_s", 0.0)
         detail = str(kw.get("detail", ""))
+        cost_usd = kw.get("cost_usd")
 
         dur = round(float(duration_s), 1) if isinstance(duration_s, int | float) else duration_s
         emoji = "\u2705" if verdict == "pass" else "\u274c"
-        body = f"{emoji} {task_id} \u00b7 {role} {verdict} (round {rnd}, {dur}s)\n{detail}"
+        cost_suffix = f", ${cost_usd:.2f}" if isinstance(cost_usd, int | float) else ""
+        header = f"{emoji} {task_id} \u00b7 {role} {verdict} (round {rnd}, {dur}s{cost_suffix})"
+        body = f"{header}\n{detail}"
         self._send(body, task_id=task_id)
 
     def task_looped_back(self, **kw: object) -> None:

@@ -220,6 +220,94 @@ class TestLoadConfigErrors:
             load_config(config_file)
 
 
+class TestRuntimeConfig:
+    """Runtime type selection and ambient configuration."""
+
+    def test_default_runtime_is_local(self) -> None:
+        cfg = load_config(None)
+
+        assert cfg.runtime == "local"
+        assert cfg.ambient is None
+
+    def test_runtime_ambient_with_ambient_section(self, tmp_path: Path) -> None:
+        config_file = tmp_path / ".hyperloop.yaml"
+        config_file.write_text(
+            """\
+runtime: ambient
+
+ambient:
+  project_id: my-project
+  acpctl: /usr/bin/acpctl
+"""
+        )
+
+        cfg = load_config(config_file)
+
+        assert cfg.runtime == "ambient"
+        assert cfg.ambient is not None
+        assert cfg.ambient.project_id == "my-project"
+        assert cfg.ambient.acpctl == "/usr/bin/acpctl"
+
+    def test_runtime_ambient_acpctl_defaults_to_acpctl(self, tmp_path: Path) -> None:
+        config_file = tmp_path / ".hyperloop.yaml"
+        config_file.write_text(
+            """\
+runtime: ambient
+
+ambient:
+  project_id: my-project
+"""
+        )
+
+        cfg = load_config(config_file)
+
+        assert cfg.ambient is not None
+        assert cfg.ambient.acpctl == "acpctl"
+
+    def test_missing_ambient_section_when_runtime_ambient(self, tmp_path: Path) -> None:
+        """Config loading succeeds; validation happens at CLI level."""
+        config_file = tmp_path / ".hyperloop.yaml"
+        config_file.write_text("runtime: ambient\n")
+
+        cfg = load_config(config_file)
+
+        assert cfg.runtime == "ambient"
+        assert cfg.ambient is None
+
+    def test_old_format_runtime_dict_still_works(self, tmp_path: Path) -> None:
+        """Backwards compat: runtime as dict extracts max_workers."""
+        config_file = tmp_path / ".hyperloop.yaml"
+        config_file.write_text(
+            """\
+runtime:
+  max_workers: 4
+"""
+        )
+
+        cfg = load_config(config_file)
+
+        assert cfg.runtime == "local"
+        assert cfg.max_workers == 4
+
+    def test_top_level_max_workers(self, tmp_path: Path) -> None:
+        """New format: max_workers as top-level key."""
+        config_file = tmp_path / ".hyperloop.yaml"
+        config_file.write_text(
+            """\
+runtime: ambient
+max_workers: 3
+
+ambient:
+  project_id: proj
+"""
+        )
+
+        cfg = load_config(config_file)
+
+        assert cfg.runtime == "ambient"
+        assert cfg.max_workers == 3
+
+
 class TestConfigFrozen:
     """Config should be immutable."""
 

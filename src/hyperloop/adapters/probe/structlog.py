@@ -60,6 +60,8 @@ class StructlogProbe:
         duration_s = kw.get("duration_s")
         if isinstance(duration_s, float):
             kw = {**kw, "duration_s": round(duration_s, 1)}
+        # Strip None-valued runtime metrics to keep log lines clean
+        kw = {k: v for k, v in kw.items() if v is not None}
         getattr(self._log, level)("worker_reaped", **kw)
 
     # ------------------------------------------------------------------

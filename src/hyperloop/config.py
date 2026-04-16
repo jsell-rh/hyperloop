@@ -44,6 +44,14 @@ class ObservabilityConfig:
 
 
 @dataclass(frozen=True)
+class AmbientConfig:
+    """Ambient Code Platform runtime configuration."""
+
+    project_id: str
+    acpctl: str  # path to acpctl binary, default "acpctl"
+
+
+@dataclass(frozen=True)
 class Config:
     """Typed, immutable configuration for the orchestrator."""
 
@@ -59,6 +67,8 @@ class Config:
     max_task_rounds: int  # default: 50
     max_cycles: int  # default: 200
     max_rebase_attempts: int  # default: 3
+    runtime: str  # "local" | "ambient", default "local"
+    ambient: AmbientConfig | None  # required when runtime == "ambient"
     observability: ObservabilityConfig = field(
         default_factory=lambda: ObservabilityConfig(
             log_format="console", log_level="info", matrix=None
@@ -81,6 +91,7 @@ def _defaults() -> dict[str, object]:
         "max_task_rounds": 50,
         "max_cycles": 200,
         "max_rebase_attempts": 3,
+        "runtime": "local",
         "log_format": "console",
         "log_level": "info",
     }
@@ -101,6 +112,7 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
         "max_task_rounds",
         "max_cycles",
         "max_rebase_attempts",
+        "max_workers",
     ):
         if key in raw:
             flat[key] = raw[key]
@@ -112,10 +124,22 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
             flat["repo"] = target["repo"]
         if "base_branch" in target:
             flat["base_branch"] = target["base_branch"]
-    # runtime section
+
+    # runtime — string (new format) or dict (old format)
     runtime = raw.get("runtime")
-    if isinstance(runtime, dict) and "max_workers" in runtime:
-        flat["max_workers"] = runtime["max_workers"]
+    if isinstance(runtime, str):
+        flat["runtime"] = runtime
+    elif isinstance(runtime, dict):
+        runtime_dict = cast("dict[str, object]", runtime)
+        if "max_workers" in runtime_dict:
+            flat["max_workers"] = runtime_dict["max_workers"]
+
+    # ambient section
+    ambient = raw.get("ambient")
+    if isinstance(ambient, dict):
+        ambient_dict = cast("dict[str, object]", ambient)
+        flat["ambient_project_id"] = str(ambient_dict.get("project_id", ""))
+        flat["ambient_acpctl"] = str(ambient_dict.get("acpctl", "acpctl"))
 
     # merge section
     merge = raw.get("merge")
@@ -216,6 +240,15 @@ def load_config(
         matrix=matrix_cfg,
     )
 
+    # Build AmbientConfig if ambient section was present
+    ambient_cfg: AmbientConfig | None = None
+    ambient_project_id = str(values.get("ambient_project_id", ""))
+    if ambient_project_id:
+        ambient_cfg = AmbientConfig(
+            project_id=ambient_project_id,
+            acpctl=str(values.get("ambient_acpctl", "acpctl")),
+        )
+
     return Config(
         repo=values["repo"],  # type: ignore[arg-type]
         base_branch=str(values["base_branch"]),
@@ -229,5 +262,7 @@ def load_config(
         max_task_rounds=int(values["max_task_rounds"]),  # type: ignore[arg-type]
         max_cycles=int(values["max_cycles"]),  # type: ignore[arg-type]
         max_rebase_attempts=int(values["max_rebase_attempts"]),  # type: ignore[arg-type]
+        runtime=str(values["runtime"]),
+        ambient=ambient_cfg,
         observability=obs_cfg,
     )
