@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.16.1 (2026-04-16)
+
+### Bug Fixes
+
+- Use --frozen in pre-push hook to avoid uv.lock drift
+  ([`7873a39`](https://github.com/jsell-rh/hyperloop/commit/7873a39dd2f7e3eafb3167afbfbbd6ac28a8673d))
+
+
 ## v0.16.0 (2026-04-16)
 
 
