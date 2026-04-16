@@ -80,7 +80,7 @@ class TestSpawn:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=PASS_COMMAND)
 
-        handle = rt.spawn("task-001", "implementer", "Do the work.", "worker/task-001")
+        handle = rt.spawn("task-001", "implementer", "Do the work.", "hyperloop/task-001")
 
         assert handle.task_id == "task-001"
         assert handle.role == "implementer"
@@ -91,7 +91,7 @@ class TestSpawn:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=PASS_COMMAND)
 
-        rt.spawn("task-002", "implementer", "Do the work.", "worker/task-002")
+        rt.spawn("task-002", "implementer", "Do the work.", "hyperloop/task-002")
 
         worktree_path = tmp_path / "worktrees" / "workers" / "task-002"
         assert worktree_path.is_dir()
@@ -100,7 +100,7 @@ class TestSpawn:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=PASS_COMMAND)
 
-        rt.spawn("task-003", "verifier", "Check the code.", "worker/task-003")
+        rt.spawn("task-003", "verifier", "Check the code.", "hyperloop/task-003")
 
         prompt_path = tmp_path / "worktrees" / "workers" / "task-003" / "prompt.md"
         assert prompt_path.exists()
@@ -110,7 +110,7 @@ class TestSpawn:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=PASS_COMMAND)
 
-        rt.spawn("task-004", "implementer", "Do stuff.", "worker/task-004")
+        rt.spawn("task-004", "implementer", "Do stuff.", "hyperloop/task-004")
 
         worktree_path = tmp_path / "worktrees" / "workers" / "task-004"
         result = subprocess.run(
@@ -120,7 +120,7 @@ class TestSpawn:
             text=True,
             env=_clean_git_env(),
         )
-        assert result.stdout.strip() == "worker/task-004"
+        assert result.stdout.strip() == "hyperloop/task-004"
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ class TestPoll:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=SLOW_COMMAND)
 
-        handle = rt.spawn("task-010", "implementer", "prompt", "worker/task-010")
+        handle = rt.spawn("task-010", "implementer", "prompt", "hyperloop/task-010")
 
         assert rt.poll(handle) == "running"
         # Clean up
@@ -143,7 +143,7 @@ class TestPoll:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=PASS_COMMAND)
 
-        handle = rt.spawn("task-011", "implementer", "prompt", "worker/task-011")
+        handle = rt.spawn("task-011", "implementer", "prompt", "hyperloop/task-011")
 
         # Wait for fast command to finish
         deadline = time.monotonic() + 5
@@ -158,7 +158,7 @@ class TestPoll:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=FAIL_COMMAND)
 
-        handle = rt.spawn("task-012", "implementer", "prompt", "worker/task-012")
+        handle = rt.spawn("task-012", "implementer", "prompt", "hyperloop/task-012")
 
         deadline = time.monotonic() + 5
         while rt.poll(handle) == "running":
@@ -179,7 +179,7 @@ class TestReap:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=PASS_COMMAND)
 
-        handle = rt.spawn("task-020", "implementer", "prompt", "worker/task-020")
+        handle = rt.spawn("task-020", "implementer", "prompt", "hyperloop/task-020")
 
         # Wait for completion
         deadline = time.monotonic() + 5
@@ -198,7 +198,7 @@ class TestReap:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=FAIL_COMMAND)
 
-        handle = rt.spawn("task-021", "implementer", "prompt", "worker/task-021")
+        handle = rt.spawn("task-021", "implementer", "prompt", "hyperloop/task-021")
 
         deadline = time.monotonic() + 5
         while rt.poll(handle) == "running":
@@ -216,7 +216,7 @@ class TestReap:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=PASS_COMMAND)
 
-        handle = rt.spawn("task-022", "implementer", "prompt", "worker/task-022")
+        handle = rt.spawn("task-022", "implementer", "prompt", "hyperloop/task-022")
 
         deadline = time.monotonic() + 5
         while rt.poll(handle) == "running":
@@ -233,7 +233,7 @@ class TestReap:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=PASS_COMMAND)
 
-        handle = rt.spawn("task-023", "implementer", "prompt", "worker/task-023")
+        handle = rt.spawn("task-023", "implementer", "prompt", "hyperloop/task-023")
 
         deadline = time.monotonic() + 5
         while rt.poll(handle) == "running":
@@ -245,20 +245,20 @@ class TestReap:
 
         # Branch should be preserved for later pipeline steps (e.g. merge-pr)
         result = subprocess.run(
-            ["git", "-C", str(tmp_path), "branch", "--list", "worker/task-023"],
+            ["git", "-C", str(tmp_path), "branch", "--list", "hyperloop/task-023"],
             check=True,
             capture_output=True,
             text=True,
             env=_clean_git_env(),
         )
-        assert "worker/task-023" in result.stdout.strip()
+        assert "hyperloop/task-023" in result.stdout.strip()
 
     def test_returns_error_result_when_no_result_file(self, tmp_path: Path) -> None:
         _init_repo(tmp_path)
         # Command that exits 0 but doesn't write a result file
         rt = LocalRuntime(repo_path=str(tmp_path), command="echo done")
 
-        handle = rt.spawn("task-024", "implementer", "prompt", "worker/task-024")
+        handle = rt.spawn("task-024", "implementer", "prompt", "hyperloop/task-024")
 
         deadline = time.monotonic() + 5
         while rt.poll(handle) == "running":
@@ -282,7 +282,7 @@ class TestCancel:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=SLOW_COMMAND)
 
-        handle = rt.spawn("task-030", "implementer", "prompt", "worker/task-030")
+        handle = rt.spawn("task-030", "implementer", "prompt", "hyperloop/task-030")
         assert rt.poll(handle) == "running"
 
         rt.cancel(handle)
@@ -295,7 +295,7 @@ class TestCancel:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=SLOW_COMMAND)
 
-        handle = rt.spawn("task-031", "implementer", "prompt", "worker/task-031")
+        handle = rt.spawn("task-031", "implementer", "prompt", "hyperloop/task-031")
         rt.cancel(handle)
 
         worktree_path = tmp_path / "worktrees" / "workers" / "task-031"
@@ -305,11 +305,11 @@ class TestCancel:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=SLOW_COMMAND)
 
-        handle = rt.spawn("task-032", "implementer", "prompt", "worker/task-032")
+        handle = rt.spawn("task-032", "implementer", "prompt", "hyperloop/task-032")
         rt.cancel(handle)
 
         result = subprocess.run(
-            ["git", "-C", str(tmp_path), "branch", "--list", "worker/task-032"],
+            ["git", "-C", str(tmp_path), "branch", "--list", "hyperloop/task-032"],
             check=True,
             capture_output=True,
             text=True,
@@ -321,7 +321,7 @@ class TestCancel:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=PASS_COMMAND)
 
-        handle = rt.spawn("task-033", "implementer", "prompt", "worker/task-033")
+        handle = rt.spawn("task-033", "implementer", "prompt", "hyperloop/task-033")
 
         # Wait for completion
         deadline = time.monotonic() + 5
@@ -344,12 +344,12 @@ class TestFindOrphan:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=SLOW_COMMAND)
 
-        handle = rt.spawn("task-040", "implementer", "prompt", "worker/task-040")
+        handle = rt.spawn("task-040", "implementer", "prompt", "hyperloop/task-040")
 
         # Create a NEW runtime instance (simulating crash recovery)
         rt2 = LocalRuntime(repo_path=str(tmp_path), command=SLOW_COMMAND)
 
-        orphan = rt2.find_orphan("task-040", "worker/task-040")
+        orphan = rt2.find_orphan("task-040", "hyperloop/task-040")
 
         assert orphan is not None
         assert orphan.task_id == "task-040"
@@ -361,7 +361,7 @@ class TestFindOrphan:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=PASS_COMMAND)
 
-        orphan = rt.find_orphan("task-041", "worker/task-041")
+        orphan = rt.find_orphan("task-041", "hyperloop/task-041")
 
         assert orphan is None
 
@@ -369,7 +369,7 @@ class TestFindOrphan:
         _init_repo(tmp_path)
         rt = LocalRuntime(repo_path=str(tmp_path), command=PASS_COMMAND)
 
-        handle = rt.spawn("task-042", "implementer", "prompt", "worker/task-042")
+        handle = rt.spawn("task-042", "implementer", "prompt", "hyperloop/task-042")
 
         deadline = time.monotonic() + 5
         while rt.poll(handle) == "running":
@@ -379,5 +379,5 @@ class TestFindOrphan:
 
         rt.reap(handle)
 
-        orphan = rt.find_orphan("task-042", "worker/task-042")
+        orphan = rt.find_orphan("task-042", "hyperloop/task-042")
         assert orphan is None

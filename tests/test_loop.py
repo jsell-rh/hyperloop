@@ -452,7 +452,7 @@ class TestNeedsRebaseSpawning:
                 id="task-001",
                 status=TaskStatus.NEEDS_REBASE,
                 phase=Phase("verifier"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
 
@@ -471,7 +471,7 @@ class TestNeedsRebaseSpawning:
             _task(
                 id="task-001",
                 status=TaskStatus.NEEDS_REBASE,
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
 
@@ -497,7 +497,7 @@ class TestNeedsRebaseSpawning:
             _task(
                 id="task-002",
                 status=TaskStatus.NEEDS_REBASE,
-                branch="worker/task-002",
+                branch="hyperloop/task-002",
             )
         )
 
@@ -523,12 +523,12 @@ class TestRecovery:
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("implementer"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
 
         # Simulate an orphaned worker left in the runtime
-        runtime.spawn("task-001", "implementer", "", "worker/task-001")
+        runtime.spawn("task-001", "implementer", "", "hyperloop/task-001")
 
         orch = _make_orchestrator(state, runtime)
         orch.recover()
@@ -546,7 +546,7 @@ class TestRecovery:
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("implementer"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
 
@@ -589,7 +589,7 @@ class TestRecovery:
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("implementer"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
 
@@ -668,7 +668,7 @@ class TestGatePolling:
         pr_mgr = FakePRManager(repo="org/repo")
 
         # Create a PR for the task
-        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/widget.md")
+        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
 
         # Task is at the gate step
         state.add_task(
@@ -676,7 +676,7 @@ class TestGatePolling:
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("human-pr-approval"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
         # Store the PR URL on the task
@@ -698,14 +698,14 @@ class TestGatePolling:
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
 
-        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/widget.md")
+        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
 
         state.add_task(
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("human-pr-approval"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
         state.set_task_pr("task-001", pr_url)
@@ -726,7 +726,7 @@ class TestGatePolling:
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("human-pr-approval"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
 
@@ -760,14 +760,14 @@ class TestMergeWithPRManager:
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
 
-        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/widget.md")
+        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
 
         state.add_task(
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("merge-pr"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
         state.set_task_pr("task-001", pr_url)
@@ -784,15 +784,15 @@ class TestMergeWithPRManager:
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
 
-        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/widget.md")
-        pr_mgr.set_rebase_fails("worker/task-001")
+        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        pr_mgr.set_rebase_fails("hyperloop/task-001")
 
         state.add_task(
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("merge-pr"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
         state.set_task_pr("task-001", pr_url)
@@ -810,7 +810,7 @@ class TestMergeWithPRManager:
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
 
-        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/widget.md")
+        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
         pr_mgr.set_merge_fails(pr_url)
 
         state.add_task(
@@ -818,7 +818,7 @@ class TestMergeWithPRManager:
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("merge-pr"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
         state.set_task_pr("task-001", pr_url)
@@ -840,7 +840,7 @@ class TestMergeWithPRManager:
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("merge-pr"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
 
@@ -1007,7 +1007,7 @@ class TestProbeIntegration:
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("implementer"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
 
@@ -1091,7 +1091,7 @@ class TestPRLifecycle:
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
 
-        state.add_task(_task(id="task-001", branch="worker/task-001"))
+        state.add_task(_task(id="task-001", branch="hyperloop/task-001"))
 
         orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
 
@@ -1125,12 +1125,12 @@ class TestPRLifecycle:
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("merge-pr"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
         # Create and set PR on the task
         pr_url = pr_mgr.create_draft(
-            "task-001", "worker/task-001", "Task task-001", "specs/task-001.md"
+            "task-001", "hyperloop/task-001", "Task task-001", "specs/task-001.md"
         )
         state.set_task_pr("task-001", pr_url)
 
@@ -1147,7 +1147,7 @@ class TestPRLifecycle:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
 
-        state.add_task(_task(id="task-001", branch="worker/task-001"))
+        state.add_task(_task(id="task-001", branch="hyperloop/task-001"))
 
         orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=None)
 
@@ -1170,7 +1170,7 @@ class TestPRLifecycle:
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
 
-        state.add_task(_task(id="task-001", branch="worker/task-001"))
+        state.add_task(_task(id="task-001", branch="hyperloop/task-001"))
 
         orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
 
@@ -1254,15 +1254,17 @@ class TestMaxRebaseAttempts:
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
 
-        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/task-001.md")
-        pr_mgr.set_rebase_fails("worker/task-001")
+        pr_url = pr_mgr.create_draft(
+            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
+        )
+        pr_mgr.set_rebase_fails("hyperloop/task-001")
 
         state.add_task(
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("merge-pr"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
         state.set_task_pr("task-001", pr_url)
@@ -1303,14 +1305,16 @@ class TestMaxRebaseAttempts:
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
 
-        pr_url = pr_mgr.create_draft("task-001", "worker/task-001", "Widget", "specs/task-001.md")
+        pr_url = pr_mgr.create_draft(
+            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
+        )
 
         state.add_task(
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("merge-pr"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
         state.set_task_pr("task-001", pr_url)
@@ -1352,7 +1356,7 @@ def _merge_task(
         phase=Phase("merge-pr"),
         deps=deps,
         round=0,
-        branch=f"worker/{id}",
+        branch=f"hyperloop/{id}",
         pr=None,
     )
 
@@ -1452,16 +1456,16 @@ class TestMergeDepOrder:
         pr_mgr = FakePRManager(repo="org/repo")
 
         # task-001 has no deps — it is the dependency
-        pr1 = pr_mgr.create_draft("task-001", "worker/task-001", "Task 001", "specs/task-001.md")
+        pr1 = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Task 001", "specs/task-001.md")
         # task-002 depends on task-001 — it is the dependent
-        pr2 = pr_mgr.create_draft("task-002", "worker/task-002", "Task 002", "specs/task-002.md")
+        pr2 = pr_mgr.create_draft("task-002", "hyperloop/task-002", "Task 002", "specs/task-002.md")
 
         state.add_task(
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("merge-pr"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
         state.add_task(
@@ -1469,7 +1473,7 @@ class TestMergeDepOrder:
                 id="task-002",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("merge-pr"),
-                branch="worker/task-002",
+                branch="hyperloop/task-002",
                 deps=("task-001",),
             )
         )
@@ -1492,15 +1496,15 @@ class TestMergeDepOrder:
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
 
-        pr1 = pr_mgr.create_draft("task-001", "worker/task-001", "Task 001", "specs/task-001.md")
-        pr2 = pr_mgr.create_draft("task-002", "worker/task-002", "Task 002", "specs/task-002.md")
+        pr1 = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Task 001", "specs/task-001.md")
+        pr2 = pr_mgr.create_draft("task-002", "hyperloop/task-002", "Task 002", "specs/task-002.md")
 
         state.add_task(
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("merge-pr"),
-                branch="worker/task-001",
+                branch="hyperloop/task-001",
             )
         )
         state.add_task(
@@ -1508,7 +1512,7 @@ class TestMergeDepOrder:
                 id="task-002",
                 status=TaskStatus.IN_PROGRESS,
                 phase=Phase("merge-pr"),
-                branch="worker/task-002",
+                branch="hyperloop/task-002",
             )
         )
         state.set_task_pr("task-001", pr1)

@@ -175,7 +175,7 @@ class TestVerboseOnlyCalls:
         probe.worker_spawned(
             task_id="task-001",
             role="implementer",
-            branch="worker/task-001",
+            branch="hyperloop/task-001",
             round=0,
             cycle=1,
             spec_ref="specs/task-001.md",
@@ -190,7 +190,7 @@ class TestVerboseOnlyCalls:
         probe.worker_spawned(
             task_id="task-001",
             role="implementer",
-            branch="worker/task-001",
+            branch="hyperloop/task-001",
             round=0,
             cycle=1,
             spec_ref="specs/task-001.md",

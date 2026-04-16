@@ -75,7 +75,7 @@ TASK_028_CONTENT = dedent("""\
     phase: implementer
     deps: [task-027]
     round: 2
-    branch: worker/task-028
+    branch: hyperloop/task-028
     pr: "42"
     ---
     """)
@@ -118,7 +118,7 @@ class TestGetTask:
         assert task.phase == Phase("implementer")
         assert task.deps == ("task-027",)
         assert task.round == 2
-        assert task.branch == "worker/task-028"
+        assert task.branch == "hyperloop/task-028"
         assert task.pr == "42"
 
     def test_raises_key_error_for_missing_task(self, tmp_path: Path) -> None:
@@ -190,7 +190,7 @@ class TestTransitionTask:
         assert task.title == "Add session restore"
         assert task.spec_ref == "specs/session.md"
         assert task.deps == ("task-027",)
-        assert task.branch == "worker/task-028"
+        assert task.branch == "hyperloop/task-028"
         assert task.pr == "42"
 
     def test_clears_phase_to_null(self, tmp_path: Path) -> None:

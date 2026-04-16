@@ -60,7 +60,7 @@ class TestTask:
             phase=Phase("implement"),
             deps=("task-004",),
             round=0,
-            branch="worker/task-027",
+            branch="hyperloop/task-027",
             pr="https://github.com/org/repo/pull/42",
         )
         assert task.id == "task-027"
@@ -70,7 +70,7 @@ class TestTask:
         assert task.phase == Phase("implement")
         assert task.deps == ("task-004",)
         assert task.round == 0
-        assert task.branch == "worker/task-027"
+        assert task.branch == "hyperloop/task-027"
         assert task.pr == "https://github.com/org/repo/pull/42"
 
     def test_creation_with_none_optionals(self):

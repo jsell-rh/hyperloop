@@ -89,7 +89,7 @@ class TestStateStoreTransition:
             phase=None,
             deps=("task-001",),
             round=3,
-            branch="worker/task-002",
+            branch="hyperloop/task-002",
             pr="https://github.com/org/repo/pull/42",
         )
         store.add_task(task)
@@ -101,7 +101,7 @@ class TestStateStoreTransition:
         assert updated.spec_ref == "specs/api.md"
         assert updated.deps == ("task-001",)
         assert updated.round == 3
-        assert updated.branch == "worker/task-002"
+        assert updated.branch == "hyperloop/task-002"
         assert updated.pr == "https://github.com/org/repo/pull/42"
 
 
@@ -224,7 +224,7 @@ class TestStateStoreGetWorld:
             phase=Phase("implementer"),
             deps=("task-001",),
             round=1,
-            branch="worker/task-002",
+            branch="hyperloop/task-002",
             pr=None,
         )
         store.add_task(task1)
@@ -254,20 +254,20 @@ class TestStateStoreGetWorld:
 class TestRuntimeSpawnAndPoll:
     def test_spawn_returns_handle(self):
         runtime = InMemoryRuntime()
-        handle = runtime.spawn("task-001", "implementer", "Do the work", "worker/task-001")
+        handle = runtime.spawn("task-001", "implementer", "Do the work", "hyperloop/task-001")
 
         assert handle.task_id == "task-001"
         assert handle.role == "implementer"
 
     def test_poll_returns_running_by_default(self):
         runtime = InMemoryRuntime()
-        handle = runtime.spawn("task-001", "implementer", "Do the work", "worker/task-001")
+        handle = runtime.spawn("task-001", "implementer", "Do the work", "hyperloop/task-001")
 
         assert runtime.poll(handle) == "running"
 
     def test_poll_returns_configured_status(self):
         runtime = InMemoryRuntime()
-        handle = runtime.spawn("task-001", "implementer", "Do the work", "worker/task-001")
+        handle = runtime.spawn("task-001", "implementer", "Do the work", "hyperloop/task-001")
 
         runtime.set_poll_status("task-001", "done")
         assert runtime.poll(handle) == "done"
@@ -276,7 +276,7 @@ class TestRuntimeSpawnAndPoll:
 class TestRuntimeReap:
     def test_full_lifecycle_spawn_poll_reap(self):
         runtime = InMemoryRuntime()
-        handle = runtime.spawn("task-001", "implementer", "Do the work", "worker/task-001")
+        handle = runtime.spawn("task-001", "implementer", "Do the work", "hyperloop/task-001")
 
         # Worker is running
         assert runtime.poll(handle) == "running"
@@ -300,7 +300,7 @@ class TestRuntimeReap:
 
     def test_reap_with_failure(self):
         runtime = InMemoryRuntime()
-        handle = runtime.spawn("task-001", "verifier", "Verify the work", "worker/task-001")
+        handle = runtime.spawn("task-001", "verifier", "Verify the work", "hyperloop/task-001")
 
         result = WorkerResult(
             verdict=Verdict.FAIL,
@@ -318,7 +318,7 @@ class TestRuntimeReap:
 class TestRuntimeCancel:
     def test_cancel_marks_worker_cancelled(self):
         runtime = InMemoryRuntime()
-        handle = runtime.spawn("task-001", "implementer", "Do the work", "worker/task-001")
+        handle = runtime.spawn("task-001", "implementer", "Do the work", "hyperloop/task-001")
 
         runtime.cancel(handle)
         assert runtime.poll(handle) == "failed"
@@ -327,33 +327,33 @@ class TestRuntimeCancel:
 class TestRuntimeFindOrphan:
     def test_find_orphan_returns_handle_for_active_worker(self):
         runtime = InMemoryRuntime()
-        handle = runtime.spawn("task-001", "implementer", "Do the work", "worker/task-001")
+        handle = runtime.spawn("task-001", "implementer", "Do the work", "hyperloop/task-001")
 
-        orphan = runtime.find_orphan("task-001", "worker/task-001")
+        orphan = runtime.find_orphan("task-001", "hyperloop/task-001")
         assert orphan is not None
         assert orphan.task_id == handle.task_id
 
     def test_find_orphan_returns_none_after_reap(self):
         runtime = InMemoryRuntime()
-        handle = runtime.spawn("task-001", "implementer", "Do the work", "worker/task-001")
+        handle = runtime.spawn("task-001", "implementer", "Do the work", "hyperloop/task-001")
 
         result = WorkerResult(verdict=Verdict.PASS, findings=0, detail="ok")
         runtime.set_result("task-001", result)
         runtime.reap(handle)
 
-        orphan = runtime.find_orphan("task-001", "worker/task-001")
+        orphan = runtime.find_orphan("task-001", "hyperloop/task-001")
         assert orphan is None
 
     def test_find_orphan_returns_none_after_cancel(self):
         runtime = InMemoryRuntime()
-        handle = runtime.spawn("task-001", "implementer", "Do the work", "worker/task-001")
+        handle = runtime.spawn("task-001", "implementer", "Do the work", "hyperloop/task-001")
 
         runtime.cancel(handle)
 
-        orphan = runtime.find_orphan("task-001", "worker/task-001")
+        orphan = runtime.find_orphan("task-001", "hyperloop/task-001")
         assert orphan is None
 
     def test_find_orphan_returns_none_for_unknown_task(self):
         runtime = InMemoryRuntime()
-        orphan = runtime.find_orphan("task-999", "worker/task-999")
+        orphan = runtime.find_orphan("task-999", "hyperloop/task-999")
         assert orphan is None

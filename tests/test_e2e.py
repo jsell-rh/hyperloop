@@ -461,7 +461,7 @@ class TestPRFlowWithFakePRManager:
         # Pre-create the PR in the fake so it exists when merge is called
         pr_url = pr_manager.create_draft(
             task_id="task-001",
-            branch="worker/task-001",
+            branch="hyperloop/task-001",
             title="Implement example feature",
             spec_ref="specs/example.md",
         )
@@ -491,7 +491,7 @@ class TestPRFlowWithFakePRManager:
 
         # Verify FakePRManager received the merge call
         assert len(pr_manager.merged) == 1
-        assert pr_manager.rebased == [("worker/task-001", "main")]
+        assert pr_manager.rebased == [("hyperloop/task-001", "main")]
 
         # Verify the PR was actually merged in the fake
         assert pr_manager._prs[pr_url].merged
@@ -532,7 +532,7 @@ class TestGateBlocksUntilLgtm:
         pr_manager = FakePRManager(repo="test/repo")
         pr_url = pr_manager.create_draft(
             task_id="task-001",
-            branch="worker/task-001",
+            branch="hyperloop/task-001",
             title="Implement example feature",
             spec_ref="specs/example.md",
         )

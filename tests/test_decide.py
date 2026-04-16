@@ -73,7 +73,7 @@ class TestSingleTaskSpawning:
 
     def test_not_started_with_unmet_deps_no_spawn(self):
         t = _task(deps=("task-002",))
-        dep = _task(id="task-002", status=TaskStatus.IN_PROGRESS, branch="worker/task-002")
+        dep = _task(id="task-002", status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-002")
         worker = WorkerState(task_id="task-002", role="implementer", status="running")
         tasks = {t.id: t, dep.id: dep}
         actions = decide(
@@ -96,7 +96,7 @@ class TestSingleTaskSpawning:
 
 class TestAlreadyRunning:
     def test_in_progress_with_active_worker_no_action(self):
-        t = _task(status=TaskStatus.IN_PROGRESS, branch="worker/task-001")
+        t = _task(status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-001")
         worker = WorkerState(task_id="task-001", role="implementer", status="running")
         actions = decide(
             _world(tasks={t.id: t}, workers={"w1": worker}),
@@ -111,7 +111,7 @@ class TestAlreadyRunning:
 
 class TestReaping:
     def test_completed_worker_pass_verdict_reaps(self):
-        t = _task(status=TaskStatus.IN_PROGRESS, branch="worker/task-001")
+        t = _task(status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-001")
         worker = WorkerState(task_id="task-001", role="implementer", status="done")
         actions = decide(
             _world(tasks={t.id: t}, workers={"w1": worker}),
@@ -123,7 +123,7 @@ class TestReaping:
         assert reaps[0].task_id == "task-001"
 
     def test_completed_worker_fail_verdict_reaps(self):
-        t = _task(status=TaskStatus.IN_PROGRESS, branch="worker/task-001")
+        t = _task(status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-001")
         worker = WorkerState(task_id="task-001", role="implementer", status="failed")
         actions = decide(
             _world(tasks={t.id: t}, workers={"w1": worker}),
@@ -160,7 +160,7 @@ class TestMaxWorkers:
         assert len(spawns) == 2
 
     def test_active_workers_count_against_limit(self):
-        t1 = _task(id="task-001", status=TaskStatus.IN_PROGRESS, branch="worker/task-001")
+        t1 = _task(id="task-001", status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-001")
         t2 = _task(id="task-002")
         t3 = _task(id="task-003")
         worker = WorkerState(task_id="task-001", role="implementer", status="running")
@@ -177,7 +177,7 @@ class TestPriorityOrdering:
     def test_in_progress_tasks_before_not_started(self):
         """In-progress tasks without a worker (crash recovery) should be
         prioritized over not-started tasks."""
-        resuming = _task(id="task-001", status=TaskStatus.IN_PROGRESS, branch="worker/task-001")
+        resuming = _task(id="task-001", status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-001")
         fresh = _task(id="task-002")
         actions = decide(
             _world(tasks={resuming.id: resuming, fresh.id: fresh}),
@@ -191,7 +191,7 @@ class TestPriorityOrdering:
 
 class TestMaxRounds:
     def test_task_at_max_task_rounds_advances_to_failed_and_halts(self):
-        t = _task(status=TaskStatus.IN_PROGRESS, round=50, branch="worker/task-001")
+        t = _task(status=TaskStatus.IN_PROGRESS, round=50, branch="hyperloop/task-001")
         actions = decide(_world(tasks={t.id: t}), max_workers=4, max_task_rounds=50)
         advances = [a for a in actions if isinstance(a, AdvanceTask)]
         halts = [a for a in actions if isinstance(a, Halt)]
@@ -204,7 +204,7 @@ class TestMaxRounds:
 
 class TestNeedsRebase:
     def test_needs_rebase_spawns_rebase_resolver(self):
-        t = _task(status=TaskStatus.NEEDS_REBASE, branch="worker/task-001")
+        t = _task(status=TaskStatus.NEEDS_REBASE, branch="hyperloop/task-001")
         actions = decide(_world(tasks={t.id: t}), max_workers=4, max_task_rounds=50)
         spawns = [a for a in actions if isinstance(a, SpawnWorker)]
         assert len(spawns) == 1
@@ -212,7 +212,7 @@ class TestNeedsRebase:
         assert spawns[0].role == "rebase-resolver"
 
     def test_needs_rebase_prioritized_over_not_started(self):
-        rebase = _task(id="task-001", status=TaskStatus.NEEDS_REBASE, branch="worker/task-001")
+        rebase = _task(id="task-001", status=TaskStatus.NEEDS_REBASE, branch="hyperloop/task-001")
         fresh = _task(id="task-002")
         actions = decide(
             _world(tasks={rebase.id: rebase, fresh.id: fresh}),
@@ -225,7 +225,7 @@ class TestNeedsRebase:
         assert spawns[0].role == "rebase-resolver"
 
     def test_needs_rebase_with_active_worker_not_respawned(self):
-        t = _task(status=TaskStatus.NEEDS_REBASE, branch="worker/task-001")
+        t = _task(status=TaskStatus.NEEDS_REBASE, branch="hyperloop/task-001")
         worker = WorkerState(task_id="task-001", role="rebase-resolver", status="running")
         actions = decide(
             _world(tasks={t.id: t}, workers={"w1": worker}),
@@ -248,7 +248,7 @@ class TestDependencyCycles:
 class TestMixedScenarios:
     def test_reap_and_spawn_in_same_cycle(self):
         """Can reap a finished worker and spawn a new one in the same decide call."""
-        done_task = _task(id="task-001", status=TaskStatus.IN_PROGRESS, branch="worker/task-001")
+        done_task = _task(id="task-001", status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-001")
         ready_task = _task(id="task-002")
         done_worker = WorkerState(task_id="task-001", role="implementer", status="done")
         actions = decide(
@@ -268,7 +268,7 @@ class TestMixedScenarios:
 
     def test_reaps_come_before_spawns(self):
         """Reap actions should appear before spawn actions in the returned list."""
-        done_task = _task(id="task-001", status=TaskStatus.IN_PROGRESS, branch="worker/task-001")
+        done_task = _task(id="task-001", status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-001")
         ready_task = _task(id="task-002")
         done_worker = WorkerState(task_id="task-001", role="implementer", status="done")
         actions = decide(

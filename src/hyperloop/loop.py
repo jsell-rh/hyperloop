@@ -54,6 +54,8 @@ if TYPE_CHECKING:
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger()
 
+BRANCH_PREFIX = "hyperloop"
+
 
 class Orchestrator:
     """Main orchestrator loop — one serial section per cycle.
@@ -164,7 +166,7 @@ class Orchestrator:
             if task.id in self._workers:
                 continue
 
-            branch = task.branch or f"worker/{task.id}"
+            branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
 
             # Check for orphaned workers left from a previous session
             orphan = self._runtime.find_orphan(task.id, branch)
@@ -327,7 +329,7 @@ class Orchestrator:
                 else:
                     # Advancing forward on PASS — create draft PR if needed
                     if self._pr_manager is not None and task.pr is None:
-                        branch = task.branch or f"worker/{task_id}"
+                        branch = task.branch or f"{BRANCH_PREFIX}/{task_id}"
                         pr_url = self._pr_manager.create_draft(
                             task_id, branch, task.title, task.spec_ref
                         )
@@ -433,7 +435,7 @@ class Orchestrator:
         # ---- 9. Spawn workers ------------------------------------------------
         for task_id, role, position in to_spawn:
             task = self._state.get_task(task_id)
-            branch = task.branch or f"worker/{task_id}"
+            branch = task.branch or f"{BRANCH_PREFIX}/{task_id}"
             if task.branch is None:
                 self._state.set_task_branch(task_id, branch)
             prompt = self._compose_prompt(task, role)
@@ -578,7 +580,7 @@ class Orchestrator:
 
         for task_id in ordered_ids:
             task = all_tasks[task_id]
-            branch = task.branch or f"worker/{task.id}"
+            branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
 
             if self._pr_manager is not None and task.pr is not None:
                 self._merge_via_pr(task.id, task.pr, task.spec_ref, branch)
