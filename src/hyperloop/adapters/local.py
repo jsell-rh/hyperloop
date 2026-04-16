@@ -74,8 +74,10 @@ class LocalRuntime:
             env=env,
         )
         if result.returncode != 0:
-            # Branch doesn't exist yet — create it
-            subprocess.run(
+            # Branch doesn't exist yet — create it.  If -b fails because
+            # the branch name is left over from a previous run, reset it
+            # to HEAD and attach via worktree add (no -b).
+            create = subprocess.run(
                 [
                     "git",
                     "-C",
@@ -87,10 +89,23 @@ class LocalRuntime:
                     branch,
                     "HEAD",
                 ],
-                check=True,
                 capture_output=True,
                 env=env,
             )
+            if create.returncode != 0:
+                # Branch exists but isn't a worktree — reset and attach
+                subprocess.run(
+                    ["git", "-C", self._repo_path, "branch", "-f", branch, "HEAD"],
+                    check=True,
+                    capture_output=True,
+                    env=env,
+                )
+                subprocess.run(
+                    ["git", "-C", self._repo_path, "worktree", "add", worktree_path, branch],
+                    check=True,
+                    capture_output=True,
+                    env=env,
+                )
 
         # Write the prompt file
         prompt_path = os.path.join(worktree_path, "prompt.md")
