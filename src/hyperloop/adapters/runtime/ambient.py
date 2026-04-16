@@ -10,6 +10,7 @@ file parsing from the remote ref.
 
 from __future__ import annotations
 
+import atexit
 import json
 import re
 import subprocess
@@ -57,6 +58,18 @@ class AmbientRuntime:
         self._sse_threads: dict[str, threading.Thread] = {}  # session_id -> thread
         self._lock = threading.Lock()
         self._run_finished_data: dict[str, dict[str, object]] = {}  # session_id -> result
+
+        # Register shutdown hook — stop all sessions on exit (crash or clean)
+        atexit.register(self._shutdown)
+
+    def _shutdown(self) -> None:
+        """Stop all running sessions. Called on interpreter exit via atexit."""
+        session_ids = list(self._sessions.values())
+        if not session_ids:
+            return
+        log.info("ambient_shutdown", sessions=len(session_ids))
+        for session_id in session_ids:
+            self._stop_session(session_id)
 
     # -- acpctl helper --------------------------------------------------------
 
