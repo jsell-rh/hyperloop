@@ -346,6 +346,7 @@ def run(
             project_id=cfg.ambient.project_id,
             acpctl=cfg.ambient.acpctl,
             base_branch=cfg.base_branch,
+            repo_url=cfg.ambient.repo_url,
         )
     else:
         from hyperloop.adapters.runtime import AgentSdkRuntime
@@ -366,9 +367,7 @@ def run(
     process = parsed_process if parsed_process is not None else default_process
 
     if cfg.runtime == "ambient" and hasattr(runtime, "ensure_project"):
-        repo_url = cfg.ambient.repo_url if cfg.ambient else ""
-        runtime.ensure_project(repo_url)  # type: ignore[attr-defined]
-        runtime.sync_agents(composer._templates)  # type: ignore[attr-defined]
+        runtime.ensure_project()  # type: ignore[attr-defined]
 
     # Build observability probe
     obs_cfg = getattr(cfg, "observability", None)

@@ -1,11 +1,14 @@
 """AmbientRuntime — runs workers as Ambient Code Platform sessions via acpctl.
 
-Shells out to the ``acpctl`` CLI for all Ambient operations. Each parallel
-worker gets a remote session; serial agents block the main thread.
+Shells out to the ``acpctl`` CLI for all Ambient operations.  Each worker
+gets a session created via ``acpctl create session`` with ``--repo-url``
+so the agent gets the repo cloned into its workspace.
 
 Turn completion is detected via AG-UI Server-Sent Events streamed from
 ``acpctl session events``.  Results are collected by ``git fetch`` + review
 file parsing from the remote ref.
+
+No Ambient agents or inbox — sessions carry the full composed prompt directly.
 """
 
 from __future__ import annotations
@@ -24,7 +27,6 @@ import yaml
 from hyperloop.domain.model import Verdict, WorkerHandle, WorkerResult
 
 if TYPE_CHECKING:
-    from hyperloop.compose import AgentTemplate
     from hyperloop.ports.runtime import WorkerPollStatus
 
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
@@ -36,8 +38,9 @@ _SERIAL_TIMEOUT_S: float = 600.0
 class AmbientRuntime:
     """Runtime implementation using the Ambient Code Platform via acpctl.
 
-    One Ambient agent per role (persistent). One session per spawn (ephemeral).
-    Standing instructions set via agent prompt. Per-task context via inbox.
+    Sessions-only model: each spawn creates a session with the full composed
+    prompt and repo_url.  No Ambient agents, no inbox — the session carries
+    everything.
     """
 
     def __init__(
@@ -46,20 +49,22 @@ class AmbientRuntime:
         project_id: str,
         acpctl: str = "acpctl",
         base_branch: str = "main",
+        repo_url: str = "",
     ) -> None:
         self._repo_path = repo_path
         self._project_id = project_id
         self._acpctl = acpctl
         self._base_branch = base_branch
+        self._repo_url = repo_url
 
-        self._agents: dict[str, str] = {}  # role name -> Ambient agent ID
         self._sessions: dict[str, str] = {}  # task_id -> session ID
+        self._branches: dict[str, str] = {}  # task_id -> branch name
         self._completion: dict[str, str] = {}  # session_id -> "done" | "failed"
         self._sse_threads: dict[str, threading.Thread] = {}  # session_id -> thread
         self._lock = threading.Lock()
-        self._run_finished_data: dict[str, dict[str, object]] = {}  # session_id -> result
+        self._run_finished_data: dict[str, dict[str, object]] = {}
 
-        # Register shutdown hook — stop all sessions on exit (crash or clean)
+        # Stop all sessions on exit (crash or clean)
         atexit.register(self._shutdown)
 
     def _shutdown(self) -> None:
@@ -92,14 +97,13 @@ class AmbientRuntime:
             return parsed
         return result.stdout.strip()
 
-    # -- Project + agent lifecycle ---------------------------------------------
+    # -- Project lifecycle ----------------------------------------------------
 
-    def ensure_project(self, repo_url: str = "") -> None:
+    def ensure_project(self) -> None:
         """Create the Ambient project if it doesn't exist.
 
-        Idempotent — updates the project if it already exists.
+        Called at startup before any sessions are created.
         """
-        # Check if project exists
         try:
             self._run_acpctl(
                 ["project", "update", self._project_id, "--description", "hyperloop-managed"],
@@ -109,93 +113,17 @@ class AmbientRuntime:
         except subprocess.CalledProcessError:
             pass
 
-        # Create it
-        args = [
-            "create",
-            "project",
-            "--name",
-            self._project_id,
-            "--description",
-            "hyperloop-managed",
-        ]
-        if repo_url:
-            args.extend(["--repo-url", repo_url])
-        self._run_acpctl(args)
-        log.info("ambient_project_created", project_id=self._project_id, repo_url=repo_url)
-
-    def sync_agents(self, templates: dict[str, AgentTemplate]) -> None:
-        """Create/update Ambient agents from resolved templates.
-
-        Called at startup and after process-improver rebuilds templates.
-        Concatenates prompt + guidelines into the agent's prompt field.
-
-        Uses create-or-update: tries ``agent update`` first, falls back
-        to ``agent create`` if the agent doesn't exist yet.
-        """
-        for role, template in templates.items():
-            agent_name = f"hyperloop-{role}"
-            prompt = template.prompt
-            if template.guidelines:
-                prompt = f"{prompt}\n\n## Guidelines\n{template.guidelines}"
-
-            labels = json.dumps(
-                {
-                    "hyperloop.io/managed": "true",
-                    "hyperloop.io/role": role,
-                }
-            )
-
-            agent_id = self._create_or_update_agent(agent_name, prompt, labels)
-            self._agents[role] = agent_id
-            log.info("ambient_agent_synced", role=role, agent_id=agent_id)
-
-    def _create_or_update_agent(self, agent_name: str, prompt: str, labels: str) -> str:
-        """Create or update an Ambient agent, returning its ID."""
-        # Try update first
-        try:
-            self._run_acpctl(
-                [
-                    "agent",
-                    "update",
-                    agent_name,
-                    "--project-id",
-                    self._project_id,
-                    "--prompt",
-                    prompt,
-                    "--labels",
-                    labels,
-                ]
-            )
-            # Fetch the agent to get its ID
-            agent_data = self._run_acpctl(
-                ["agent", "get", agent_name, "--project-id", self._project_id, "-o", "json"],
-                parse_json=True,
-            )
-            data = cast("dict[str, object]", agent_data)
-            return str(data.get("id", agent_name))
-        except subprocess.CalledProcessError:
-            pass
-
-        # Agent doesn't exist — create it
-        result = self._run_acpctl(
+        self._run_acpctl(
             [
-                "agent",
                 "create",
+                "project",
                 "--name",
-                agent_name,
-                "--project-id",
                 self._project_id,
-                "--prompt",
-                prompt,
-                "--labels",
-                labels,
-                "-o",
-                "json",
-            ],
-            parse_json=True,
+                "--description",
+                "hyperloop-managed",
+            ]
         )
-        data = cast("dict[str, object]", result)
-        return str(data.get("id", agent_name))
+        log.info("ambient_project_created", project_id=self._project_id)
 
     # -- Runtime protocol -----------------------------------------------------
 
@@ -216,68 +144,33 @@ class AmbientRuntime:
             log.warning("push_branch_failed", branch=branch, error=str(exc))
 
     def spawn(self, task_id: str, role: str, prompt: str, branch: str) -> WorkerHandle:
-        """Start an Ambient session for a task.
+        """Create an Ambient session for a task.
 
-        1. Update agent annotations with task/branch.
-        2. Send inbox message with per-task context.
-        3. Start session.
-        4. Start background SSE thread.
+        Uses ``acpctl create session`` with the full composed prompt and
+        repo_url.  The session auto-starts (operator sets phase=Pending→Running).
         """
-        agent_id = self._agents[role]
-        agent_name = f"hyperloop-{role}"
+        session_name = f"hyperloop-{task_id}-{role}"
 
-        # Update annotations
-        annotations = json.dumps(
-            {
-                "hyperloop.io/task-id": task_id,
-                "hyperloop.io/branch": branch,
-            }
-        )
-        self._run_acpctl(
-            [
-                "agent",
-                "update",
-                agent_name,
-                "--project-id",
-                self._project_id,
-                "--annotations",
-                annotations,
-            ]
-        )
+        # Build create session args
+        args = [
+            "create",
+            "session",
+            "--name",
+            session_name,
+            "--prompt",
+            prompt,
+            "-o",
+            "json",
+        ]
+        if self._repo_url:
+            args.extend(["--repo-url", self._repo_url])
 
-        # Send inbox message
-        self._run_acpctl(
-            [
-                "inbox",
-                "send",
-                "--project-id",
-                self._project_id,
-                "--pa-id",
-                agent_id,
-                "--body",
-                prompt,
-                "--from-name",
-                "hyperloop-orchestrator",
-            ]
-        )
-
-        # Start session (use `agent start` which supports -o json)
-        start_result = self._run_acpctl(
-            [
-                "agent",
-                "start",
-                agent_name,
-                "--project-id",
-                self._project_id,
-                "-o",
-                "json",
-            ],
-            parse_json=True,
-        )
-        start_data = cast("dict[str, object]", start_result)
-        session_id = str(start_data["id"])
+        result = self._run_acpctl(args, parse_json=True)
+        data = cast("dict[str, object]", result)
+        session_id = str(data["id"])
 
         self._sessions[task_id] = session_id
+        self._branches[task_id] = branch
 
         # Start SSE background thread
         thread = threading.Thread(
@@ -298,7 +191,7 @@ class AmbientRuntime:
         return WorkerHandle(
             task_id=task_id,
             role=role,
-            agent_id=agent_id,
+            agent_id=session_name,
             session_id=session_id,
         )
 
@@ -325,7 +218,7 @@ class AmbientRuntime:
         """
         task_id = handle.task_id
         session_id = handle.session_id or ""
-        branch = self._get_branch_for_task(task_id)
+        branch = self._branches.get(task_id, task_id)
 
         # Git fetch with backoff
         fetched = self._git_fetch_with_backoff(branch)
@@ -364,40 +257,39 @@ class AmbientRuntime:
     def find_orphan(self, task_id: str, branch: str) -> WorkerHandle | None:
         """Find an orphaned session from a previous orchestrator run.
 
-        Checks each managed agent for a current_session_id whose annotations
-        match the given task_id.
+        Scans all running sessions in the project for one whose name
+        matches the hyperloop naming convention for this task.
         """
-        for role, agent_id in self._agents.items():
-            agent_name = f"hyperloop-{role}"
-            try:
-                agent_data = self._run_acpctl(
-                    ["agent", "get", agent_name, "--project-id", self._project_id, "-o", "json"],
-                    parse_json=True,
-                )
-            except subprocess.CalledProcessError:
-                continue
+        try:
+            result = self._run_acpctl(
+                ["get", "sessions", "--project-id", self._project_id, "-o", "json"],
+                parse_json=True,
+            )
+        except subprocess.CalledProcessError:
+            return None
 
-            data = cast("dict[str, object]", agent_data)
-            current_session = data.get("current_session_id")
-            if not current_session:
-                continue
+        data = cast("dict[str, object]", result)
+        items = data.get("items")
+        if not isinstance(items, list):
+            return None
 
-            raw_annotations = data.get("annotations")
-            if isinstance(raw_annotations, str):
-                try:
-                    raw_annotations = json.loads(raw_annotations)
-                except json.JSONDecodeError:
-                    continue
-            if not isinstance(raw_annotations, dict):
+        prefix = f"hyperloop-{task_id}-"
+        for item_raw in cast("list[object]", items):
+            if not isinstance(item_raw, dict):
                 continue
+            item = cast("dict[str, object]", item_raw)
+            name = str(item.get("name", ""))
+            phase = str(item.get("phase", ""))
+            session_id = str(item.get("id", ""))
 
-            ann = cast("dict[str, str]", raw_annotations)
-            if ann.get("hyperloop.io/task-id") != task_id:
+            if not name.startswith(prefix):
+                continue
+            if phase != "Running":
                 continue
 
             # Found an orphaned session
-            session_id = str(current_session)
             self._sessions[task_id] = session_id
+            self._branches[task_id] = branch
 
             # Start SSE thread for recovery
             thread = threading.Thread(
@@ -411,59 +303,42 @@ class AmbientRuntime:
             log.info(
                 "ambient_orphan_found",
                 task_id=task_id,
-                role=role,
                 session_id=session_id,
             )
 
             return WorkerHandle(
                 task_id=task_id,
-                role=role,
-                agent_id=agent_id,
+                role="unknown",
+                agent_id=name,
                 session_id=session_id,
             )
 
         return None
 
     def run_serial(self, role: str, prompt: str) -> bool:
-        """Run a serial agent blocking the main thread.
+        """Run a serial session blocking the main thread.
 
-        Streams SSE in the foreground until RUN_FINISHED or timeout.
-        Then fetches and fast-forwards trunk.
+        Creates a session with the full prompt, streams SSE until
+        RUN_FINISHED, then fetches and fast-forwards trunk.
         """
-        agent_id = self._agents[role]
+        session_name = f"hyperloop-serial-{role}"
 
-        # Send inbox
-        self._run_acpctl(
-            [
-                "inbox",
-                "send",
-                "--project-id",
-                self._project_id,
-                "--pa-id",
-                agent_id,
-                "--body",
-                prompt,
-                "--from-name",
-                "hyperloop-orchestrator",
-            ]
-        )
+        args = [
+            "create",
+            "session",
+            "--name",
+            session_name,
+            "--prompt",
+            prompt,
+            "-o",
+            "json",
+        ]
+        if self._repo_url:
+            args.extend(["--repo-url", self._repo_url])
 
-        # Start session (use `agent start` which supports -o json)
-        agent_name = f"hyperloop-{role}"
-        start_result = self._run_acpctl(
-            [
-                "agent",
-                "start",
-                agent_name,
-                "--project-id",
-                self._project_id,
-                "-o",
-                "json",
-            ],
-            parse_json=True,
-        )
-        start_data = cast("dict[str, object]", start_result)
-        session_id = str(start_data["id"])
+        result = self._run_acpctl(args, parse_json=True)
+        data = cast("dict[str, object]", result)
+        session_id = str(data["id"])
 
         log.info("ambient_serial_started", role=role, session_id=session_id)
 
@@ -506,7 +381,7 @@ class AmbientRuntime:
         """Background thread: stream AG-UI events and watch for RUN_FINISHED.
 
         Retries the connection with backoff — the session may not be ready
-        for SSE immediately after ``agent start`` returns.
+        for SSE immediately after creation.
         """
         for attempt, delay in enumerate(_BACKOFF_SCHEDULE):
             try:
@@ -571,10 +446,10 @@ class AmbientRuntime:
             proc.wait()
 
     def _stream_sse_foreground(self, session_id: str) -> bool:
-        """Foreground SSE stream for serial agents. Blocks until done or timeout.
+        """Foreground SSE stream for serial sessions. Blocks until done or timeout.
 
         Retries the connection with backoff — the session may not be ready
-        for SSE immediately after ``agent start`` returns.
+        for SSE immediately after creation.
         """
         deadline = time.monotonic() + _SERIAL_TIMEOUT_S
 
@@ -732,40 +607,10 @@ class AmbientRuntime:
     def _cleanup(self, task_id: str, session_id: str) -> None:
         """Remove internal tracking state for a task/session."""
         self._sessions.pop(task_id, None)
+        self._branches.pop(task_id, None)
         thread = self._sse_threads.pop(session_id, None)
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
         with self._lock:
             self._completion.pop(session_id, None)
             self._run_finished_data.pop(session_id, None)
-
-    def _get_branch_for_task(self, task_id: str) -> str:
-        """Look up the branch for a task from acpctl agent annotations.
-
-        Falls back to task_id as branch name if annotation lookup fails.
-        """
-        for role in self._agents:
-            agent_name = f"hyperloop-{role}"
-            try:
-                agent_data = self._run_acpctl(
-                    ["agent", "get", agent_name, "--project-id", self._project_id, "-o", "json"],
-                    parse_json=True,
-                )
-            except subprocess.CalledProcessError:
-                continue
-
-            data = cast("dict[str, object]", agent_data)
-            raw_annotations = data.get("annotations")
-            if isinstance(raw_annotations, str):
-                try:
-                    raw_annotations = json.loads(raw_annotations)
-                except json.JSONDecodeError:
-                    continue
-            if not isinstance(raw_annotations, dict):
-                continue
-
-            ann = cast("dict[str, str]", raw_annotations)
-            if ann.get("hyperloop.io/task-id") == task_id:
-                return ann.get("hyperloop.io/branch", task_id)
-
-        return task_id
