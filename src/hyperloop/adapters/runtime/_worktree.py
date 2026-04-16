@@ -55,8 +55,19 @@ def create_worktree(repo_path: str, worktree_path: str, branch: str) -> None:
     """Create a git worktree, handling stale state from previous runs.
 
     Cleans up any stale worktree directory or branch before creating.
+    Always prunes stale worktree references first — git's internal tracking
+    can outlive the worktree directory (e.g. after a crash or manual cleanup).
     """
     env = clean_git_env()
+
+    # Prune stale worktree references whose directories no longer exist.
+    # Without this, git refuses to checkout a branch it thinks is already
+    # checked out by a (now-gone) worktree.
+    subprocess.run(
+        ["git", "-C", repo_path, "worktree", "prune"],
+        capture_output=True,
+        env=env,
+    )
 
     # Clean up stale worktree directory from a previous run
     if os.path.exists(worktree_path):
