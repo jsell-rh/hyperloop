@@ -86,6 +86,9 @@ class AmbientRuntime:
 
         Called at startup and after process-improver rebuilds templates.
         Concatenates prompt + guidelines into the agent's prompt field.
+
+        Uses create-or-update: tries ``agent update`` first, falls back
+        to ``agent create`` if the agent doesn't exist yet.
         """
         for role, template in templates.items():
             agent_name = f"hyperloop-{role}"
@@ -100,7 +103,15 @@ class AmbientRuntime:
                 }
             )
 
-            result = self._run_acpctl(
+            agent_id = self._create_or_update_agent(agent_name, prompt, labels)
+            self._agents[role] = agent_id
+            log.info("ambient_agent_synced", role=role, agent_id=agent_id)
+
+    def _create_or_update_agent(self, agent_name: str, prompt: str, labels: str) -> str:
+        """Create or update an Ambient agent, returning its ID."""
+        # Try update first
+        try:
+            self._run_acpctl(
                 [
                     "agent",
                     "update",
@@ -111,15 +122,38 @@ class AmbientRuntime:
                     prompt,
                     "--labels",
                     labels,
-                    "-o",
-                    "json",
-                ],
+                ]
+            )
+            # Fetch the agent to get its ID
+            agent_data = self._run_acpctl(
+                ["agent", "get", agent_name, "--project-id", self._project_id, "-o", "json"],
                 parse_json=True,
             )
-            agent_data = cast("dict[str, object]", result)
-            agent_id = str(agent_data.get("id", agent_data.get("name", agent_name)))
-            self._agents[role] = agent_id
-            log.info("ambient_agent_synced", role=role, agent_id=agent_id)
+            data = cast("dict[str, object]", agent_data)
+            return str(data.get("id", agent_name))
+        except subprocess.CalledProcessError:
+            pass
+
+        # Agent doesn't exist — create it
+        result = self._run_acpctl(
+            [
+                "agent",
+                "create",
+                "--name",
+                agent_name,
+                "--project-id",
+                self._project_id,
+                "--prompt",
+                prompt,
+                "--labels",
+                labels,
+                "-o",
+                "json",
+            ],
+            parse_json=True,
+        )
+        data = cast("dict[str, object]", result)
+        return str(data.get("id", agent_name))
 
     # -- Runtime protocol -----------------------------------------------------
 
@@ -185,13 +219,21 @@ class AmbientRuntime:
             ]
         )
 
-        # Start session
+        # Start session (use `agent start` which supports -o json)
         start_result = self._run_acpctl(
-            ["start", agent_id, "--project-id", self._project_id, "-o", "json"],
+            [
+                "agent",
+                "start",
+                agent_name,
+                "--project-id",
+                self._project_id,
+                "-o",
+                "json",
+            ],
             parse_json=True,
         )
         start_data = cast("dict[str, object]", start_result)
-        session_id = str(start_data["session_id"])
+        session_id = str(start_data["id"])
 
         self._sessions[task_id] = session_id
 
@@ -298,11 +340,16 @@ class AmbientRuntime:
             if not current_session:
                 continue
 
-            annotations = data.get("annotations")
-            if not isinstance(annotations, dict):
+            raw_annotations = data.get("annotations")
+            if isinstance(raw_annotations, str):
+                try:
+                    raw_annotations = json.loads(raw_annotations)
+                except json.JSONDecodeError:
+                    continue
+            if not isinstance(raw_annotations, dict):
                 continue
 
-            ann = cast("dict[str, str]", annotations)
+            ann = cast("dict[str, str]", raw_annotations)
             if ann.get("hyperloop.io/task-id") != task_id:
                 continue
 
@@ -359,13 +406,22 @@ class AmbientRuntime:
             ]
         )
 
-        # Start session
+        # Start session (use `agent start` which supports -o json)
+        agent_name = f"hyperloop-{role}"
         start_result = self._run_acpctl(
-            ["start", agent_id, "--project-id", self._project_id, "-o", "json"],
+            [
+                "agent",
+                "start",
+                agent_name,
+                "--project-id",
+                self._project_id,
+                "-o",
+                "json",
+            ],
             parse_json=True,
         )
         start_data = cast("dict[str, object]", start_result)
-        session_id = str(start_data["session_id"])
+        session_id = str(start_data["id"])
 
         log.info("ambient_serial_started", role=role, session_id=session_id)
 
@@ -598,11 +654,16 @@ class AmbientRuntime:
                 continue
 
             data = cast("dict[str, object]", agent_data)
-            annotations = data.get("annotations")
-            if not isinstance(annotations, dict):
+            raw_annotations = data.get("annotations")
+            if isinstance(raw_annotations, str):
+                try:
+                    raw_annotations = json.loads(raw_annotations)
+                except json.JSONDecodeError:
+                    continue
+            if not isinstance(raw_annotations, dict):
                 continue
 
-            ann = cast("dict[str, str]", annotations)
+            ann = cast("dict[str, str]", raw_annotations)
             if ann.get("hyperloop.io/task-id") == task_id:
                 return ann.get("hyperloop.io/branch", task_id)
 

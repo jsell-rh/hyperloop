@@ -68,12 +68,22 @@ def _default_behaviour() -> str:
             print(json.dumps(obj))
             sys.exit(0)
 
+        if cmd == "agent" and len(args) > 1 and args[1] == "create":
+            name_idx = args.index("--name") + 1 if "--name" in args else 3
+            name = args[name_idx] if name_idx < len(args) else "unknown"
+            print(json.dumps({"id": f"agent-id-{name}", "name": name}))
+            sys.exit(0)
+
+        if cmd == "agent" and len(args) > 1 and args[1] == "start":
+            print(json.dumps({"id": "ses-001", "name": "test-session"}))
+            sys.exit(0)
+
         if cmd == "inbox" and len(args) > 1 and args[1] == "send":
             print("ok")
             sys.exit(0)
 
         if cmd == "start":
-            print(json.dumps({"session_id": "ses-001"}))
+            print(json.dumps({"id": "ses-001"}))
             sys.exit(0)
 
         if cmd == "stop":
@@ -102,12 +112,27 @@ def _slow_sse_behaviour() -> str:
             print(json.dumps({"id": f"agent-id-{name}", "name": name}))
             sys.exit(0)
 
+        if cmd == "agent" and len(args) > 1 and args[1] == "get":
+            name = args[2] if len(args) > 2 else "unknown"
+            print(json.dumps({"id": f"agent-id-{name}", "name": name}))
+            sys.exit(0)
+
+        if cmd == "agent" and len(args) > 1 and args[1] == "create":
+            name_idx = args.index("--name") + 1 if "--name" in args else 3
+            name = args[name_idx] if name_idx < len(args) else "unknown"
+            print(json.dumps({"id": f"agent-id-{name}", "name": name}))
+            sys.exit(0)
+
+        if cmd == "agent" and len(args) > 1 and args[1] == "start":
+            print(json.dumps({"id": "ses-002", "name": "test-session"}))
+            sys.exit(0)
+
         if cmd == "inbox" and len(args) > 1 and args[1] == "send":
             print("ok")
             sys.exit(0)
 
         if cmd == "start":
-            print(json.dumps({"session_id": "ses-002"}))
+            print(json.dumps({"id": "ses-002"}))
             sys.exit(0)
 
         if cmd == "stop":
@@ -234,13 +259,13 @@ class TestSyncAgents:
         rt.sync_agents(templates)
 
         cmds = _read_log(acpctl_log)
-        # Should have one agent update call
-        assert len(cmds) == 1
+        # Should have agent update + agent get (for ID)
+        assert len(cmds) == 2
         assert cmds[0][0] == "agent"
         assert cmds[0][1] == "update"
         assert cmds[0][2] == "hyperloop-implementer"
 
-        # Find the --prompt arg
+        # Find the --prompt arg in the update call
         prompt_idx = cmds[0].index("--prompt")
         prompt_val = cmds[0][prompt_idx + 1]
         assert "Base prompt." in prompt_val
@@ -272,11 +297,11 @@ class TestSpawn:
         assert handle.session_id == "ses-001"
 
         cmds = _read_log(acpctl_log)
-        # Commands: agent update (annotations), inbox send, start
-        subcmds = [c[0] for c in cmds]
-        assert "agent" in subcmds  # annotation update
-        assert "inbox" in subcmds
-        assert "start" in subcmds
+        # Commands: agent update (annotations), inbox send, agent start
+        subcmd_pairs = [(c[0], c[1] if len(c) > 1 else "") for c in cmds]
+        assert ("agent", "update") in subcmd_pairs  # annotation update
+        assert ("inbox", "send") in subcmd_pairs
+        assert ("agent", "start") in subcmd_pairs  # session start
 
     def test_spawn_records_session(self, fake_acpctl: str, git_repo: str) -> None:
         rt = _make_runtime(fake_acpctl, git_repo)
@@ -394,12 +419,22 @@ class TestReap:
                 print(json.dumps(obj))
                 sys.exit(0)
 
+            if cmd == "agent" and len(args) > 1 and args[1] == "create":
+                name_idx = args.index("--name") + 1 if "--name" in args else 3
+                name = args[name_idx] if name_idx < len(args) else "unknown"
+                print(json.dumps({"id": f"agent-id-{name}", "name": name}))
+                sys.exit(0)
+
+            if cmd == "agent" and len(args) > 1 and args[1] == "start":
+                print(json.dumps({"id": "ses-reap", "name": "test-session"}))
+                sys.exit(0)
+
             if cmd == "inbox" and len(args) > 1 and args[1] == "send":
                 print("ok")
                 sys.exit(0)
 
             if cmd == "start":
-                print(json.dumps({"session_id": "ses-reap"}))
+                print(json.dumps({"id": "ses-reap"}))
                 sys.exit(0)
 
             if cmd == "stop":
@@ -494,12 +529,22 @@ class TestReap:
                 print(json.dumps(obj))
                 sys.exit(0)
 
+            if cmd == "agent" and len(args) > 1 and args[1] == "create":
+                name_idx = args.index("--name") + 1 if "--name" in args else 3
+                name = args[name_idx] if name_idx < len(args) else "unknown"
+                print(json.dumps({"id": f"agent-id-{name}", "name": name}))
+                sys.exit(0)
+
+            if cmd == "agent" and len(args) > 1 and args[1] == "start":
+                print(json.dumps({"id": "ses-noreview", "name": "test-session"}))
+                sys.exit(0)
+
             if cmd == "inbox" and len(args) > 1 and args[1] == "send":
                 print("ok")
                 sys.exit(0)
 
             if cmd == "start":
-                print(json.dumps({"session_id": "ses-noreview"}))
+                print(json.dumps({"id": "ses-noreview"}))
                 sys.exit(0)
 
             if cmd == "stop":
