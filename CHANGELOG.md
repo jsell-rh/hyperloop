@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.14.1 (2026-04-16)
+
+### Bug Fixes
+
+- Crash
+  ([`88ef2fb`](https://github.com/jsell-rh/hyperloop/commit/88ef2fba6635b16cc80707269d86be887f2cd1f7))
+
+
 ## v0.14.0 (2026-04-16)
 
 
