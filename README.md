@@ -207,13 +207,12 @@ All task state is tracked in git. Every commit includes `Spec-Ref` and `Task-Ref
 ```yaml
 # .hyperloop.yaml
 
-overlay: .hyperloop/agents/    # local path or git URL to kustomization dir
-base_ref: github.com/jsell-rh/hyperloop//base?ref=v1.0.0  # kustomize remote base (env: HYPERLOOP_BASE_REF)
+overlay: .hyperloop/agents/    # path to kustomization dir (default: .hyperloop/agents/)
+base_ref: github.com/jsell-rh/hyperloop//base?ref=v1.0.0  # remote base for `hyperloop init` (env: HYPERLOOP_BASE_REF)
 
 target:
   repo: owner/repo                 # GitHub repo (default: inferred from git remote)
   base_branch: main                # trunk branch
-  specs_dir: specs                 # where specs live
 
 runtime:
   default: local                   # local (v1) | ambient (planned)

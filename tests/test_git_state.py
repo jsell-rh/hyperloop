@@ -64,11 +64,6 @@ TASK_027_CONTENT = dedent("""\
     branch: null
     pr: null
     ---
-
-    ## Spec
-    Build the Places DB schema.
-
-    ## Findings
     """)
 
 TASK_028_CONTENT = dedent("""\
@@ -83,12 +78,6 @@ TASK_028_CONTENT = dedent("""\
     branch: worker/task-028
     pr: "42"
     ---
-
-    ## Spec
-    Implement session restore from Places DB.
-
-    ## Findings
-    Tests failed on round 1.
     """)
 
 

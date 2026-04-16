@@ -49,9 +49,8 @@ class Config:
 
     repo: str | None  # owner/repo or inferred from git remote
     base_branch: str  # default: "main"
-    specs_dir: str  # default: "specs"
-    overlay: str | None  # path or git URL to kustomization dir
-    base_ref: str  # kustomize remote base ref (env: HYPERLOOP_BASE_REF)
+    overlay: str | None  # path to kustomization dir (default: .hyperloop/agents/)
+    base_ref: str  # kustomize remote base ref, used by `hyperloop init`
     runtime: str  # "local" (v1 only)
     max_workers: int  # default: 6
     auto_merge: bool  # default: True
@@ -73,7 +72,6 @@ def _defaults() -> dict[str, object]:
     return {
         "repo": None,
         "base_branch": "main",
-        "specs_dir": "specs",
         "overlay": None,
         "base_ref": os.environ.get("HYPERLOOP_BASE_REF", DEFAULT_BASE_REF),
         "runtime": "local",
@@ -116,9 +114,6 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
             flat["repo"] = target["repo"]
         if "base_branch" in target:
             flat["base_branch"] = target["base_branch"]
-        if "specs_dir" in target:
-            flat["specs_dir"] = target["specs_dir"]
-
     # runtime section
     runtime = raw.get("runtime")
     if isinstance(runtime, dict):
@@ -229,7 +224,6 @@ def load_config(
     return Config(
         repo=values["repo"],  # type: ignore[arg-type]
         base_branch=str(values["base_branch"]),
-        specs_dir=str(values["specs_dir"]),
         overlay=values["overlay"] if values["overlay"] is not None else None,  # type: ignore[arg-type]
         base_ref=str(values["base_ref"]),
         runtime=str(values["runtime"]),

@@ -24,8 +24,6 @@ overlay: .hyperloop/agents/
 target:
   repo: acme/widgets
   base_branch: develop
-  specs_dir: specifications
-
 runtime:
   default: local
   max_workers: 4
@@ -45,7 +43,6 @@ max_rebase_attempts: 5
 
         assert cfg.repo == "acme/widgets"
         assert cfg.base_branch == "develop"
-        assert cfg.specs_dir == "specifications"
         assert cfg.overlay == ".hyperloop/agents/"
         assert cfg.runtime == "local"
         assert cfg.max_workers == 4
@@ -65,7 +62,6 @@ class TestLoadConfigDefaults:
 
         assert cfg.repo is None
         assert cfg.base_branch == "main"
-        assert cfg.specs_dir == "specs"
         assert cfg.overlay is None
         assert cfg.runtime == "local"
         assert cfg.max_workers == 6
@@ -102,7 +98,6 @@ target:
 
         assert cfg.base_branch == "develop"
         assert cfg.repo is None
-        assert cfg.specs_dir == "specs"
         assert cfg.max_workers == 6
         assert cfg.auto_merge is True
 

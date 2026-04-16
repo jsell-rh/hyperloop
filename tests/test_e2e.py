@@ -135,11 +135,6 @@ TASK_CONTENT = dedent("""\
     branch: null
     pr: null
     ---
-
-    ## Spec
-    Build the example feature.
-
-    ## Findings
     """)
 
 
@@ -456,11 +451,6 @@ class TestPRFlowWithFakePRManager:
             branch: null
             pr: https://github.com/test/repo/pull/1
             ---
-
-            ## Spec
-            Build the example feature.
-
-            ## Findings
             """)
         _write_task_file(repo, "task-001", task_with_pr)
         _commit_all(repo, "chore: seed spec and task")
@@ -533,11 +523,6 @@ class TestGateBlocksUntilLgtm:
             branch: null
             pr: https://github.com/test/repo/pull/1
             ---
-
-            ## Spec
-            Build the example feature.
-
-            ## Findings
             """)
         _write_task_file(repo, "task-001", task_with_pr)
         _commit_all(repo, "chore: seed spec and task")

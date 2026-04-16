@@ -1,7 +1,8 @@
 """GitStateStore — reads/writes task files in a git repo.
 
 Implements the StateStore protocol by parsing YAML frontmatter task files
-and using git for persistence.
+and using git for persistence.  Task files are pure metadata (frontmatter
+only); review findings live in separate review files.
 """
 
 from __future__ import annotations
@@ -29,20 +30,18 @@ _STATUS_FROM_YAML: dict[str, TaskStatus] = {
 _STATUS_TO_YAML: dict[TaskStatus, str] = {v: k for k, v in _STATUS_FROM_YAML.items()}
 
 
-def _parse_task_file(content: str) -> tuple[dict[str, object], str]:
-    """Parse a task file into (frontmatter_dict, body_text).
+def _parse_task_file(content: str) -> dict[str, object]:
+    """Parse a task file into a frontmatter dict.
 
-    The file format is YAML frontmatter delimited by --- lines, followed by
-    markdown body.
+    The file format is pure YAML frontmatter delimited by ``---`` lines.
     """
-    match = re.match(r"^---\n(.*?)\n---\n(.*)", content, re.DOTALL)
+    match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
     if not match:
         msg = "Task file missing YAML frontmatter"
         raise ValueError(msg)
     fm_raw = match.group(1)
-    body = match.group(2)
     frontmatter: dict[str, object] = yaml.safe_load(fm_raw)
-    return frontmatter, body
+    return frontmatter
 
 
 def _frontmatter_to_task(fm: dict[str, object]) -> Task:
@@ -76,9 +75,8 @@ def _frontmatter_to_task(fm: dict[str, object]) -> Task:
     )
 
 
-def _serialize_task_file(fm: dict[str, object], body: str) -> str:
-    """Serialize frontmatter dict and body back into a task file string."""
-    # Preserve a specific field order for readability
+def _serialize_task_file(fm: dict[str, object]) -> str:
+    """Serialize frontmatter dict into a task file string (pure metadata)."""
     ordered_keys = ["id", "title", "spec_ref", "status", "phase", "deps", "round", "branch", "pr"]
     ordered_fm: dict[str, object] = {}
     for key in ordered_keys:
@@ -94,15 +92,14 @@ def _serialize_task_file(fm: dict[str, object], body: str) -> str:
         sort_keys=False,
         allow_unicode=True,
     )
-    return "---\n" + fm_text + "---\n" + body
+    return "---\n" + fm_text + "---\n"
 
 
 class GitStateStore:
     """StateStore implementation backed by task files in a git repository."""
 
-    def __init__(self, repo_path: Path, specs_dir: str = "specs") -> None:
+    def __init__(self, repo_path: Path) -> None:
         self._repo = repo_path
-        self._specs_dir = specs_dir
         self._tasks_dir = repo_path / ".hyperloop" / "state" / "tasks"
         self._reviews_dir = repo_path / ".hyperloop" / "state" / "reviews"
         self._epochs: dict[str, str] = {}
@@ -110,18 +107,18 @@ class GitStateStore:
     def _task_file_path(self, task_id: str) -> Path:
         return self._tasks_dir / f"{task_id}.md"
 
-    def _read_task_file(self, task_id: str) -> tuple[dict[str, object], str]:
+    def _read_task_file(self, task_id: str) -> dict[str, object]:
         """Read and parse a task file. Raises KeyError if not found."""
         path = self._task_file_path(task_id)
         if not path.exists():
             raise KeyError(task_id)
         return _parse_task_file(path.read_text())
 
-    def _write_task_file(self, task_id: str, fm: dict[str, object], body: str) -> None:
+    def _write_task_file(self, task_id: str, fm: dict[str, object]) -> None:
         """Write a task file to disk (does NOT commit)."""
         path = self._task_file_path(task_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_serialize_task_file(fm, body))
+        path.write_text(_serialize_task_file(fm))
 
     def _git(self, *args: str) -> str:
         """Run a git command in the repo and return stdout."""
@@ -140,7 +137,7 @@ class GitStateStore:
         tasks: dict[str, Task] = {}
         if self._tasks_dir.exists():
             for task_file in sorted(self._tasks_dir.glob("task-*.md")):
-                fm, _body = _parse_task_file(task_file.read_text())
+                fm = _parse_task_file(task_file.read_text())
                 task = _frontmatter_to_task(fm)
                 tasks[task.id] = task
 
@@ -153,7 +150,7 @@ class GitStateStore:
 
     def get_task(self, task_id: str) -> Task:
         """Return a single task by ID. Raises KeyError if not found."""
-        fm, _body = self._read_task_file(task_id)
+        fm = self._read_task_file(task_id)
         return _frontmatter_to_task(fm)
 
     def transition_task(
@@ -164,12 +161,12 @@ class GitStateStore:
         round: int | None = None,
     ) -> None:
         """Update a task's status, phase, and optionally round."""
-        fm, body = self._read_task_file(task_id)
+        fm = self._read_task_file(task_id)
         fm["status"] = _STATUS_TO_YAML[status]
         fm["phase"] = str(phase) if phase is not None else None
         if round is not None:
             fm["round"] = round
-        self._write_task_file(task_id, fm, body)
+        self._write_task_file(task_id, fm)
 
     def store_review(
         self,
@@ -234,15 +231,15 @@ class GitStateStore:
 
     def set_task_branch(self, task_id: str, branch: str) -> None:
         """Set the branch name on a task file."""
-        fm, body = self._read_task_file(task_id)
+        fm = self._read_task_file(task_id)
         fm["branch"] = branch
-        self._write_task_file(task_id, fm, body)
+        self._write_task_file(task_id, fm)
 
     def set_task_pr(self, task_id: str, pr_url: str) -> None:
         """Set the PR URL on a task file."""
-        fm, body = self._read_task_file(task_id)
+        fm = self._read_task_file(task_id)
         fm["pr"] = pr_url
-        self._write_task_file(task_id, fm, body)
+        self._write_task_file(task_id, fm)
 
     def commit(self, message: str) -> None:
         """Stage all changes and create a git commit.

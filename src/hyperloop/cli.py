@@ -60,8 +60,7 @@ def _config_table(cfg: Config) -> Table:
 
     table.add_row("repo", str(cfg.repo) if cfg.repo else "[dim]not set (will infer from git)[/dim]")
     table.add_row("base_branch", cfg.base_branch)
-    table.add_row("specs_dir", cfg.specs_dir)
-    table.add_row("overlay", cfg.overlay or "[dim]none[/dim]")
+    table.add_row("overlay", cfg.overlay or "[dim].hyperloop/agents/[/dim]")
     table.add_row("base_ref", cfg.base_ref)
     table.add_row("runtime", cfg.runtime)
     table.add_row("max_workers", str(cfg.max_workers))
@@ -333,7 +332,7 @@ def run(
         ),
     )
 
-    state = GitStateStore(repo_path, specs_dir=cfg.specs_dir)
+    state = GitStateStore(repo_path)
     runtime = LocalRuntime(repo_path=str(repo_path))
     serial_runner = SubprocessSerialRunner(repo_path=str(repo_path))
 

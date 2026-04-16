@@ -70,11 +70,6 @@ TASK_CONTENT = dedent("""\
     branch: null
     pr: null
     ---
-
-    ## Spec
-    Build the widget.
-
-    ## Findings
     """)
 
 
