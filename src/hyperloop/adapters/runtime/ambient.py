@@ -524,8 +524,34 @@ class AmbientRuntime:
             proc.wait()
 
     def _stream_sse_foreground(self, session_id: str) -> bool:
-        """Foreground SSE stream for serial agents. Blocks until done or timeout."""
+        """Foreground SSE stream for serial agents. Blocks until done or timeout.
+
+        Retries the connection with backoff — the session may not be ready
+        for SSE immediately after ``agent start`` returns.
+        """
         deadline = time.monotonic() + _SERIAL_TIMEOUT_S
+
+        for attempt, delay in enumerate(_BACKOFF_SCHEDULE):
+            if time.monotonic() > deadline:
+                log.warning("serial_sse_timeout", session_id=session_id)
+                return False
+
+            result = self._stream_sse_foreground_once(session_id, deadline)
+            if result is not None:
+                return result  # True = RUN_FINISHED, False = timeout
+
+            log.warning(
+                "serial_sse_connect_retry",
+                session_id=session_id,
+                attempt=attempt + 1,
+            )
+            time.sleep(delay)
+
+        log.warning("serial_sse_exhausted", session_id=session_id)
+        return False
+
+    def _stream_sse_foreground_once(self, session_id: str, deadline: float) -> bool | None:
+        """One SSE attempt. Returns True (done), False (timeout), None (retry)."""
         try:
             proc = subprocess.Popen(
                 [self._acpctl, "session", "events", session_id],
@@ -535,8 +561,9 @@ class AmbientRuntime:
             )
             try:
                 if proc.stdout is None:
-                    return False
+                    return None
 
+                got_any_event = False
                 for line in proc.stdout:
                     if time.monotonic() > deadline:
                         log.warning("serial_sse_timeout", session_id=session_id)
@@ -552,15 +579,18 @@ class AmbientRuntime:
 
                     if not isinstance(event, dict):
                         continue
+                    got_any_event = True
                     if event.get("type") == "RUN_FINISHED":
                         return True
+
+                # Process exited without RUN_FINISHED
+                return None if not got_any_event else False
             finally:
                 proc.terminate()
                 proc.wait()
         except Exception:
             log.exception("serial_sse_error", session_id=session_id)
-
-        return False
+            return None
 
     def _git_fetch_with_backoff(self, branch: str) -> bool:
         """Fetch a branch from origin with exponential backoff."""
