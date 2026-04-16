@@ -18,7 +18,7 @@ def configure_logging(log_format: str = "console", log_level: str = "info") -> N
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
-        structlog.processors.ExceptionRenderer(),
+        structlog.processors.format_exc_info,
     ]
     if log_format == "json":
         renderer: structlog.types.Processor = structlog.processors.JSONRenderer()

@@ -113,8 +113,7 @@ class Orchestrator:
         self._probe.orchestrator_started(
             task_count=len(world.tasks),
             max_workers=self._max_workers,
-            max_rounds=self._max_task_rounds,
-            overlay=None,
+            max_task_rounds=self._max_task_rounds,
         )
         for cycle_num in range(max_cycles):
             reason = self.run_cycle(cycle_num=cycle_num + 1)

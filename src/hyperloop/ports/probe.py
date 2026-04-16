@@ -34,8 +34,7 @@ class OrchestratorProbe(Protocol):
         *,
         task_count: int,
         max_workers: int,
-        max_rounds: int,
-        overlay: str | None,
+        max_task_rounds: int,
     ) -> None:
         """Orchestrator loop began, after recovery."""
         ...
@@ -170,7 +169,7 @@ class OrchestratorProbe(Protocol):
         round: int,
         cycle: int,
     ) -> None:
-        """Task reached terminal failure (max_rounds or pipeline failure)."""
+        """Task reached terminal failure (max_task_rounds or pipeline failure)."""
         ...
 
     # ------------------------------------------------------------------

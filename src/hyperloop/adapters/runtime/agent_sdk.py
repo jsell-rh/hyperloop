@@ -205,10 +205,15 @@ class AgentSdkRuntime:
         """Run a single agent query via the SDK. Returns a WorkerResult."""
         from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
 
+        # Clean GIT_* env vars so agents in worktrees don't inherit
+        # stale GIT_DIR/GIT_INDEX_FILE from the orchestrator's context.
+        cleaned_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
         options = ClaudeAgentOptions(
             cwd=cwd,
             permission_mode="bypassPermissions",
             model=self._model,
+            env=cleaned_env,
         )
 
         result_text = ""
