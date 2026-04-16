@@ -130,7 +130,6 @@ prompt: |
   You are a worker agent implementing a task.
   Task spec is in the Spec section. Feedback in Findings.
   Project rules in Guidelines. Do the work. Push to your branch.
-  Write .worker-result.json with your verdict.
   You do NOT set task status.
 guidelines: ""
 ```
@@ -350,7 +349,7 @@ cancel(handle)                     → void
 findOrphan(task, branch)           → WorkerHandle | null  (for crash recovery)
 ```
 
-Implementations: `LocalRuntime` (git worktrees + CLI), `AmbientRuntime` (ambient platform API — create agent, start session, poll annotations).
+Implementations: `AgentSdkRuntime` (Claude Agent SDK + git worktrees).
 
 ## Orchestrator Loop
 

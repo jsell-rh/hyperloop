@@ -5,11 +5,10 @@ Walks tasks through composable process pipelines using AI agents. You write spec
 ## Prerequisites
 
 - Python 3.12+
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` on PATH)
 - [kustomize](https://kubectl.docs.kubernetes.io/installation/kustomize/) (`kustomize` on PATH)
 - `git`
 - `gh` CLI (optional, for GitHub PR operations)
-- `tmux` (optional, for `runtime: tmux`)
+- An Anthropic API key, or Vertex AI / Bedrock credentials
 
 ## Install
 
@@ -33,20 +32,22 @@ EOF
 hyperloop init
 
 # Run the orchestrator
+export ANTHROPIC_API_KEY=your-key  # or CLAUDE_CODE_USE_VERTEX=1
 hyperloop run
 
 # With GitHub PR support
 hyperloop run --repo owner/repo
-
-# With tmux (observable worker sessions)
-# Set runtime: tmux in .hyperloop.yaml, then:
-hyperloop run
-tmux attach -t hyperloop-my-project
 ```
+
+## How It Works
+
+Agents run via the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview.md) — in-process, with full tool access (file I/O, git, shell). Each parallel worker gets its own git worktree for branch isolation. Serial agents (PM intake, process-improver) run on trunk.
+
+The SDK handles tool execution, context management, and clean exit. No subprocess polling or result-file conventions.
 
 ## Project Structure
 
-After `hyperloop init`, your repo has:
+After `hyperloop init`:
 
 ```
 my-project/
@@ -57,7 +58,7 @@ my-project/
 │   │   └── process/
 │   │       └── kustomization.yaml      # empty Component (process-improver writes here)
 │   ├── state/
-│   │   ├── tasks/                      # task metadata files (YAML frontmatter)
+│   │   ├── tasks/                      # task metadata (YAML frontmatter)
 │   │   └── reviews/                    # per-round review files
 │   └── checks/                         # executable check scripts
 └── specs/
@@ -78,8 +79,6 @@ Three layers, all resolved via a single `kustomize build`:
 
 Agent resources have a `guidelines` field — additive by convention. At compose time: `prompt + guidelines + spec + findings`.
 
-The process-improver writes kustomize patches targeting `guidelines`. The orchestrator re-runs `kustomize build` after the process-improver, guaranteeing updated guidelines reach all subsequent workers.
-
 ## Configuration
 
 ```yaml
@@ -93,7 +92,6 @@ target:
   base_branch: main
 
 runtime:
-  default: local                        # local | tmux
   max_workers: 6
 
 merge:
@@ -115,13 +113,6 @@ observability:
     registration_token_env: MATRIX_REG_TOKEN
     verbose: false
 ```
-
-## Runtimes
-
-| Runtime | Workers | Serial agents | Observability |
-|---|---|---|---|
-| `local` | Headless subprocesses in worktrees | Subprocess on trunk | Logs only |
-| `tmux` | Named tmux windows in worktrees | Tmux window on trunk | `tmux attach -t hyperloop-{repo}` |
 
 ## Custom Processes
 

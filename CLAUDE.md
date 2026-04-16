@@ -17,18 +17,22 @@ Hexagonal (ports & adapters). Domain logic has zero I/O dependencies.
 
 ```
 src/hyperloop/
-├── domain/           ← pure logic, no I/O, no framework imports
-│   ├── model.py      ← Task, WorkerResult, Process, Pipeline (value objects/entities)
-│   ├── decide.py     ← decide(world) → Action[] (pure function)
-│   └── pipeline.py   ← pipeline executor (recursive, handles loops)
-├── ports/            ← interfaces only (Protocol classes)
-│   ├── state.py      ← StateStore protocol
-│   └── runtime.py    ← Runtime protocol
-├── adapters/         ← implementations of ports
-│   ├── git_state.py  ← GitStateStore
-│   ├── local.py      ← LocalRuntime (worktrees + CLI)
-│   └── ambient.py    ← AmbientRuntime (ambient platform API)
-└── loop.py           ← main loop, wires ports to domain
+├── domain/              ← pure logic, no I/O, no framework imports
+│   ├── model.py         ← Task, WorkerResult, Process, Pipeline
+│   ├── decide.py        ← decide(world) → Action[] (pure function)
+│   └── pipeline.py      ← pipeline executor (recursive, handles loops)
+├── ports/               ← interfaces only (Protocol classes)
+│   ├── state.py         ← StateStore protocol
+│   └── runtime.py       ← Runtime protocol
+├── adapters/            ← implementations of ports
+│   ├── runtime/
+│   │   ├── agent_sdk.py ← AgentSdkRuntime (Claude Agent SDK + worktrees)
+│   │   └── _worktree.py ← shared git worktree helpers
+│   ├── state/
+│   │   └── git.py       ← GitStateStore
+│   └── probe/           ← NullProbe, MultiProbe, StructlogProbe, MatrixProbe
+├── compose.py           ← prompt composition (kustomize build)
+└── loop.py              ← main loop, wires ports to domain
 ```
 
 The dependency rule: domain/ imports nothing from ports/ or adapters/. Ports/ imports from domain/ (for types). Adapters/ imports from ports/ and domain/. Loop imports everything.
