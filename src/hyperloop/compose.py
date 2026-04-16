@@ -140,9 +140,9 @@ class PromptComposer:
         """Compose the full prompt for a worker.
 
         Layers:
-        1. Resolved template prompt (from kustomize, includes base + project overlay)
-        2. Process overlay from specs/prompts/{role}-overlay.yaml (if exists)
-        3. Context-specific injection (spec content, findings, spec list)
+        1. Resolved template prompt + guidelines (from kustomize build,
+           includes base + project overlay + process overlay)
+        2. Context-specific injection (spec content, findings, spec list)
 
         Args:
             role: Agent role name (e.g. "implementer", "verifier", "pm").

@@ -221,8 +221,8 @@ def ensure_matrix_ready(
 
     **Access token** resolution:
     1. Explicit ``token_env`` env var → use directly.
-    2. Cached token from ``.hyperloop/matrix-state.json`` → validate with
-       whoami, reuse if valid.
+    2. Cached token from ``~/.cache/hyperloop/{repo-hash}/matrix-state.json``
+       → validate with whoami, reuse if valid.
     3. ``registration_token_env`` → register a new bot, cache credentials.
 
     **Room ID** resolution:
