@@ -45,6 +45,9 @@ class LocalRuntime:
         self._processes: dict[str, subprocess.Popen[bytes]] = {}
         self._worktrees: dict[str, str] = {}  # task_id -> worktree_path
 
+    def push_branch(self, branch: str) -> None:
+        """Noop — local runtime doesn't need to push branches."""
+
     def spawn(self, task_id: str, role: str, prompt: str, branch: str) -> WorkerHandle:
         """Create a worktree, write the prompt, start the subprocess, return a handle."""
         worktree_path = os.path.join(self._worktree_base, task_id)

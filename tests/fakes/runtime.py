@@ -70,6 +70,9 @@ class InMemoryRuntime:
 
     # -- Runtime protocol ---------------------------------------------------
 
+    def push_branch(self, branch: str) -> None:
+        """Noop for in-memory runtime."""
+
     def spawn(self, task_id: str, role: str, prompt: str, branch: str) -> WorkerHandle:
         """Start a worker agent session. Returns an opaque handle."""
         self._spawn_counter += 1

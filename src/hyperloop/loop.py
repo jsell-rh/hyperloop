@@ -437,6 +437,7 @@ class Orchestrator:
                 self._state.set_task_branch(task_id, branch)
             prompt = self._compose_prompt(task, role)
             try:
+                self._runtime.push_branch(branch)
                 handle = self._runtime.spawn(task_id, role, prompt=prompt, branch=branch)
             except Exception:
                 reason = f"spawn failed for {role} on branch {branch}"
@@ -465,14 +466,6 @@ class Orchestrator:
         if not all_tasks:
             self._emit_cycle_completed(cycle_num, cycle_start, to_spawn, reaped_results)
             return None
-
-        all_complete = all(t.status == TaskStatus.COMPLETE for t in all_tasks.values())
-        no_workers = len(self._workers) == 0
-
-        if all_complete and no_workers:
-            reason = "all tasks complete"
-            self._emit_cycle_completed(cycle_num, cycle_start, to_spawn, reaped_results)
-            return reason
 
         self._emit_cycle_completed(cycle_num, cycle_start, to_spawn, reaped_results)
         return None

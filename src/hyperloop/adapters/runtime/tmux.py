@@ -61,6 +61,9 @@ class TmuxRuntime:
         self._worktrees: dict[str, str] = {}  # task_id -> worktree_path
         self._session_created = False
 
+    def push_branch(self, branch: str) -> None:
+        """Noop — tmux runtime uses local worktrees."""
+
     def spawn(self, task_id: str, role: str, prompt: str, branch: str) -> WorkerHandle:
         """Create a worktree, tmux window, send the command, return a handle."""
         worktree_path = os.path.join(self._worktree_base, task_id)

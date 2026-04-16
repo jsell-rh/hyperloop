@@ -16,6 +16,14 @@ WorkerPollStatus = Literal["running", "done", "failed"]
 class Runtime(Protocol):
     """Spawn, poll, and collect results from worker agents."""
 
+    def push_branch(self, branch: str) -> None:
+        """Push a branch to the remote. Noop for local runtimes.
+
+        Called before spawn() so remote runtimes (e.g. ambient) can
+        access the branch.
+        """
+        ...
+
     def spawn(self, task_id: str, role: str, prompt: str, branch: str) -> WorkerHandle:
         """Start a worker agent session on the given branch."""
         ...

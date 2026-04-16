@@ -95,11 +95,20 @@ def decide(world: World, max_workers: int, max_task_rounds: int) -> list[Action]
         role = "rebase-resolver" if task.status == TaskStatus.NEEDS_REBASE else "implementer"
         actions.append(SpawnWorker(task_id=task.id, role=role))
 
-    # ---- 5. Check convergence: all complete + no workers → Halt ------------
-    all_complete = all(t.status == TaskStatus.COMPLETE for t in world.tasks.values())
+    # ---- 5. Check convergence -----------------------------------------------
     no_workers = len(world.workers) == 0
 
-    if world.tasks and all_complete and no_workers:
-        actions.append(Halt(reason="all tasks complete"))
+    if world.tasks and no_workers:
+        all_complete = all(t.status == TaskStatus.COMPLETE for t in world.tasks.values())
+        if all_complete:
+            actions.append(Halt(reason="all tasks complete"))
+        elif not eligible:
+            # No workers, nothing to spawn — check for deadlock.
+            # If any task is failed and nothing is spawnable, we're stuck.
+            failed = [t.id for t in world.tasks.values() if t.status == TaskStatus.FAILED]
+            if failed:
+                actions.append(
+                    Halt(reason=f"deadlocked: failed tasks {failed} block remaining work")
+                )
 
     return actions
