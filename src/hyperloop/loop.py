@@ -107,8 +107,32 @@ class Orchestrator:
         # Current cycle number — set at the start of each run_cycle
         self._current_cycle: int = 0
 
+    def validate_templates(self) -> None:
+        """Validate that every role in the pipeline has a resolved template.
+
+        Call at startup before ``run_loop`` to catch configuration errors
+        early instead of crashing mid-run when a task reaches an unknown role.
+
+        Raises:
+            ValueError: If any pipeline role has no resolved template.
+        """
+        if self._composer is None:
+            return
+
+        roles = _collect_roles(self._process.pipeline)
+        roles.update(_collect_roles(self._process.intake))
+        missing = [r for r in roles if r not in self._composer._templates]
+        if missing:
+            msg = (
+                f"Pipeline references roles with no agent template: {sorted(missing)}. "
+                "Check that base/ has definitions for these roles and "
+                "kustomize build resolves them."
+            )
+            raise ValueError(msg)
+
     def run_loop(self, max_cycles: int = 200) -> str:
         """Run the orchestrator loop until halt or max_cycles. Returns halt reason."""
+        self.validate_templates()
         world = self._state.get_world()
         self._probe.orchestrator_started(
             task_count=len(world.tasks),
@@ -414,8 +438,11 @@ class Orchestrator:
                     )
                     to_spawn.append((action.task_id, "rebase-resolver", pos))
                 elif task.status == TaskStatus.IN_PROGRESS and task.phase is not None:
+                    # Only spawn for role steps — gates and actions don't need workers
                     pos = self._position_from_phase(executor, task)
-                    to_spawn.append((action.task_id, str(task.phase), pos))
+                    step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
+                    if isinstance(step, RoleStep):
+                        to_spawn.append((action.task_id, str(task.phase), pos))
                 else:
                     pos = executor.initial_position()
                     pipe_action, pos = executor.next_action(pos, result=None)
@@ -1051,3 +1078,14 @@ def _dep_order_ids(tasks: dict[str, Task], candidate_ids: list[str]) -> list[str
     result.extend(cid for cid in candidate_ids if cid not in in_result)
 
     return result
+
+
+def _collect_roles(steps: tuple[PipelineStep, ...]) -> set[str]:
+    """Recursively collect all role names from a pipeline."""
+    roles: set[str] = set()
+    for step in steps:
+        if isinstance(step, RoleStep):
+            roles.add(step.role)
+        elif isinstance(step, LoopStep):
+            roles.update(_collect_roles(step.steps))
+    return roles
