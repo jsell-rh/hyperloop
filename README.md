@@ -6,301 +6,146 @@ Walks tasks through composable process pipelines using AI agents. You write spec
 
 - Python 3.12+
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` on PATH)
-- [kustomize](https://kubectl.docs.kubernetes.io/installation/kustomize/) (`kustomize` on PATH) — resolves agent definitions at startup
+- [kustomize](https://kubectl.docs.kubernetes.io/installation/kustomize/) (`kustomize` on PATH)
 - `git`
 - `gh` CLI (optional, for GitHub PR operations)
+- `tmux` (optional, for `runtime: tmux`)
 
 ## Install
-
-From PyPI (once published):
 
 ```bash
 pip install hyperloop
 ```
 
-From source (for development or testing):
-
-```bash
-git clone git@github.com:jsell-rh/hyperloop.git
-cd hyperloop
-uv sync --all-extras
-```
-
 ## Quickstart
 
-1. Create a repo with a spec:
-
 ```bash
-mkdir -p my-project/specs
-cd my-project
-git init && git commit --allow-empty -m "init"
-```
+mkdir my-project && cd my-project && git init && git commit --allow-empty -m init
 
-2. Write a spec. This is what you want built. Be specific about acceptance criteria:
-
-```markdown
-<!-- specs/auth.md -->
+# Write a spec
+cat > specs/auth.md << 'EOF'
 # User Authentication
+Implement JWT-based auth. POST /auth/login, POST /auth/register, GET /auth/me.
+Passwords hashed with bcrypt. JWTs expire after 24h.
+EOF
 
-Implement JWT-based authentication for the API.
+# Initialize hyperloop structure
+hyperloop init
 
-## Acceptance Criteria
+# Run the orchestrator
+hyperloop run
 
-- POST /auth/login accepts email + password, returns JWT
-- POST /auth/register creates a new user account
-- GET /auth/me returns the current user (requires valid JWT)
-- Passwords are hashed with bcrypt, never stored in plaintext
-- JWTs expire after 24 hours
+# With GitHub PR support
+hyperloop run --repo owner/repo
+
+# With tmux (observable worker sessions)
+# Set runtime: tmux in .hyperloop.yaml, then:
+hyperloop run
+tmux attach -t hyperloop-my-project
 ```
 
-3. Run against the local repo:
+## Project Structure
 
-```bash
-# From inside the repo
-uv run hyperloop run
+After `hyperloop init`, your repo has:
 
-# Or point to a repo elsewhere
-uv run hyperloop run --path ~/code/my-project
-
-# With GitHub PR support (draft PRs, lgtm gates, squash-merge)
-uv run hyperloop run --repo owner/repo
-
-# Dry run (show config, don't execute)
-uv run hyperloop run --dry-run
+```
+my-project/
+├── .hyperloop.yaml                     # orchestrator config
+├── .hyperloop/
+│   ├── agents/
+│   │   ├── kustomization.yaml          # composition point (base + process component)
+│   │   └── process/
+│   │       └── kustomization.yaml      # empty Component (process-improver writes here)
+│   ├── state/
+│   │   ├── tasks/                      # task metadata files (YAML frontmatter)
+│   │   └── reviews/                    # per-round review files
+│   └── checks/                         # executable check scripts
+└── specs/
+    └── *.spec.md                       # product specs (your domain)
 ```
 
-When `--repo` is not set, completed work is merged locally into the base branch via `git merge`. When `--repo` is set, the orchestrator creates draft PRs, polls for `lgtm` labels on gates, and squash-merges via GitHub.
+`specs/` is yours — product specs only. `.hyperloop/` is orchestrator-managed.
+
+## Prompt Composition
+
+Three layers, all resolved via a single `kustomize build`:
+
+| Layer | Source | What it provides |
+|---|---|---|
+| Base | hyperloop repo `base/` | Core agent prompts |
+| Project overlay | gitops repo or in-repo patches | Project-specific `guidelines`, persona |
+| Process overlay | `.hyperloop/agents/process/` | Learned rules from process-improver |
+
+Agent resources have a `guidelines` field — additive by convention. At compose time: `prompt + guidelines + spec + findings`.
+
+The process-improver writes kustomize patches targeting `guidelines`. The orchestrator re-runs `kustomize build` after the process-improver, guaranteeing updated guidelines reach all subsequent workers.
 
 ## Configuration
 
-Create `.hyperloop.yaml` in your repo root:
-
 ```yaml
+# .hyperloop.yaml
+
+overlay: .hyperloop/agents/             # path to kustomization dir
+base_ref: github.com/org/hyperloop//base?ref=v1  # remote base for `hyperloop init`
+
 target:
+  repo: owner/repo                      # GitHub repo (omit for local-only)
   base_branch: main
 
 runtime:
-  max_workers: 4
+  default: local                        # local | tmux
+  max_workers: 6
 
 merge:
   auto_merge: true
   strategy: squash
+  delete_branch: true
+
+poll_interval: 30
+max_task_rounds: 50
+max_cycles: 200
+max_rebase_attempts: 3
+
+observability:
+  log_format: console                   # console | json
+  log_level: info
+
+  matrix:                               # optional
+    homeserver: https://matrix.example.com
+    registration_token_env: MATRIX_REG_TOKEN
+    verbose: false
 ```
 
-Then run from the repo directory (or use `--path`):
+## Runtimes
 
-```bash
-hyperloop run
-hyperloop run --path ~/code/my-project
-```
-
-All settings have sensible defaults. `--repo` is only needed for GitHub PR operations.
-
-## Customizing Agent Behavior
-
-Hyperloop ships with base agent definitions (implementer, verifier, etc.) that work out of the box. To customize them for your project, overlay with patches.
-
-### In-repo overlay
-
-For single-repo projects. Agent patches live in the repo itself:
-
-```yaml
-# .hyperloop.yaml
-overlay: .hyperloop/agents/
-```
-
-```
-your-repo/
-├── .hyperloop.yaml
-├── .hyperloop/
-│   └── agents/
-│       ├── implementer-patch.yaml
-│       └── process-patch.yaml
-└── specs/
-```
-
-An implementer patch injects your project's persona:
-
-```yaml
-# .hyperloop/agents/implementer-patch.yaml
-kind: Agent
-name: implementer
-annotations:
-  ambient.io/persona: |
-    You work on a Go API service.
-    Build: make build. Test: make test. Lint: make lint.
-    Follow Clean Architecture. Use dependency injection.
-```
-
-### Shared overlay via gitops repo
-
-For teams with multiple repos sharing agent definitions. The overlay lives in a central gitops repo and references the hyperloop base as a kustomize remote resource:
-
-```yaml
-# .hyperloop.yaml
-overlay: git@github.com:your-org/agent-gitops//overlays/api
-```
-
-```yaml
-# your-org/agent-gitops/overlays/api/kustomization.yaml
-resources:
-  - github.com/org/hyperloop//base?ref=v1.0.0
-
-patches:
-  - path: implementer-patch.yaml
-    target:
-      kind: Agent
-      name: implementer
-  - path: process-patch.yaml
-    target:
-      kind: Process
-      name: default
-```
-
-This pins the base version and lets you upgrade across all repos by bumping the ref.
+| Runtime | Workers | Serial agents | Observability |
+|---|---|---|---|
+| `local` | Headless subprocesses in worktrees | Subprocess on trunk | Logs only |
+| `tmux` | Named tmux windows in worktrees | Tmux window on trunk | `tmux attach -t hyperloop-{repo}` |
 
 ## Custom Processes
 
-The default pipeline is: implement, verify, merge. Override it by patching the process:
+Override the default pipeline (implement → verify → merge):
 
 ```yaml
 # process-patch.yaml
 kind: Process
 name: default
-
 pipeline:
   - loop:
-      - loop:
-          - role: implementer
-          - role: verifier
-      - role: security-reviewer
+      - role: implementer
+      - role: verifier
   - gate: human-pr-approval
   - action: merge-pr
 ```
 
-Four primitives:
-
-| Primitive | What it does |
-|---|---|
-| `role: X` | Spawn an agent. Fail restarts the enclosing loop. |
-| `gate: X` | Block until external signal (v1: `lgtm` label on PR). |
-| `loop` | Wrap steps. Retry from top on failure. |
-| `action: X` | Terminal operation (`merge-pr`, `mark-pr-ready`). |
-
-Loops nest. Inner loops retry independently of outer loops.
-
-## What it creates in your repo
-
-The orchestrator writes to `specs/` in your repo:
-
-```
-specs/
-├── tasks/       # task files with status, findings, spec references
-├── reviews/     # review artifacts from verifier (on branches)
-└── prompts/     # process improvements (learned over time)
-```
-
-All task state is tracked in git. Every commit includes `Spec-Ref` and `Task-Ref` trailers for traceability. PRs are created as drafts and labeled by spec and task.
-
-## Configuration Reference
-
-```yaml
-# .hyperloop.yaml
-
-overlay: .hyperloop/agents/    # path to kustomization dir (default: .hyperloop/agents/)
-base_ref: github.com/jsell-rh/hyperloop//base?ref=v1.0.0  # remote base for `hyperloop init` (env: HYPERLOOP_BASE_REF)
-
-target:
-  repo: owner/repo                 # GitHub repo (default: inferred from git remote)
-  base_branch: main                # trunk branch
-
-runtime:
-  default: local                   # local (v1) | ambient (planned)
-  max_workers: 6                   # max parallel task workers
-
-merge:
-  auto_merge: true                 # squash-merge on review pass
-  strategy: squash                 # squash | merge
-  delete_branch: true              # delete worker branch after merge
-
-poll_interval: 30                  # seconds between orchestrator cycles
-max_task_rounds: 50                # max retry rounds per task before failure
-max_cycles: 200                    # max total orchestrator cycles
-max_rebase_attempts: 3             # max rebase retries before full loop retry
-
-observability:
-  log_format: console              # console (human-readable) | json (for log aggregators)
-  log_level: info                  # debug | info | warning | error
-
-  matrix:                          # optional — omit entire section to disable
-    homeserver: https://matrix.example.com
-    registration_token_env: MATRIX_REGISTRATION_TOKEN  # env var — auto-registers bot + creates room
-    # bot_username: hyperloop-bot  # override default (hyperloop-{repo_name})
-    # room_id: "!abc123:example.com"   # override auto-created room
-    # token_env: MATRIX_ACCESS_TOKEN   # override auto-registered token
-    verbose: false                 # true: send worker_spawned, cycle_completed, etc.
-```
-
-## Observability
-
-Hyperloop uses structured logging via [structlog](https://www.structlog.org/). Every interesting moment in the orchestrator lifecycle emits a typed probe call that gets rendered as a structured log entry.
-
-### Log output
-
-Console mode (default):
-```
-2026-04-15T14:23:01Z [info     ] worker_reaped    cycle=7 duration_s=142.3 role=verifier spec_ref=specs/persistence.md task_id=task-003 verdict=pass
-2026-04-15T14:23:01Z [warning  ] task_looped_back  cycle=7 findings_count=3 round=2 spec_ref=specs/widget.md task_id=task-001
-```
-
-JSON mode (`log_format: json`):
-```json
-{"timestamp": "2026-04-15T14:23:01Z", "level": "info", "event": "worker_reaped", "task_id": "task-003", "role": "verifier", "verdict": "pass", "cycle": 7, "duration_s": 142.3}
-```
-
-### Matrix notifications
-
-Send real-time status updates to a [Matrix](https://matrix.org/) room. Each task's messages are threaded together.
-
-**Quickstart (auto-setup):** Just provide a homeserver and a registration token. Hyperloop registers a bot user and creates a room automatically:
-
-```bash
-export MATRIX_REGISTRATION_TOKEN=your_synapse_registration_token
-```
-```yaml
-# .hyperloop.yaml
-observability:
-  matrix:
-    homeserver: https://matrix.example.com
-    registration_token_env: MATRIX_REGISTRATION_TOKEN
-```
-
-Credentials and room ID are cached in `.hyperloop/matrix-state.json` (gitignored) so registration only happens once.
-
-**Manual setup:** If you already have a bot account and room, provide them directly:
-
-```bash
-export MATRIX_ACCESS_TOKEN=syt_your_token_here
-```
-```yaml
-observability:
-  matrix:
-    homeserver: https://matrix.example.com
-    room_id: "!abc123:example.com"
-    token_env: MATRIX_ACCESS_TOKEN
-```
-
-High-signal events are always sent (worker results, task completions/failures, merge outcomes, orchestrator halt). Set `verbose: true` to also see worker spawns, cycle completions, and intake runs. Noisy events (cycle starts, gate polls, phase transitions) are never sent to Matrix.
-
-Matrix failures are logged and swallowed — a Matrix outage never stalls the orchestrator.
+Four primitives: `role` (spawn agent), `gate` (wait for signal), `loop` (retry on failure), `action` (terminal op). Loops nest.
 
 ## Development
 
 ```bash
 uv sync --all-extras
-uv run pytest                    # run tests (~390 tests)
-uv run ruff check .              # lint
-uv run ruff format --check .     # format check
-uv run pyright                   # type check
-uv run hyperloop --help          # CLI help
+uv run pytest
+uv run ruff check . && ruff format --check .
+uv run pyright
 ```

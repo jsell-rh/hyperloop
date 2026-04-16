@@ -127,18 +127,12 @@ Follows the ambient platform resource model. Base definitions live in the hyperl
 kind: Agent
 name: implementer
 prompt: |
-  You are a worker agent. Read ambient.io/persona for identity.
-  Read ambient.io/task-spec for your assignment.
-  Read ambient.io/findings for prior review feedback.
-  Do the work. Push to your branch.
+  You are a worker agent implementing a task.
+  Task spec is in the Spec section. Feedback in Findings.
+  Project rules in Guidelines. Do the work. Push to your branch.
   Write .worker-result.json with your verdict.
   You do NOT set task status.
-
-annotations:
-  ambient.io/persona: ""
-  ambient.io/task-spec: ""
-  ambient.io/process-overlay: ""
-  ambient.io/findings: ""
+guidelines: ""
 ```
 
 ## Traceability

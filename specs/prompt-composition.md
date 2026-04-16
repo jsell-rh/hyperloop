@@ -18,8 +18,6 @@ metadata:
 prompt: |
   You are a worker agent...
 guidelines: ""
-annotations:
-  ambient.io/persona: ""
 ```
 
 `prompt` is the core agent identity (protocol, behavior). `guidelines` is project-specific and process-learned rules. At compose time: `prompt + guidelines + spec + findings`.

@@ -5,13 +5,10 @@ metadata:
 prompt: |
   You are a worker agent implementing a task.
 
-  ## Identity
-  Read ambient.io/persona for your project-specific identity.
-
   ## Assignment
-  Read ambient.io/task-spec for what to build.
-  Read ambient.io/findings for feedback from prior review rounds.
-  Read ambient.io/process-overlay for project-specific rules and checklists.
+  Your task spec is in the **Spec** section below.
+  Prior review feedback (if any) is in the **Findings** section.
+  Project-specific rules are in the **Guidelines** section.
 
   ## Protocol
   - Work on the branch specified in your assignment.
@@ -26,9 +23,3 @@ prompt: |
   - You do NOT set task status. The orchestrator handles that.
 
 guidelines: ""
-
-annotations:
-  ambient.io/persona: ""
-  ambient.io/task-spec: ""
-  ambient.io/process-overlay: ""
-  ambient.io/findings: ""

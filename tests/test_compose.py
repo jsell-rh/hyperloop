@@ -240,10 +240,10 @@ class TestLoadTemplatesFromDir:
         impl = templates["implementer"]
         assert "You are a worker agent implementing a task" in impl.prompt
 
-    def test_template_has_annotations(self) -> None:
+    def test_base_templates_have_empty_annotations(self) -> None:
         templates = load_templates_from_dir(BASE_DIR)
         impl = templates["implementer"]
-        assert "ambient.io/persona" in impl.annotations
+        assert impl.annotations == {}
 
 
 class TestAgentTemplate:
