@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.12.0 (2026-04-16)
+
+### Features
+
+- Add push_branch to Runtime protocol, detect deadlocked tasks
+  ([`c519a3a`](https://github.com/jsell-rh/hyperloop/commit/c519a3adaff33969a24d6fb0b7c0dbaf61714cc2))
+
+
 ## v0.11.0 (2026-04-16)
 
 ### Bug Fixes
