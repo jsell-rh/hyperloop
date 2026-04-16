@@ -67,7 +67,17 @@ class AgentSdkRuntime:
         return ""
 
     def push_branch(self, branch: str) -> None:
-        """Noop — SDK runtime uses local worktrees."""
+        """Push branch to remote if one exists. Best-effort — no remote is fine."""
+        import contextlib
+        import subprocess
+
+        with contextlib.suppress(subprocess.CalledProcessError):
+            subprocess.run(
+                ["git", "-C", self._repo_path, "push", "-u", "origin", branch],
+                check=True,
+                capture_output=True,
+                env=clean_git_env(),
+            )
 
     def spawn(self, task_id: str, role: str, prompt: str, branch: str) -> WorkerHandle:
         """Create a worktree and start an SDK agent session."""
