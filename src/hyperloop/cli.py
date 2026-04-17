@@ -142,6 +142,16 @@ def _build_probe(obs_cfg: ObservabilityConfig, repo_path: Path) -> OrchestratorP
                 )
             )
 
+    if obs_cfg.otel is not None:
+        from hyperloop.adapters.probe.otel import OtelProbe
+
+        probes.append(
+            OtelProbe(
+                service_name=obs_cfg.otel.service_name,
+                endpoint=obs_cfg.otel.endpoint,
+            )
+        )
+
     if len(probes) == 1:
         return probes[0]
     return MultiProbe(tuple(probes))

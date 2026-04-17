@@ -35,12 +35,21 @@ class MatrixConfig:
 
 
 @dataclass(frozen=True)
+class OtelConfig:
+    """OpenTelemetry observability configuration."""
+
+    endpoint: str  # OTLP collector endpoint, e.g. http://localhost:4317
+    service_name: str  # OTel service name, default "hyperloop"
+
+
+@dataclass(frozen=True)
 class ObservabilityConfig:
     """Observability configuration — log format/level and optional Matrix sink."""
 
     log_format: str  # "console" | "json"
     log_level: str  # "debug" | "info" | "warning" | "error"
     matrix: MatrixConfig | None
+    otel: OtelConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -170,6 +179,11 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
             flat["matrix_verbose"] = mx.get("verbose", False)
             flat["matrix_registration_token_env"] = mx.get("registration_token_env", "")
             flat["matrix_invite_user"] = mx.get("invite_user", "")
+        otel_raw = obs_dict.get("otel")
+        if isinstance(otel_raw, dict):
+            otel = cast("dict[str, object]", otel_raw)
+            flat["otel_endpoint"] = str(otel.get("endpoint", ""))
+            flat["otel_service_name"] = str(otel.get("service_name", "hyperloop"))
 
     return flat
 
@@ -236,10 +250,19 @@ def load_config(
             invite_user=str(values.get("matrix_invite_user", "")),
         )
 
+    otel_cfg: OtelConfig | None = None
+    otel_endpoint = str(values.get("otel_endpoint", ""))
+    if otel_endpoint:
+        otel_cfg = OtelConfig(
+            endpoint=otel_endpoint,
+            service_name=str(values.get("otel_service_name", "hyperloop")),
+        )
+
     obs_cfg = ObservabilityConfig(
         log_format=str(values["log_format"]),
         log_level=str(values["log_level"]),
         matrix=matrix_cfg,
+        otel=otel_cfg,
     )
 
     # Build AmbientConfig if ambient section was present
