@@ -73,6 +73,9 @@ class NullProbe:
     def worker_message(self, **_: object) -> None:
         pass
 
+    def spawn_failed(self, **_: object) -> None:
+        pass
+
     def prompt_composed(self, **_: object) -> None:
         pass
 
@@ -147,6 +150,9 @@ class MultiProbe:
 
     def worker_message(self, **kw: object) -> None:
         self._call("worker_message", **kw)
+
+    def spawn_failed(self, **kw: object) -> None:
+        self._call("spawn_failed", **kw)
 
     def prompt_composed(self, **kw: object) -> None:
         self._call("prompt_composed", **kw)

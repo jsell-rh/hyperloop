@@ -106,6 +106,10 @@ class Orchestrator:
         self._rebase_attempts: dict[str, int] = {}
         # Current cycle number — set at the start of each run_cycle
         self._current_cycle: int = 0
+        # Spawn backoff: global consecutive failures + per-task retry counts
+        self._spawn_failures: int = 0
+        self._spawn_skip_until: int = 0
+        self._spawn_task_failures: dict[str, int] = {}
 
     def validate_templates(self) -> None:
         """Validate that every role in the pipeline has a resolved template.
@@ -465,6 +469,10 @@ class Orchestrator:
             self._state.commit("orchestrator: cycle update")
 
         # ---- 9. Spawn workers ------------------------------------------------
+        # Skip spawning during cooldown (after consecutive failures)
+        if to_spawn and self._current_cycle < self._spawn_skip_until:
+            to_spawn = []
+
         for task_id, role, position in to_spawn:
             task = self._state.get_task(task_id)
             branch = task.branch or f"{BRANCH_PREFIX}/{task_id}"
@@ -475,17 +483,44 @@ class Orchestrator:
                 self._runtime.push_branch(branch)
                 handle = self._runtime.spawn(task_id, role, prompt=prompt, branch=branch)
             except Exception:
-                reason = f"spawn failed for {role} on branch {branch}"
-                logger.exception("spawn_failed task=%s role=%s branch=%s", task_id, role, branch)
-                self._state.transition_task(task_id, TaskStatus.FAILED, phase=None)
-                self._probe.task_failed(
+                self._spawn_failures += 1
+                task_fails = self._spawn_task_failures.get(task_id, 0) + 1
+                self._spawn_task_failures[task_id] = task_fails
+                cooldown_cycles = 0
+
+                if self._spawn_failures >= 3:
+                    cooldown_cycles = min(2 ** (self._spawn_failures - 2), 32)
+                    self._spawn_skip_until = self._current_cycle + cooldown_cycles
+
+                self._probe.spawn_failed(
                     task_id=task_id,
-                    spec_ref=task.spec_ref,
-                    reason=reason,
-                    round=task.round,
+                    role=role,
+                    branch=branch,
+                    attempt=task_fails,
+                    max_attempts=3,
+                    cooldown_cycles=cooldown_cycles,
                     cycle=cycle_num,
                 )
+
+                if task_fails >= 3:
+                    reason = f"spawn failed 3 times for {role} on branch {branch}"
+                    self._state.transition_task(task_id, TaskStatus.FAILED, phase=None)
+                    self._probe.task_failed(
+                        task_id=task_id,
+                        spec_ref=task.spec_ref,
+                        reason=reason,
+                        round=task.round,
+                        cycle=cycle_num,
+                    )
+                    self._spawn_task_failures.pop(task_id, None)
+
+                if cooldown_cycles:
+                    break  # Stop trying more spawns this cycle
                 continue
+
+            # Success — reset counters
+            self._spawn_failures = 0
+            self._spawn_task_failures.pop(task_id, None)
             self._workers[task_id] = (handle, position, time.monotonic())
             self._probe.worker_spawned(
                 task_id=task_id,

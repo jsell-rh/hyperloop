@@ -278,6 +278,17 @@ class MatrixProbe:
         body = f"{icon} {task_id} \u00b7 {role} [{msg_type}] {content}"
         self._send(body, task_id=task_id)
 
+    def spawn_failed(self, **kw: object) -> None:
+        task_id = str(kw.get("task_id", ""))
+        role = str(kw.get("role", ""))
+        attempt = kw.get("attempt", 0)
+        max_attempts = kw.get("max_attempts", 3)
+        cooldown = kw.get("cooldown_cycles", 0)
+        body = f"\u26a0\ufe0f Spawn failed: {task_id} ({role}) attempt {attempt}/{max_attempts}"
+        if cooldown:
+            body += f" \u2014 cooling down for {cooldown} cycles"
+        self._send(body)
+
     # ------------------------------------------------------------------
     # Never sent (too noisy)
     # ------------------------------------------------------------------

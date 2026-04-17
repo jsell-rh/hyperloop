@@ -130,6 +130,9 @@ class StructlogProbe:
     def worker_message(self, **kw: object) -> None:
         self._log.debug("worker_message", **kw)
 
+    def spawn_failed(self, **kw: object) -> None:
+        self._log.warning("spawn_failed", **kw)
+
     # ------------------------------------------------------------------
     # Prompt composition
     # ------------------------------------------------------------------

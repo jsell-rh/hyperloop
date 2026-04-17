@@ -283,6 +283,20 @@ class OrchestratorProbe(Protocol):
         """
         ...
 
+    def spawn_failed(
+        self,
+        *,
+        task_id: str,
+        role: str,
+        branch: str,
+        attempt: int,
+        max_attempts: int,
+        cooldown_cycles: int,
+        cycle: int,
+    ) -> None:
+        """Worker spawn failed. Retries remain or cooldown activated."""
+        ...
+
     def prompt_composed(
         self,
         *,

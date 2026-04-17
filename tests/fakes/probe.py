@@ -90,5 +90,8 @@ class RecordingProbe:
     def worker_message(self, **kw: object) -> None:
         self._record("worker_message", **kw)
 
+    def spawn_failed(self, **kw: object) -> None:
+        self._record("spawn_failed", **kw)
+
     def prompt_composed(self, **kw: object) -> None:
         self._record("prompt_composed", **kw)
