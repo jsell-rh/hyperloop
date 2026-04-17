@@ -389,6 +389,22 @@ def run(
     if cfg.runtime == "ambient" and hasattr(runtime, "ensure_project"):
         runtime.ensure_project()  # type: ignore[attr-defined]
 
+    # Check if the pipeline has a gate step — informs PR description
+    if pr_manager is not None:
+        from hyperloop.domain.model import GateStep
+
+        def _has_gate_step(steps: tuple[object, ...]) -> bool:
+            for step in steps:
+                if isinstance(step, GateStep):
+                    return True
+                if hasattr(step, "steps") and _has_gate_step(
+                    step.steps  # type: ignore[attr-defined]
+                ):
+                    return True
+            return False
+
+        pr_manager._has_gate = _has_gate_step(process.pipeline)
+
     orchestrator = Orchestrator(
         state=state,
         runtime=runtime,

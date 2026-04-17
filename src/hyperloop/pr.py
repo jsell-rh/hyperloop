@@ -23,10 +23,12 @@ class PRManager:
         repo: str,
         merge_strategy: str = "squash",
         delete_branch: bool = True,
+        has_gate: bool = False,
     ) -> None:
         self.repo = repo
         self.merge_strategy = merge_strategy
         self.delete_branch = delete_branch
+        self._has_gate = has_gate
         self._ensured_labels: set[str] = set()
 
     def _ensure_label(self, name: str, color: str = "C5DEF5") -> None:
@@ -89,6 +91,7 @@ class PRManager:
             text=True,
         )
 
+        body = _pr_body(task_id, spec_ref, self._has_gate)
         result = subprocess.run(
             [
                 "gh",
@@ -100,7 +103,7 @@ class PRManager:
                 "--title",
                 title,
                 "--body",
-                "",
+                body,
                 "--repo",
                 self.repo,
             ],
@@ -267,6 +270,44 @@ class PRManager:
 
         logger.info("Rebased branch %s onto %s", branch, base_branch)
         return True
+
+
+def _pr_body(task_id: str, spec_ref: str, has_gate: bool) -> str:
+    """Generate the PR description body."""
+    lines = [
+        f"**Task:** `{task_id}`",
+        f"**Spec:** `{spec_ref}`",
+        "",
+        "---",
+        "",
+        "This PR was created by [hyperloop](https://github.com/jsell-rh/hyperloop),",
+        "an AI agent orchestrator.",
+        "",
+    ]
+
+    if has_gate:
+        lines.extend(
+            [
+                "### Approval",
+                "",
+                "This PR requires human approval before merge.",
+                "Add the **`lgtm`** label to approve.",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "### Merge",
+            "",
+            "The orchestrator will squash-merge this PR automatically",
+            "once all pipeline steps pass"
+            + (" and the `lgtm` label is applied" if has_gate else "")
+            + ".",
+        ]
+    )
+
+    return "\n".join(lines)
 
 
 def _spec_name_from_ref(spec_ref: str) -> str:
