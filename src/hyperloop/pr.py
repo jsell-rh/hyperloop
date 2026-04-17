@@ -27,6 +27,32 @@ class PRManager:
         self.repo = repo
         self.merge_strategy = merge_strategy
         self.delete_branch = delete_branch
+        self._ensured_labels: set[str] = set()
+
+    def _ensure_label(self, name: str, color: str = "C5DEF5") -> None:
+        """Create a label on the repo if it doesn't exist. Idempotent."""
+        if name in self._ensured_labels:
+            return
+        subprocess.run(
+            [
+                "gh",
+                "label",
+                "create",
+                name,
+                "--color",
+                color,
+                "--repo",
+                self.repo,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self._ensured_labels.add(name)
+
+    def ensure_gate_labels(self) -> None:
+        """Create gate labels (e.g. lgtm) on the repo. Call at startup."""
+        self._ensure_label("lgtm", "0E8A16")
+        self._ensure_label("hyperloop", "1D76DB")
 
     def create_draft(self, task_id: str, branch: str, title: str, spec_ref: str) -> str:
         """Create a draft PR. Returns PR URL. Adds spec/task labels.
@@ -87,8 +113,14 @@ class PRManager:
 
         pr_url = result.stdout.strip()
 
-        # Add labels (best-effort — labels may not exist on the repo)
+        # Ensure labels exist, then add them
         spec_name = _spec_name_from_ref(spec_ref)
+        task_label = f"hyperloop/task/{task_id}"
+        spec_label = f"hyperloop/spec/{spec_name}"
+        self._ensure_label("hyperloop", "1D76DB")
+        self._ensure_label(task_label, "C5DEF5")
+        self._ensure_label(spec_label, "D4C5F9")
+
         label_result = subprocess.run(
             [
                 "gh",
@@ -96,9 +128,7 @@ class PRManager:
                 "edit",
                 pr_url,
                 "--add-label",
-                f"task/{task_id}",
-                "--add-label",
-                f"spec/{spec_name}",
+                f"hyperloop,{task_label},{spec_label}",
                 "--repo",
                 self.repo,
             ],

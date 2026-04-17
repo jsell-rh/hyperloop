@@ -370,6 +370,7 @@ def run(
             repo=cfg.repo,
             delete_branch=cfg.delete_branch,
         )
+        pr_manager.ensure_gate_labels()
 
     # Resolve agent definitions and process via kustomize build
     composer, parsed_process = _make_composer(cfg, state, repo_path)
