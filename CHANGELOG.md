@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v0.19.0 (2026-04-17)
+
+### Bug Fixes
+
+- Commit state before merge, don't consume lgtm on gate check
+  ([`31393bd`](https://github.com/jsell-rh/hyperloop/commit/31393bd7dda7d82d706f81004e12bed844690b6c))
+
+- Create missing PR when task reaches gate
+  ([`2995695`](https://github.com/jsell-rh/hyperloop/commit/2995695bd86d9a06b57ac2d5b067f8451e4bedd5))
+
+### Features
+
+- Human-friendly PR descriptions with gate instructions
+  ([`776bba9`](https://github.com/jsell-rh/hyperloop/commit/776bba9be568566e0a2303d3117237a4744bd9d7))
+
+- OpenTelemetry probe adapter for traces and metrics
+  ([`21eae35`](https://github.com/jsell-rh/hyperloop/commit/21eae35fb0709914f7dd8e69b4aa001d61646cab))
+
+
 ## v0.18.0 (2026-04-17)
 
 
