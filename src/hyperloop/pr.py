@@ -346,13 +346,13 @@ class PRManager:
                     text=True,
                 )
 
-                # Rebase onto base
+                # Rebase onto base — auto-resolve state file conflicts
                 rebase = subprocess.run(
                     ["git", "-C", tmpdir, "rebase", f"origin/{base_branch}"],
                     capture_output=True,
                     text=True,
                 )
-                if rebase.returncode != 0:
+                if rebase.returncode != 0 and not _resolve_rebase_state_conflicts(tmpdir):
                     subprocess.run(
                         ["git", "-C", tmpdir, "rebase", "--abort"],
                         capture_output=True,
@@ -415,6 +415,66 @@ def _pr_body(task_id: str, spec_ref: str, has_gate: bool) -> str:
     )
 
     return "\n".join(lines)
+
+
+def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
+    """Auto-resolve .hyperloop/state/ conflicts during rebase, then continue.
+
+    State file ownership:
+      - tasks/   → take ours (main/trunk, the rebase target)
+      - reviews/ → take theirs (worker commit being replayed)
+
+    If non-state conflicts exist, returns False (caller should abort).
+    May loop through multiple conflicting commits (rebase --continue
+    can hit the next conflict).
+    """
+    max_rounds = 20  # Safety limit — a rebase shouldn't have 20+ conflicts
+    for _ in range(max_rounds):
+        # Get list of unmerged (conflicting) files
+        result = subprocess.run(
+            ["git", "-C", tmpdir, "diff", "--name-only", "--diff-filter=U"],
+            capture_output=True,
+            text=True,
+        )
+        conflicted = [f for f in result.stdout.strip().splitlines() if f]
+        if not conflicted:
+            return True  # No more conflicts — rebase is done
+
+        # Check if ALL conflicts are in .hyperloop/state/
+        non_state = [f for f in conflicted if not f.startswith(".hyperloop/state/")]
+        if non_state:
+            return False  # Real conflicts — caller should abort
+
+        # Resolve state files
+        for f in conflicted:
+            if f.startswith(".hyperloop/state/tasks/"):
+                # Orchestrator owns task files — take trunk version
+                subprocess.run(
+                    ["git", "-C", tmpdir, "checkout", "--ours", "--", f],
+                    capture_output=True,
+                )
+            else:
+                # Worker owns review files — take worker version
+                subprocess.run(
+                    ["git", "-C", tmpdir, "checkout", "--theirs", "--", f],
+                    capture_output=True,
+                )
+            subprocess.run(
+                ["git", "-C", tmpdir, "add", f],
+                capture_output=True,
+            )
+
+        # Continue the rebase — may hit another conflict on the next commit
+        cont = subprocess.run(
+            ["git", "-C", tmpdir, "rebase", "--continue"],
+            capture_output=True,
+            text=True,
+            env={**subprocess.os.environ, "GIT_EDITOR": "true"},
+        )
+        if cont.returncode == 0:
+            return True  # Rebase completed successfully
+
+    return False  # Exceeded max rounds
 
 
 def _spec_name_from_ref(spec_ref: str) -> str:

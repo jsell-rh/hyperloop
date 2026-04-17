@@ -605,13 +605,19 @@ class Orchestrator:
             pr_state = self._pr_manager.get_pr_state(task.pr)
             if pr_state is not None and pr_state.state == "MERGED":
                 # Someone merged the PR manually — all remaining steps are done
-                logger.info("PR %s was merged externally, completing task %s", task.pr, task.id)
+                self._probe.merge_attempted(
+                    task_id=task.id,
+                    branch=task.branch or f"{BRANCH_PREFIX}/{task.id}",
+                    spec_ref=task.spec_ref,
+                    outcome="merged_externally",
+                    attempt=0,
+                    cycle=self._current_cycle,
+                )
                 self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
                 continue
 
             if pr_state is not None and pr_state.state == "CLOSED":
                 # PR was closed — create a new one so humans can review/approve
-                logger.warning("PR %s was closed, creating new PR for task %s", task.pr, task.id)
                 branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
                 new_url = self._pr_manager.create_draft(task.id, branch, task.title, task.spec_ref)
                 if new_url:
@@ -630,9 +636,6 @@ class Orchestrator:
             )
             if not cleared:
                 continue
-
-            # Gate cleared — advance to next pipeline step
-            logger.info("Gate '%s' cleared for task %s", step.gate, task.id)
             advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
             if advanced is not None:
                 next_action, new_pos = advanced
@@ -701,7 +704,14 @@ class Orchestrator:
         pr_state = self._pr_manager.get_pr_state(pr_url)
 
         if pr_state is None:
-            logger.warning("PR %s not found for task %s, skipping merge", pr_url, task_id)
+            self._probe.merge_attempted(
+                task_id=task_id,
+                branch=branch,
+                spec_ref=spec_ref,
+                outcome="pr_not_found",
+                attempt=0,
+                cycle=self._current_cycle,
+            )
             return
 
         if pr_state.state == "MERGED":
@@ -709,34 +719,39 @@ class Orchestrator:
             branch_tip = self._get_branch_tip(branch)
             if branch_tip is None or pr_state.head_sha == branch_tip:
                 # All work captured (or branch deleted) — mark complete
-                logger.info(
-                    "PR %s already merged with all work, completing task %s", pr_url, task_id
-                )
                 self._rebase_attempts.pop(task_id, None)
                 self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
                 self._probe.merge_attempted(
                     task_id=task_id,
                     branch=branch,
                     spec_ref=spec_ref,
-                    outcome="merged",
+                    outcome="merged_externally",
                     attempt=0,
                     cycle=self._current_cycle,
                 )
                 return
             # Branch has commits beyond what was merged — create new PR
-            logger.warning(
-                "PR %s was merged at %s but branch %s is at %s — unmerged work exists",
-                pr_url,
-                pr_state.head_sha,
-                branch,
-                branch_tip,
+            self._probe.merge_attempted(
+                task_id=task_id,
+                branch=branch,
+                spec_ref=spec_ref,
+                outcome="stale_merge",
+                attempt=0,
+                cycle=self._current_cycle,
             )
             pr_url = self._recreate_pr(task_id, branch, spec_ref)
             if not pr_url:
                 return
 
         elif pr_state.state == "CLOSED":
-            logger.warning("PR %s was closed, creating new PR for task %s", pr_url, task_id)
+            self._probe.merge_attempted(
+                task_id=task_id,
+                branch=branch,
+                spec_ref=spec_ref,
+                outcome="pr_closed",
+                attempt=0,
+                cycle=self._current_cycle,
+            )
             pr_url = self._recreate_pr(task_id, branch, spec_ref)
             if not pr_url:
                 return
@@ -768,7 +783,6 @@ class Orchestrator:
             attempt=0,
             cycle=self._current_cycle,
         )
-        logger.info("Merged PR for task %s", task_id)
 
     def _recreate_pr(self, task_id: str, branch: str, spec_ref: str) -> str:
         """Create a new draft PR for a task, updating state. Returns URL or ""."""
