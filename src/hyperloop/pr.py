@@ -246,35 +246,64 @@ class PRManager:
         return True
 
     def rebase_branch(self, branch: str, base_branch: str) -> bool:
-        """Rebase a branch onto base. Returns True if clean, False if conflicts."""
-        # Checkout the branch
-        checkout = subprocess.run(
-            ["git", "checkout", branch],
-            capture_output=True,
-            text=True,
-        )
-        if checkout.returncode != 0:
-            logger.warning("Failed to checkout branch %s: %s", branch, checkout.stderr.strip())
-            return False
+        """Rebase a branch onto base. Returns True if clean, False if conflicts.
 
-        # Attempt rebase
-        rebase = subprocess.run(
-            ["git", "rebase", base_branch],
-            capture_output=True,
-            text=True,
-        )
-        if rebase.returncode != 0:
-            # Abort the rebase on conflict
-            subprocess.run(
-                ["git", "rebase", "--abort"],
+        Uses a temporary worktree to avoid checking out the branch in the
+        main repo (which would conflict with uncommitted state changes and
+        leave the repo on the wrong branch).
+        """
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="hyperloop-rebase-") as tmpdir:
+            # Create a temporary worktree for the branch
+            wt = subprocess.run(
+                ["git", "worktree", "add", tmpdir, branch],
                 capture_output=True,
                 text=True,
             )
-            logger.warning("Rebase conflict on branch %s onto %s", branch, base_branch)
-            return False
+            if wt.returncode != 0:
+                logger.warning("Failed to create worktree for %s: %s", branch, wt.stderr.strip())
+                return False
 
-        logger.info("Rebased branch %s onto %s", branch, base_branch)
-        return True
+            try:
+                # Fetch latest base
+                subprocess.run(
+                    ["git", "-C", tmpdir, "fetch", "origin", base_branch],
+                    capture_output=True,
+                    text=True,
+                )
+
+                # Rebase onto base
+                rebase = subprocess.run(
+                    ["git", "-C", tmpdir, "rebase", f"origin/{base_branch}"],
+                    capture_output=True,
+                    text=True,
+                )
+                if rebase.returncode != 0:
+                    subprocess.run(
+                        ["git", "-C", tmpdir, "rebase", "--abort"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    logger.warning("Rebase conflict on branch %s onto %s", branch, base_branch)
+                    return False
+
+                # Push the rebased branch
+                subprocess.run(
+                    ["git", "-C", tmpdir, "push", "--force-with-lease", "origin", branch],
+                    capture_output=True,
+                    text=True,
+                )
+
+                logger.info("Rebased branch %s onto %s", branch, base_branch)
+                return True
+            finally:
+                # Clean up the worktree
+                subprocess.run(
+                    ["git", "worktree", "remove", "--force", tmpdir],
+                    capture_output=True,
+                    text=True,
+                )
 
 
 def _pr_body(task_id: str, spec_ref: str, has_gate: bool) -> str:
