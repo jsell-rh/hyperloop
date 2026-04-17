@@ -362,11 +362,25 @@ class PRManager:
                     return False
 
                 # Push the rebased branch
-                subprocess.run(
+                push = subprocess.run(
                     ["git", "-C", tmpdir, "push", "--force-with-lease", "origin", branch],
                     capture_output=True,
                     text=True,
                 )
+                if push.returncode != 0:
+                    # force-with-lease can fail if tracking ref is stale — retry with --force
+                    push = subprocess.run(
+                        ["git", "-C", tmpdir, "push", "--force", "origin", branch],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if push.returncode != 0:
+                        logger.warning(
+                            "Push failed after rebase of %s: %s",
+                            branch,
+                            push.stderr.strip(),
+                        )
+                        return False
 
                 logger.info("Rebased branch %s onto %s", branch, base_branch)
                 return True
