@@ -748,6 +748,10 @@ class Orchestrator:
             self._handle_rebase_failure(task_id, branch)
             return
 
+        if not self._pr_manager.wait_mergeable(pr_url):
+            self._handle_rebase_failure(task_id, branch)
+            return
+
         if not self._pr_manager.merge(pr_url, task_id, spec_ref):
             self._handle_rebase_failure(task_id, branch)
             return

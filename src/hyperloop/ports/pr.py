@@ -42,6 +42,10 @@ class PRPort(Protocol):
         """Mark a draft PR as ready for review."""
         ...
 
+    def wait_mergeable(self, pr_url: str, timeout_s: float = 30.0) -> bool:
+        """Poll until the PR is mergeable. Returns False on timeout/conflict."""
+        ...
+
     def merge(self, pr_url: str, task_id: str, spec_ref: str) -> bool:
         """Squash-merge a PR. Returns True on success, False on conflict."""
         ...

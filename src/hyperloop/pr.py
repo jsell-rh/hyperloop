@@ -241,6 +241,48 @@ class PRManager:
             return
         logger.info("Marked PR %s as ready for review", pr_url)
 
+    def wait_mergeable(self, pr_url: str, timeout_s: float = 30.0) -> bool:
+        """Poll until the PR is mergeable. Returns False on timeout/conflict.
+
+        After a force-push (rebase), GitHub recalculates mergeability
+        asynchronously. The ``mergeable`` field is ``UNKNOWN`` during this
+        window. Attempting to merge while UNKNOWN fails with
+        "Pull Request is not mergeable".
+        """
+        import time
+
+        deadline = time.monotonic() + timeout_s
+        interval = 2.0
+        while time.monotonic() < deadline:
+            result = subprocess.run(
+                [
+                    "gh",
+                    "pr",
+                    "view",
+                    pr_url,
+                    "--json",
+                    "mergeable",
+                    "--repo",
+                    self.repo,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                return False
+
+            data = json.loads(result.stdout)
+            status = str(data.get("mergeable", ""))
+            if status == "MERGEABLE":
+                return True
+            if status == "CONFLICTING":
+                return False
+            # UNKNOWN — GitHub is still calculating, poll again
+            time.sleep(interval)
+
+        logger.warning("PR %s still UNKNOWN after %.0fs, proceeding anyway", pr_url, timeout_s)
+        return True  # Optimistic: let merge() handle the actual failure
+
     def merge(self, pr_url: str, task_id: str, spec_ref: str) -> bool:
         """Squash-merge a PR, preserving trailers. Returns True on success.
 

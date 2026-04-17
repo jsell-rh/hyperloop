@@ -137,6 +137,10 @@ class FakePRManager:
         self._prs[pr_url].draft = False
         self.marked_ready.append(pr_url)
 
+    def wait_mergeable(self, pr_url: str, timeout_s: float = 30.0) -> bool:
+        """Always mergeable in the fake — no GitHub recalculation delay."""
+        return pr_url not in self._merge_fails
+
     def merge(self, pr_url: str, task_id: str, spec_ref: str) -> bool:
         """Squash-merge a PR, preserving trailers. Returns True on success.
 
