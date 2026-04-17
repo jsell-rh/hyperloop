@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.20.0 (2026-04-17)
+
+### Features
+
+- Spawn backoff + worktree recovery from stale branch checkout
+  ([`e65f7de`](https://github.com/jsell-rh/hyperloop/commit/e65f7def15f8e9891500a931b6201cbd39f1c2c0))
+
+
 ## v0.19.4 (2026-04-17)
 
 
