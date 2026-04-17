@@ -736,8 +736,12 @@ class Orchestrator:
     def _merge_local(self, task_id: str, branch: str, spec_ref: str) -> None:
         """Merge worker branch into base branch locally (no PR).
 
-        On conflict, transitions to NEEDS_REBASE so the rebase-resolver
-        agent can handle it on the next cycle.
+        Uses --no-commit so we can resolve .hyperloop/state/ conflicts
+        before finalizing.  The orchestrator owns task state files
+        (.hyperloop/state/tasks/) — on conflict those always take the
+        trunk version.  Review files (.hyperloop/state/reviews/) are
+        worker output — on conflict those take the branch version.
+        Non-state conflicts are real and trigger NEEDS_REBASE.
         """
         import subprocess
 
@@ -745,27 +749,130 @@ class Orchestrator:
         if self._repo_path is not None:
             git_cmd = ["git", "-C", self._repo_path]
 
+        merge_result = subprocess.run(
+            [*git_cmd, "merge", branch, "--no-commit", "--no-ff"],
+            capture_output=True,
+            text=True,
+        )
+
+        if merge_result.returncode != 0 and not self._resolve_state_conflicts(git_cmd, branch):
+            # Non-state conflicts exist — abort and handle normally
+            subprocess.run(
+                [*git_cmd, "merge", "--abort"],
+                capture_output=True,
+                check=False,
+            )
+            self._handle_local_merge_conflict(task_id, branch, git_cmd)
+            return
+
+        # Restore trunk's version of task state files (orchestrator owns these)
+        subprocess.run(
+            [*git_cmd, "checkout", "HEAD", "--", ".hyperloop/state/tasks/"],
+            capture_output=True,
+        )
+        # Ensure review files from the branch are kept (worker output)
+        subprocess.run(
+            [*git_cmd, "checkout", branch, "--", ".hyperloop/state/reviews/"],
+            capture_output=True,
+        )
+        # Stage any changes from the checkout resolutions
+        subprocess.run(
+            [*git_cmd, "add", ".hyperloop/state/"],
+            capture_output=True,
+        )
+
+        # Commit the merge
         try:
             subprocess.run(
-                [*git_cmd, "merge", branch, "--no-edit", "-m", f"merge: {task_id}"],
+                [*git_cmd, "commit", "--no-edit", "-m", f"merge: {task_id}"],
                 check=True,
                 capture_output=True,
             )
-            self._rebase_attempts.pop(task_id, None)
-            self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
-            self._delete_local_branch(branch)
-            self._probe.merge_attempted(
-                task_id=task_id,
-                branch=branch,
-                spec_ref=spec_ref,
-                outcome="merged",
-                attempt=0,
-                cycle=self._current_cycle,
-            )
-            logger.info("Local merge of %s into base branch", task_id)
         except subprocess.CalledProcessError:
-            subprocess.run([*git_cmd, "merge", "--abort"], capture_output=True, check=False)
+            # Commit failed (e.g. nothing to commit, branch missing) — abort
+            subprocess.run(
+                [*git_cmd, "merge", "--abort"],
+                capture_output=True,
+                check=False,
+            )
             self._handle_local_merge_conflict(task_id, branch, git_cmd)
+            return
+
+        self._rebase_attempts.pop(task_id, None)
+        self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
+        self._delete_local_branch(branch)
+        self._probe.merge_attempted(
+            task_id=task_id,
+            branch=branch,
+            spec_ref=spec_ref,
+            outcome="merged",
+            attempt=0,
+            cycle=self._current_cycle,
+        )
+        logger.info("Local merge of %s into base branch", task_id)
+
+    def _resolve_state_conflicts(self, git_cmd: list[str], branch: str) -> bool:
+        """Attempt to resolve conflicts limited to .hyperloop/state/.
+
+        Returns True if all conflicts were in .hyperloop/state/ and have
+        been resolved.  Returns False if any non-state file has a conflict
+        (caller should abort the merge).
+        """
+        import subprocess
+
+        # List conflicted files
+        result = subprocess.run(
+            [*git_cmd, "diff", "--name-only", "--diff-filter=U"],
+            capture_output=True,
+            text=True,
+        )
+        conflicted = [f for f in result.stdout.strip().splitlines() if f]
+
+        if not conflicted:
+            return True
+
+        for path in conflicted:
+            if path.startswith(".hyperloop/state/tasks/"):
+                # Orchestrator owns task state — take trunk (ours)
+                subprocess.run(
+                    [*git_cmd, "checkout", "--ours", "--", path],
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    [*git_cmd, "add", path],
+                    check=True,
+                    capture_output=True,
+                )
+            elif path.startswith(".hyperloop/state/reviews/"):
+                # Worker output — take branch (theirs)
+                subprocess.run(
+                    [*git_cmd, "checkout", "--theirs", "--", path],
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    [*git_cmd, "add", path],
+                    check=True,
+                    capture_output=True,
+                )
+            elif path.startswith(".hyperloop/state/"):
+                # Other state files — take trunk (ours) by default
+                subprocess.run(
+                    [*git_cmd, "checkout", "--ours", "--", path],
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    [*git_cmd, "add", path],
+                    check=True,
+                    capture_output=True,
+                )
+            else:
+                # Non-state conflict — cannot auto-resolve
+                return False
+
+        return True
 
     def _handle_local_merge_conflict(self, task_id: str, branch: str, git_cmd: list[str]) -> None:
         """Handle a local merge conflict — increment rebase counter or loop back."""

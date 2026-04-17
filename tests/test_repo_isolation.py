@@ -407,3 +407,265 @@ class TestLocalMergeIsolation:
             modified_files = {line.lstrip().split(maxsplit=1)[1] for line in status.splitlines()}
             for f in modified_files:
                 assert "task-conflict" in f, f"Unexpected dirty file after merge abort: {f}"
+
+    def test_local_merge_succeeds_despite_state_file_changes(self, tmp_path: Path) -> None:
+        """When the orchestrator modifies .hyperloop/state/tasks/ on trunk
+        and a worker branch also has divergent state file content (e.g. from
+        a rebase-resolver touching it, or from the fork-point snapshot),
+        _merge_local must still succeed — state files are owned by the
+        orchestrator, not the worker.
+
+        This reproduces the systemic bug where every local merge conflicts
+        on state files, sending tasks into an endless rebase loop.
+        """
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+
+        # --- Setup: initial task state file on trunk ---
+        tasks_dir = repo / ".hyperloop" / "state" / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        initial_task_content = (
+            "---\n"
+            "id: task-001\n"
+            "title: Test merge\n"
+            "spec_ref: specs/test.md\n"
+            "status: in-progress\n"
+            "phase: implementer\n"
+            "deps: []\n"
+            "round: 0\n"
+            "branch: hyperloop/task-001\n"
+            "pr: null\n"
+            "---\n"
+        )
+        (tasks_dir / "task-001.md").write_text(initial_task_content)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--no-verify", "-m", "add task state")
+
+        # --- Create worker branch (forked from current trunk) ---
+        _git(repo, "checkout", "-b", "hyperloop/task-001")
+        # Worker adds a feature file (its real work)
+        (repo / "src").mkdir(exist_ok=True)
+        (repo / "src" / "feature.py").write_text("def hello():\n    return 'world'\n")
+        _git(repo, "add", "src/feature.py")
+        # Worker also modifies the task file (e.g. rebase-resolver touched it,
+        # or the worker agent read and re-wrote it with slightly different content)
+        branch_task_content = (
+            "---\n"
+            "id: task-001\n"
+            "title: Test merge\n"
+            "spec_ref: specs/test.md\n"
+            "status: in-progress\n"
+            "phase: verifier\n"
+            "deps: []\n"
+            "round: 1\n"
+            "branch: hyperloop/task-001\n"
+            "pr: null\n"
+            "---\n"
+        )
+        (tasks_dir / "task-001.md").write_text(branch_task_content)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--no-verify", "-m", "feat: implement feature")
+        _git(repo, "checkout", "main")
+
+        # --- Orchestrator modifies state file on trunk (status transition) ---
+        trunk_task_content = (
+            "---\n"
+            "id: task-001\n"
+            "title: Test merge\n"
+            "spec_ref: specs/test.md\n"
+            "status: in-progress\n"
+            "phase: merge-pr\n"
+            "deps: []\n"
+            "round: 0\n"
+            "branch: hyperloop/task-001\n"
+            "pr: null\n"
+            "---\n"
+        )
+        (tasks_dir / "task-001.md").write_text(trunk_task_content)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--no-verify", "-m", "orchestrator: transition to merge-pr")
+
+        # --- Now trunk and branch have CONFLICTING changes to the task file ---
+        # Trunk: phase: merge-pr, round: 0
+        # Branch: phase: verifier, round: 1
+        # Both differ from the common ancestor (phase: implementer, round: 0)
+
+        from hyperloop.adapters.state import GitStateStore
+        from hyperloop.domain.model import (
+            LoopStep,
+            Process,
+            RoleStep,
+        )
+        from hyperloop.loop import Orchestrator
+        from tests.fakes.probe import RecordingProbe
+        from tests.fakes.runtime import InMemoryRuntime
+
+        state = GitStateStore(repo_path=repo)
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        process = Process(
+            name="test",
+            intake=(),
+            pipeline=(
+                LoopStep(
+                    steps=(
+                        RoleStep(role="implementer", on_pass=None, on_fail=None),
+                        RoleStep(role="verifier", on_pass=None, on_fail=None),
+                    ),
+                ),
+            ),
+        )
+
+        orch = Orchestrator(
+            state=state,
+            runtime=runtime,
+            process=process,
+            repo_path=str(repo),
+            poll_interval=0,
+            probe=probe,
+        )
+
+        # This must NOT raise or trigger a conflict
+        orch._merge_local("task-001", "hyperloop/task-001", "specs/test.md")
+
+        # Merge succeeded — task should be COMPLETE
+        task = state.get_task("task-001")
+        from hyperloop.domain.model import TaskStatus
+
+        assert (
+            task.status == TaskStatus.COMPLETE
+        ), f"Expected COMPLETE but got {task.status} — merge likely conflicted"
+
+        # The worker's feature file must be present on trunk
+        assert (repo / "src" / "feature.py").exists(), "Worker's feature file missing after merge"
+
+        # The state file must have trunk's version (merge-pr), not branch's
+        # (implementer) — but since the task was transitioned to COMPLETE,
+        # we check that the state store reflects the final orchestrator state.
+        # The key point: the merge did not fail.
+
+        # HEAD must still be on main
+        assert _current_branch(repo) == "main"
+
+    def test_local_merge_preserves_review_files_from_branch(self, tmp_path: Path) -> None:
+        """Workers write review files on their branches. These SHOULD be
+        merged in (they are the worker's output), even when task state
+        files conflict.
+        """
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+
+        # --- Initial state on trunk ---
+        tasks_dir = repo / ".hyperloop" / "state" / "tasks"
+        reviews_dir = repo / ".hyperloop" / "state" / "reviews"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        reviews_dir.mkdir(parents=True, exist_ok=True)
+        (tasks_dir / "task-002.md").write_text(
+            "---\n"
+            "id: task-002\n"
+            "title: Review test\n"
+            "spec_ref: specs/test.md\n"
+            "status: in-progress\n"
+            "phase: implementer\n"
+            "deps: []\n"
+            "round: 0\n"
+            "branch: hyperloop/task-002\n"
+            "pr: null\n"
+            "---\n"
+        )
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--no-verify", "-m", "add task-002 state")
+
+        # --- Worker branch: adds review file + feature + modifies task file ---
+        _git(repo, "checkout", "-b", "hyperloop/task-002")
+        (repo / "src").mkdir(exist_ok=True)
+        (repo / "src" / "widget.py").write_text("class Widget: pass\n")
+        reviews_dir_branch = repo / ".hyperloop" / "state" / "reviews"
+        reviews_dir_branch.mkdir(parents=True, exist_ok=True)
+        (reviews_dir_branch / "task-002-r0-verifier.md").write_text(
+            "---\nverdict: pass\nfindings: 0\n---\nLooks good.\n"
+        )
+        # Worker also modifies the task file (creating a conflict with trunk)
+        (tasks_dir / "task-002.md").write_text(
+            "---\n"
+            "id: task-002\n"
+            "title: Review test\n"
+            "spec_ref: specs/test.md\n"
+            "status: in-progress\n"
+            "phase: verifier\n"
+            "deps: []\n"
+            "round: 1\n"
+            "branch: hyperloop/task-002\n"
+            "pr: null\n"
+            "---\n"
+        )
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--no-verify", "-m", "feat: widget + review")
+        _git(repo, "checkout", "main")
+
+        # --- Orchestrator changes state on trunk ---
+        (tasks_dir / "task-002.md").write_text(
+            "---\n"
+            "id: task-002\n"
+            "title: Review test\n"
+            "spec_ref: specs/test.md\n"
+            "status: in-progress\n"
+            "phase: merge-pr\n"
+            "deps: []\n"
+            "round: 0\n"
+            "branch: hyperloop/task-002\n"
+            "pr: null\n"
+            "---\n"
+        )
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--no-verify", "-m", "orchestrator: transition task-002")
+
+        from hyperloop.adapters.state import GitStateStore
+        from hyperloop.domain.model import (
+            LoopStep,
+            Process,
+            RoleStep,
+            TaskStatus,
+        )
+        from hyperloop.loop import Orchestrator
+        from tests.fakes.probe import RecordingProbe
+        from tests.fakes.runtime import InMemoryRuntime
+
+        state = GitStateStore(repo_path=repo)
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        process = Process(
+            name="test",
+            intake=(),
+            pipeline=(
+                LoopStep(
+                    steps=(
+                        RoleStep(role="implementer", on_pass=None, on_fail=None),
+                        RoleStep(role="verifier", on_pass=None, on_fail=None),
+                    ),
+                ),
+            ),
+        )
+
+        orch = Orchestrator(
+            state=state,
+            runtime=runtime,
+            process=process,
+            repo_path=str(repo),
+            poll_interval=0,
+            probe=probe,
+        )
+
+        orch._merge_local("task-002", "hyperloop/task-002", "specs/test.md")
+
+        # Merge succeeded
+        task = state.get_task("task-002")
+        assert task.status == TaskStatus.COMPLETE
+
+        # Worker's feature file present
+        assert (repo / "src" / "widget.py").exists()
+
+        # Review file from worker branch was preserved
+        review_file = reviews_dir / "task-002-r0-verifier.md"
+        assert review_file.exists(), "Review file from worker branch was not merged in"
+        assert "Looks good" in review_file.read_text()
