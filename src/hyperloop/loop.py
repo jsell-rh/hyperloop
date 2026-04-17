@@ -743,12 +743,22 @@ class Orchestrator:
         return new_url
 
     def _get_branch_tip(self, branch: str) -> str | None:
-        """Return the SHA of a remote branch tip, or None if not found."""
+        """Return the SHA of a remote branch tip, or None if not found.
+
+        Fetches from origin first to ensure the tracking ref is current.
+        """
         import subprocess
 
         git_cmd = ["git"]
         if self._repo_path is not None:
             git_cmd = ["git", "-C", self._repo_path]
+
+        # Fetch to ensure tracking ref is up to date
+        subprocess.run(
+            [*git_cmd, "fetch", "origin", branch],
+            capture_output=True,
+            text=True,
+        )
 
         result = subprocess.run(
             [*git_cmd, "rev-parse", f"origin/{branch}"],

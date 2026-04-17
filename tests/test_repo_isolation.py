@@ -669,3 +669,230 @@ class TestLocalMergeIsolation:
         review_file = reviews_dir / "task-002-r0-verifier.md"
         assert review_file.exists(), "Review file from worker branch was not merged in"
         assert "Looks good" in review_file.read_text()
+
+
+class TestMergeViaPRStateResilience:
+    """_merge_via_pr handles MERGED PRs with stale branch tips correctly.
+
+    Uses a real git repo with an origin remote so _get_branch_tip returns
+    an actual SHA.  The FakePRManager simulates GitHub PR state.
+    """
+
+    def test_merged_pr_with_stale_head_creates_new_pr(self, tmp_path: Path) -> None:
+        """When a PR was merged at an old commit but the branch has new work,
+        a new PR is created for the remaining commits."""
+        from hyperloop.adapters.state import GitStateStore
+        from hyperloop.domain.model import (
+            ActionStep,
+            LoopStep,
+            Process,
+            RoleStep,
+        )
+        from hyperloop.loop import Orchestrator
+        from tests.fakes.pr import FakePRManager
+        from tests.fakes.runtime import InMemoryRuntime
+
+        # --- Set up bare origin + clone ---
+        bare = tmp_path / "origin.git"
+        repo = tmp_path / "clone"
+        subprocess.run(
+            ["git", "init", "--bare", "-b", "main", str(bare)],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "clone", str(bare), str(repo)],
+            check=True,
+            capture_output=True,
+        )
+        _git(repo, "config", "user.email", "test@test.com")
+        _git(repo, "config", "user.name", "Test")
+
+        # Initial commit on main
+        (repo / "README.md").write_text("# Test\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "init")
+        _git(repo, "push", "origin", "main")
+
+        # Create state dir for GitStateStore
+        tasks_dir = repo / ".hyperloop" / "state" / "tasks"
+        tasks_dir.mkdir(parents=True)
+        (repo / ".hyperloop" / "state" / "reviews").mkdir(parents=True)
+
+        # Create task file
+        task_content = (
+            "---\n"
+            "id: task-001\n"
+            "title: Test widget\n"
+            "spec_ref: specs/test.md\n"
+            "status: in-progress\n"
+            "phase: merge-pr\n"
+            "deps: []\n"
+            "round: 0\n"
+            "branch: hyperloop/task-001\n"
+            "pr: null\n"
+            "---\n"
+        )
+        (tasks_dir / "task-001.md").write_text(task_content)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--no-verify", "-m", "orchestrator: state")
+        _git(repo, "push", "origin", "main")
+
+        # Create worker branch with a commit and push
+        _git(repo, "checkout", "-b", "hyperloop/task-001")
+        (repo / "feature.py").write_text("# feature\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "feat: implement feature")
+        _git(repo, "push", "origin", "hyperloop/task-001")
+        _git(repo, "checkout", "main")
+
+        # --- Set up FakePRManager: PR was merged at an OLD commit ---
+        pr_mgr = FakePRManager(repo="org/repo")
+        pr_url = pr_mgr.create_draft(
+            "task-001", "hyperloop/task-001", "Test widget", "specs/test.md"
+        )
+        pr_mgr.set_head_sha(pr_url, "old-sha-not-matching-branch-tip")
+        pr_mgr.merge(pr_url, "task-001", "specs/test.md")
+
+        # Wire up PR on the task
+        state = GitStateStore(repo_path=repo)
+        state.set_task_pr("task-001", pr_url)
+        state.commit("orchestrator: set PR")
+
+        process = Process(
+            name="test",
+            intake=(),
+            pipeline=(
+                LoopStep(
+                    steps=(
+                        RoleStep(role="implementer", on_pass=None, on_fail=None),
+                        RoleStep(role="verifier", on_pass=None, on_fail=None),
+                    ),
+                ),
+                ActionStep(action="merge-pr"),
+            ),
+        )
+
+        runtime = InMemoryRuntime()
+        orch = Orchestrator(
+            state=state,
+            runtime=runtime,
+            process=process,
+            repo_path=str(repo),
+            pr_manager=pr_mgr,
+            poll_interval=0,
+        )
+
+        orch._merge_via_pr("task-001", pr_url, "specs/test.md", "hyperloop/task-001")
+
+        # A new PR should have been created (different URL)
+        task = state.get_task("task-001")
+        assert task.pr is not None
+        assert task.pr != pr_url, "Should have created a new PR for unmerged work"
+
+    def test_merged_pr_with_matching_head_marks_complete(self, tmp_path: Path) -> None:
+        """When a PR was merged and the branch tip matches, task completes."""
+        from hyperloop.adapters.state import GitStateStore
+        from hyperloop.domain.model import (
+            ActionStep,
+            LoopStep,
+            Process,
+            RoleStep,
+            TaskStatus,
+        )
+        from hyperloop.loop import Orchestrator
+        from tests.fakes.pr import FakePRManager
+        from tests.fakes.runtime import InMemoryRuntime
+
+        # --- Set up bare origin + clone ---
+        bare = tmp_path / "origin.git"
+        repo = tmp_path / "clone"
+        subprocess.run(
+            ["git", "init", "--bare", "-b", "main", str(bare)],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "clone", str(bare), str(repo)],
+            check=True,
+            capture_output=True,
+        )
+        _git(repo, "config", "user.email", "test@test.com")
+        _git(repo, "config", "user.name", "Test")
+
+        (repo / "README.md").write_text("# Test\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "init")
+        _git(repo, "push", "origin", "main")
+
+        tasks_dir = repo / ".hyperloop" / "state" / "tasks"
+        tasks_dir.mkdir(parents=True)
+        (repo / ".hyperloop" / "state" / "reviews").mkdir(parents=True)
+
+        task_content = (
+            "---\n"
+            "id: task-001\n"
+            "title: Test widget\n"
+            "spec_ref: specs/test.md\n"
+            "status: in-progress\n"
+            "phase: merge-pr\n"
+            "deps: []\n"
+            "round: 0\n"
+            "branch: hyperloop/task-001\n"
+            "pr: null\n"
+            "---\n"
+        )
+        (tasks_dir / "task-001.md").write_text(task_content)
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--no-verify", "-m", "orchestrator: state")
+        _git(repo, "push", "origin", "main")
+
+        # Create worker branch, push, get tip
+        _git(repo, "checkout", "-b", "hyperloop/task-001")
+        (repo / "feature.py").write_text("# feature\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "feat: implement feature")
+        _git(repo, "push", "origin", "hyperloop/task-001")
+        branch_tip = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        _git(repo, "checkout", "main")
+
+        # PR was merged at the SAME commit as the branch tip
+        pr_mgr = FakePRManager(repo="org/repo")
+        pr_url = pr_mgr.create_draft(
+            "task-001", "hyperloop/task-001", "Test widget", "specs/test.md"
+        )
+        pr_mgr.set_head_sha(pr_url, branch_tip)
+        pr_mgr.merge(pr_url, "task-001", "specs/test.md")
+
+        state = GitStateStore(repo_path=repo)
+        state.set_task_pr("task-001", pr_url)
+        state.commit("orchestrator: set PR")
+
+        process = Process(
+            name="test",
+            intake=(),
+            pipeline=(
+                LoopStep(
+                    steps=(
+                        RoleStep(role="implementer", on_pass=None, on_fail=None),
+                        RoleStep(role="verifier", on_pass=None, on_fail=None),
+                    ),
+                ),
+                ActionStep(action="merge-pr"),
+            ),
+        )
+
+        runtime = InMemoryRuntime()
+        orch = Orchestrator(
+            state=state,
+            runtime=runtime,
+            process=process,
+            repo_path=str(repo),
+            pr_manager=pr_mgr,
+            poll_interval=0,
+        )
+
+        orch._merge_via_pr("task-001", pr_url, "specs/test.md", "hyperloop/task-001")
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.COMPLETE
