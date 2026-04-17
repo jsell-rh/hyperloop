@@ -147,7 +147,8 @@ class PRManager:
     def check_gate(self, pr_url: str, gate: str) -> bool:
         """Check if a gate signal is present. v1: checks for 'lgtm' label.
 
-        Returns True if gate is cleared. Removes the label to prevent re-triggering.
+        Returns True if gate is cleared. Does NOT remove the label — that
+        happens after successful merge to avoid losing the signal on merge failure.
         """
         result = subprocess.run(
             [
@@ -162,31 +163,35 @@ class PRManager:
             ],
             capture_output=True,
             text=True,
-            check=True,
         )
+        if result.returncode != 0:
+            return False
+
         data = json.loads(result.stdout)
         label_names = {label["name"] for label in data.get("labels", [])}
 
         if "lgtm" in label_names:
-            subprocess.run(
-                [
-                    "gh",
-                    "pr",
-                    "edit",
-                    pr_url,
-                    "--remove-label",
-                    "lgtm",
-                    "--repo",
-                    self.repo,
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            logger.info("Gate '%s' cleared for PR %s (lgtm label found and removed)", gate, pr_url)
+            logger.info("Gate '%s' cleared for PR %s (lgtm label found)", gate, pr_url)
             return True
 
         return False
+
+    def remove_gate_label(self, pr_url: str) -> None:
+        """Remove the lgtm label after successful merge."""
+        subprocess.run(
+            [
+                "gh",
+                "pr",
+                "edit",
+                pr_url,
+                "--remove-label",
+                "lgtm",
+                "--repo",
+                self.repo,
+            ],
+            capture_output=True,
+            text=True,
+        )
 
     def mark_ready(self, pr_url: str) -> None:
         """Mark a draft PR as ready for review."""

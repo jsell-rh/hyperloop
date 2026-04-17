@@ -411,6 +411,9 @@ class Orchestrator:
         self._poll_gates(executor, to_spawn)
 
         # ---- 6. Merge ready PRs ----------------------------------------------
+        # Commit state before merge — local merge does git checkout which
+        # fails if there are uncommitted changes to task files on trunk.
+        self._state.commit("orchestrator: pre-merge state")
         self._merge_ready_prs()
 
         # ---- 7. Decide what to spawn (via decide()) -------------------------
@@ -716,8 +719,9 @@ class Orchestrator:
             self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
             return
 
-        # Merge succeeded — reset counter
+        # Merge succeeded — reset counter, remove gate label
         self._rebase_attempts.pop(task_id, None)
+        self._pr_manager.remove_gate_label(pr_url)
         self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
         self._probe.merge_attempted(
             task_id=task_id,

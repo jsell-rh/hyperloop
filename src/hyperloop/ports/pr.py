@@ -30,3 +30,7 @@ class PRPort(Protocol):
     def rebase_branch(self, branch: str, base_branch: str) -> bool:
         """Rebase a branch onto base. Returns True if clean, False if conflicts."""
         ...
+
+    def remove_gate_label(self, pr_url: str) -> None:
+        """Remove the gate label after successful merge."""
+        ...

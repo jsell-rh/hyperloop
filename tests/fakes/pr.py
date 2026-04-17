@@ -105,15 +105,15 @@ class FakePRManager:
         return url
 
     def check_gate(self, pr_url: str, gate: str) -> bool:
-        """Check if a gate signal is present. v1: checks for 'lgtm' label.
-
-        Returns True if gate is cleared. Removes the label to prevent re-triggering.
-        """
+        """Check if a gate signal is present. v1: checks for 'lgtm' label."""
         rec = self._prs[pr_url]
-        if "lgtm" in rec.labels:
+        return "lgtm" in rec.labels
+
+    def remove_gate_label(self, pr_url: str) -> None:
+        """Remove the lgtm label after successful merge."""
+        rec = self._prs.get(pr_url)
+        if rec is not None:
             rec.labels.discard("lgtm")
-            return True
-        return False
 
     def mark_ready(self, pr_url: str) -> None:
         """Mark a draft PR as ready for review."""
