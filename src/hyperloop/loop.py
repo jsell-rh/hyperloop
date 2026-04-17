@@ -562,10 +562,28 @@ class Orchestrator:
                 pr_url = self._pr_manager.create_draft(task.id, branch, task.title, task.spec_ref)
                 if pr_url:
                     self._state.set_task_pr(task.id, pr_url)
-                    # Re-read task to get updated pr field
                     task = self._state.get_task(task.id)
                 else:
                     continue  # Can't poll gate without a PR
+
+            # Check PR state — handle closed/merged PRs before polling
+            pr_state = self._pr_manager.get_pr_state(task.pr)
+            if pr_state is not None and pr_state.state == "MERGED":
+                # Someone merged the PR manually — all remaining steps are done
+                logger.info("PR %s was merged externally, completing task %s", task.pr, task.id)
+                self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
+                continue
+
+            if pr_state is not None and pr_state.state == "CLOSED":
+                # PR was closed — create a new one so humans can review/approve
+                logger.warning("PR %s was closed, creating new PR for task %s", task.pr, task.id)
+                branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
+                new_url = self._pr_manager.create_draft(task.id, branch, task.title, task.spec_ref)
+                if new_url:
+                    self._state.set_task_pr(task.id, new_url)
+                    task = self._state.get_task(task.id)
+                else:
+                    continue
 
             # Task is at a gate — poll it
             cleared = self._pr_manager.check_gate(task.pr, step.gate)
@@ -635,88 +653,68 @@ class Orchestrator:
                 self._merge_local(task.id, branch, task.spec_ref)
 
     def _merge_via_pr(self, task_id: str, pr_url: str, spec_ref: str, branch: str) -> None:
-        """Merge via GitHub PR: mark ready, rebase, then squash-merge."""
+        """Merge via GitHub PR: mark ready, rebase, then squash-merge.
+
+        Checks PR state first to handle PRs that were closed or merged
+        externally (by a human).  For MERGED PRs, verifies that the
+        branch tip matches what was merged — if not, there is unmerged
+        work and a new PR is created.
+        """
         assert self._pr_manager is not None
 
-        # Mark the draft PR as ready before merging
+        # ---- Check PR state before operating on it --------------------------
+        pr_state = self._pr_manager.get_pr_state(pr_url)
+
+        if pr_state is None:
+            logger.warning("PR %s not found for task %s, skipping merge", pr_url, task_id)
+            return
+
+        if pr_state.state == "MERGED":
+            # Verify all work is on trunk by comparing merge head to branch tip
+            branch_tip = self._get_branch_tip(branch)
+            if branch_tip is None or pr_state.head_sha == branch_tip:
+                # All work captured (or branch deleted) — mark complete
+                logger.info(
+                    "PR %s already merged with all work, completing task %s", pr_url, task_id
+                )
+                self._rebase_attempts.pop(task_id, None)
+                self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
+                self._probe.merge_attempted(
+                    task_id=task_id,
+                    branch=branch,
+                    spec_ref=spec_ref,
+                    outcome="merged",
+                    attempt=0,
+                    cycle=self._current_cycle,
+                )
+                return
+            # Branch has commits beyond what was merged — create new PR
+            logger.warning(
+                "PR %s was merged at %s but branch %s is at %s — unmerged work exists",
+                pr_url,
+                pr_state.head_sha,
+                branch,
+                branch_tip,
+            )
+            pr_url = self._recreate_pr(task_id, branch, spec_ref)
+            if not pr_url:
+                return
+
+        elif pr_state.state == "CLOSED":
+            logger.warning("PR %s was closed, creating new PR for task %s", pr_url, task_id)
+            pr_url = self._recreate_pr(task_id, branch, spec_ref)
+            if not pr_url:
+                return
+
+        # ---- PR is OPEN — proceed with normal merge flow --------------------
         self._pr_manager.mark_ready(pr_url)
 
         if not self._pr_manager.rebase_branch(branch, "main"):
-            logger.warning("Rebase conflict for task %s, marking NEEDS_REBASE", task_id)
-            self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
-            looping_back = self._rebase_attempts[task_id] >= self._max_rebase_attempts
-            self._probe.rebase_conflict(
-                task_id=task_id,
-                branch=branch,
-                attempt=self._rebase_attempts[task_id],
-                max_attempts=self._max_rebase_attempts,
-                looping_back=looping_back,
-                cycle=self._current_cycle,
-            )
-            if looping_back:
-                logger.warning(
-                    "Task %s exceeded max_rebase_attempts (%d), looping back",
-                    task_id,
-                    self._max_rebase_attempts,
-                )
-                self._rebase_attempts.pop(task_id, None)
-                task = self._state.get_task(task_id)
-                detail = f"Rebase conflict after {self._max_rebase_attempts} attempts"
-                self._state.store_review(
-                    task_id,
-                    round=task.round,
-                    role="orchestrator",
-                    verdict="fail",
-                    findings_count=1,
-                    detail=detail,
-                )
-                self._state.transition_task(
-                    task_id,
-                    TaskStatus.IN_PROGRESS,
-                    phase=Phase("implementer"),
-                    round=task.round + 1,
-                )
-                return
-            self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
+            self._handle_rebase_failure(task_id, branch)
             return
 
         if not self._pr_manager.merge(pr_url, task_id, spec_ref):
-            logger.warning("Merge conflict for task %s, marking NEEDS_REBASE", task_id)
-            self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
-            looping_back = self._rebase_attempts[task_id] >= self._max_rebase_attempts
-            self._probe.rebase_conflict(
-                task_id=task_id,
-                branch=branch,
-                attempt=self._rebase_attempts[task_id],
-                max_attempts=self._max_rebase_attempts,
-                looping_back=looping_back,
-                cycle=self._current_cycle,
-            )
-            if looping_back:
-                logger.warning(
-                    "Task %s exceeded max_rebase_attempts (%d), looping back",
-                    task_id,
-                    self._max_rebase_attempts,
-                )
-                self._rebase_attempts.pop(task_id, None)
-                task = self._state.get_task(task_id)
-                detail = f"Merge conflict after {self._max_rebase_attempts} attempts"
-                self._state.store_review(
-                    task_id,
-                    round=task.round,
-                    role="orchestrator",
-                    verdict="fail",
-                    findings_count=1,
-                    detail=detail,
-                )
-                self._state.transition_task(
-                    task_id,
-                    TaskStatus.IN_PROGRESS,
-                    phase=Phase("implementer"),
-                    round=task.round + 1,
-                )
-                return
-            self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
+            self._handle_rebase_failure(task_id, branch)
             return
 
         # Merge succeeded — reset counter, remove gate label
@@ -732,6 +730,73 @@ class Orchestrator:
             cycle=self._current_cycle,
         )
         logger.info("Merged PR for task %s", task_id)
+
+    def _recreate_pr(self, task_id: str, branch: str, spec_ref: str) -> str:
+        """Create a new draft PR for a task, updating state. Returns URL or ""."""
+        assert self._pr_manager is not None
+        task = self._state.get_task(task_id)
+        new_url = self._pr_manager.create_draft(task_id, branch, task.title, spec_ref)
+        if not new_url:
+            logger.warning("Failed to create replacement PR for task %s", task_id)
+            return ""
+        self._state.set_task_pr(task_id, new_url)
+        return new_url
+
+    def _get_branch_tip(self, branch: str) -> str | None:
+        """Return the SHA of a remote branch tip, or None if not found."""
+        import subprocess
+
+        git_cmd = ["git"]
+        if self._repo_path is not None:
+            git_cmd = ["git", "-C", self._repo_path]
+
+        result = subprocess.run(
+            [*git_cmd, "rev-parse", f"origin/{branch}"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
+
+    def _handle_rebase_failure(self, task_id: str, branch: str) -> None:
+        """Handle a rebase or merge conflict — track attempts, loop back if needed."""
+        logger.warning("Rebase/merge conflict for task %s, marking NEEDS_REBASE", task_id)
+        self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
+        looping_back = self._rebase_attempts[task_id] >= self._max_rebase_attempts
+        self._probe.rebase_conflict(
+            task_id=task_id,
+            branch=branch,
+            attempt=self._rebase_attempts[task_id],
+            max_attempts=self._max_rebase_attempts,
+            looping_back=looping_back,
+            cycle=self._current_cycle,
+        )
+        if looping_back:
+            logger.warning(
+                "Task %s exceeded max_rebase_attempts (%d), looping back",
+                task_id,
+                self._max_rebase_attempts,
+            )
+            self._rebase_attempts.pop(task_id, None)
+            task = self._state.get_task(task_id)
+            detail = f"Rebase conflict after {self._max_rebase_attempts} attempts"
+            self._state.store_review(
+                task_id,
+                round=task.round,
+                role="orchestrator",
+                verdict="fail",
+                findings_count=1,
+                detail=detail,
+            )
+            self._state.transition_task(
+                task_id,
+                TaskStatus.IN_PROGRESS,
+                phase=Phase("implementer"),
+                round=task.round + 1,
+            )
+            return
+        self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
 
     def _merge_local(self, task_id: str, branch: str, spec_ref: str) -> None:
         """Merge worker branch into base branch locally (no PR).

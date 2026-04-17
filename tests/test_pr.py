@@ -5,6 +5,7 @@ Uses FakePRManager (in-memory implementation). No mocks. No gh CLI calls.
 
 from __future__ import annotations
 
+from hyperloop.ports.pr import PRState
 from tests.fakes.pr import FakePRManager
 
 
@@ -152,3 +153,45 @@ class TestRebaseBranch:
         pr = FakePRManager(repo="org/repo")
         pr.rebase_branch("hyperloop/task-001", "main")
         assert ("hyperloop/task-001", "main") in pr.rebased
+
+
+class TestGetPRState:
+    def test_returns_open_for_new_pr(self):
+        pr = FakePRManager(repo="org/repo")
+        url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        state = pr.get_pr_state(url)
+        assert state is not None
+        assert state.state == "OPEN"
+
+    def test_returns_merged_after_merge(self):
+        pr = FakePRManager(repo="org/repo")
+        url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        pr.merge(url, "task-001", "specs/widget.md")
+        state = pr.get_pr_state(url)
+        assert state is not None
+        assert state.state == "MERGED"
+
+    def test_returns_closed_after_close(self):
+        pr = FakePRManager(repo="org/repo")
+        url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        pr.close_pr(url)
+        state = pr.get_pr_state(url)
+        assert state is not None
+        assert state.state == "CLOSED"
+
+    def test_returns_none_for_unknown_url(self):
+        pr = FakePRManager(repo="org/repo")
+        assert pr.get_pr_state("https://github.com/org/repo/pull/999") is None
+
+    def test_returns_head_sha(self):
+        pr = FakePRManager(repo="org/repo")
+        url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        pr.set_head_sha(url, "abc123")
+        state = pr.get_pr_state(url)
+        assert state is not None
+        assert state.head_sha == "abc123"
+
+    def test_is_frozen_dataclass(self):
+        state = PRState(state="OPEN", head_sha="abc123")
+        assert state.state == "OPEN"
+        assert state.head_sha == "abc123"

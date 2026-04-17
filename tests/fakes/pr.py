@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from hyperloop.ports.pr import PRState
+
 
 @dataclass
 class _PRRecord:
@@ -19,7 +21,8 @@ class _PRRecord:
     spec_ref: str
     labels: set[str]
     draft: bool
-    merged: bool
+    state: str = "OPEN"
+    head_sha: str = "fake-sha-000"
 
 
 class FakePRManager:
@@ -81,7 +84,22 @@ class FakePRManager:
             "task_id": rec.task_id,
         }
 
+    def close_pr(self, pr_url: str) -> None:
+        """Simulate a human closing a PR."""
+        self._prs[pr_url].state = "CLOSED"
+
+    def set_head_sha(self, pr_url: str, sha: str) -> None:
+        """Set the head SHA on a PR (simulates branch state at merge time)."""
+        self._prs[pr_url].head_sha = sha
+
     # -- PRManager interface ---------------------------------------------------
+
+    def get_pr_state(self, pr_url: str) -> PRState | None:
+        """Return the PR's current state, or None if not found."""
+        rec = self._prs.get(pr_url)
+        if rec is None:
+            return None
+        return PRState(state=rec.state, head_sha=rec.head_sha)
 
     def create_draft(self, task_id: str, branch: str, title: str, spec_ref: str) -> str:
         """Create a draft PR. Returns PR URL. Adds spec/task labels."""
@@ -100,7 +118,6 @@ class FakePRManager:
             spec_ref=spec_ref,
             labels=labels,
             draft=True,
-            merged=False,
         )
         return url
 
@@ -127,7 +144,7 @@ class FakePRManager:
         """
         if pr_url in self._merge_fails:
             return False
-        self._prs[pr_url].merged = True
+        self._prs[pr_url].state = "MERGED"
         self.merged.append(pr_url)
         return True
 

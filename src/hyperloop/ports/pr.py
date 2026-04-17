@@ -5,11 +5,30 @@ Implementations: PRManager (gh CLI), FakePRManager (in-memory for tests).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
+
+
+@dataclass(frozen=True)
+class PRState:
+    """Snapshot of a PR's current state on GitHub.
+
+    state: "OPEN", "CLOSED", or "MERGED".
+    head_sha: the branch tip SHA. For MERGED PRs, this is the branch commit
+              that was incorporated — compare with the current branch tip to
+              detect unmerged work pushed after the merge.
+    """
+
+    state: str
+    head_sha: str
 
 
 class PRPort(Protocol):
     """Interface for PR lifecycle: gate polling, rebase, and merge."""
+
+    def get_pr_state(self, pr_url: str) -> PRState | None:
+        """Return the PR's current state, or None if not found."""
+        ...
 
     def create_draft(self, task_id: str, branch: str, title: str, spec_ref: str) -> str:
         """Create a draft PR. Returns PR URL. Adds spec/task labels."""

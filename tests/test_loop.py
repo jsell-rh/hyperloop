@@ -858,6 +858,170 @@ class TestMergeWithPRManager:
         )
 
 
+class TestPRStateResilience:
+    """PR state checks: handle CLOSED/MERGED PRs without crashing."""
+
+    GATE_PROCESS = Process(
+        name="gate-process",
+        intake=(),
+        pipeline=(
+            LoopStep(
+                steps=(
+                    RoleStep(role="implementer", on_pass=None, on_fail=None),
+                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                ),
+            ),
+            GateStep(gate="human-pr-approval"),
+            ActionStep(action="merge-pr"),
+        ),
+    )
+
+    MERGE_PROCESS = Process(
+        name="merge-process",
+        intake=(),
+        pipeline=(
+            LoopStep(
+                steps=(
+                    RoleStep(role="implementer", on_pass=None, on_fail=None),
+                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                ),
+            ),
+            ActionStep(action="merge-pr"),
+        ),
+    )
+
+    # -- merge-pr phase: CLOSED PR -------------------------------------------
+
+    def test_merge_closed_pr_creates_new_pr(self) -> None:
+        """When a PR was closed, _merge_via_pr creates a new one and merges it."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        pr_mgr.close_pr(pr_url)
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="hyperloop/task-001",
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.COMPLETE
+        # A new PR was created (different URL)
+        assert task.pr != pr_url
+
+    # -- merge-pr phase: MERGED PR with all work captured --------------------
+
+    def test_merge_already_merged_pr_marks_complete(self) -> None:
+        """When a PR was already merged and branch tip matches, task completes."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        # Simulate: PR was merged at head_sha "abc123"
+        pr_mgr.set_head_sha(pr_url, "abc123")
+        pr_mgr.merge(pr_url, "task-001", "specs/widget.md")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="hyperloop/task-001",
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
+        # _get_branch_tip returns None (branch not on remote in test env)
+        # → treated as "branch deleted, all work captured"
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.COMPLETE
+
+    # -- gate phase: CLOSED PR -----------------------------------------------
+
+    def test_gate_closed_pr_creates_new_pr(self) -> None:
+        """When a PR is closed while at gate, a new PR is created."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        pr_mgr.close_pr(pr_url)
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("human-pr-approval"),
+                branch="hyperloop/task-001",
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(state, runtime, process=self.GATE_PROCESS, pr_manager=pr_mgr)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        # New PR was created
+        assert task.pr is not None
+        assert task.pr != pr_url
+        # Still at gate (waiting for lgtm on new PR)
+        assert task.phase == Phase("human-pr-approval")
+
+    # -- gate phase: MERGED PR -----------------------------------------------
+
+    def test_gate_merged_pr_completes_task(self) -> None:
+        """When a PR is merged externally while at gate, task completes."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        pr_mgr.merge(pr_url, "task-001", "specs/widget.md")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("human-pr-approval"),
+                branch="hyperloop/task-001",
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(state, runtime, process=self.GATE_PROCESS, pr_manager=pr_mgr)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.COMPLETE
+
+    # -- mark_ready does not crash on closed PR ------------------------------
+
+    def test_mark_ready_does_not_crash_on_closed_pr(self) -> None:
+        """mark_ready is best-effort — should not raise on failure.
+
+        The real PRManager already handles this (removed check=True).
+        The fake always succeeds, so this tests the fake contract.
+        """
+        pr_mgr = FakePRManager(repo="org/repo")
+        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        pr_mgr.mark_ready(pr_url)
+        assert not pr_mgr.is_draft(pr_url)
+
+
 BASE_DIR = Path(__file__).parent.parent / "base"
 
 

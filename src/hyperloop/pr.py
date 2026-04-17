@@ -12,6 +12,8 @@ import subprocess
 
 import structlog
 
+from hyperloop.ports.pr import PRState
+
 logger: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 
@@ -55,6 +57,32 @@ class PRManager:
         """Create gate labels (e.g. lgtm) on the repo. Call at startup."""
         self._ensure_label("lgtm", "0E8A16")
         self._ensure_label("hyperloop", "1D76DB")
+
+    def get_pr_state(self, pr_url: str) -> PRState | None:
+        """Return the PR's current state, or None if not found."""
+        result = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "view",
+                pr_url,
+                "--json",
+                "state,headRefOid",
+                "--repo",
+                self.repo,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return None
+
+        data = json.loads(result.stdout)
+        state = str(data.get("state", ""))
+        head_sha = str(data.get("headRefOid", ""))
+        if not state:
+            return None
+        return PRState(state=state, head_sha=head_sha)
 
     def create_draft(self, task_id: str, branch: str, title: str, spec_ref: str) -> str:
         """Create a draft PR. Returns PR URL. Adds spec/task labels.
@@ -195,8 +223,8 @@ class PRManager:
         )
 
     def mark_ready(self, pr_url: str) -> None:
-        """Mark a draft PR as ready for review."""
-        subprocess.run(
+        """Mark a draft PR as ready for review. Best-effort — logs on failure."""
+        result = subprocess.run(
             [
                 "gh",
                 "pr",
@@ -207,8 +235,10 @@ class PRManager:
             ],
             capture_output=True,
             text=True,
-            check=True,
         )
+        if result.returncode != 0:
+            logger.warning("Failed to mark PR %s as ready: %s", pr_url, result.stderr.strip())
+            return
         logger.info("Marked PR %s as ready for review", pr_url)
 
     def merge(self, pr_url: str, task_id: str, spec_ref: str) -> bool:
