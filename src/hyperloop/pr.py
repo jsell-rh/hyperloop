@@ -62,7 +62,7 @@ class PRManager:
         If the branch already has a PR, returns the existing PR URL.
         Label failures are logged and swallowed (labels may not exist on the repo).
         """
-        # Check if a PR already exists for this branch
+        # Check if an open PR already exists for this branch
         existing = subprocess.run(
             [
                 "gh",
@@ -70,7 +70,7 @@ class PRManager:
                 "view",
                 branch,
                 "--json",
-                "url",
+                "url,state",
                 "--repo",
                 self.repo,
             ],
@@ -79,8 +79,9 @@ class PRManager:
         )
         if existing.returncode == 0:
             data = json.loads(existing.stdout)
+            state = str(data.get("state", ""))
             pr_url = str(data.get("url", ""))
-            if pr_url:
+            if pr_url and state == "OPEN":
                 logger.info("PR already exists for %s: %s", branch, pr_url)
                 return pr_url
 
