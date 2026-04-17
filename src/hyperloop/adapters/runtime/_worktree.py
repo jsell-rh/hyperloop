@@ -57,6 +57,10 @@ def create_worktree(repo_path: str, worktree_path: str, branch: str) -> None:
     Cleans up any stale worktree directory or branch before creating.
     Always prunes stale worktree references first — git's internal tracking
     can outlive the worktree directory (e.g. after a crash or manual cleanup).
+
+    If the main repo's HEAD is on the target branch (leftover from a
+    crashed run), switches the main repo back to its default branch
+    to free the worker branch for the new worktree.
     """
     env = clean_git_env()
 
@@ -72,6 +76,9 @@ def create_worktree(repo_path: str, worktree_path: str, branch: str) -> None:
     # Clean up stale worktree directory from a previous run
     if os.path.exists(worktree_path):
         cleanup_worktree(repo_path, worktree_path)
+
+    # If the main repo is on this branch (from a previous crash), free it
+    _free_branch_from_main_repo(repo_path, branch, env)
 
     # Try attaching to an existing branch
     result = subprocess.run(
@@ -111,6 +118,39 @@ def create_worktree(repo_path: str, worktree_path: str, branch: str) -> None:
     subprocess.run(
         ["git", "-C", repo_path, "worktree", "add", worktree_path, branch],
         check=True,
+        capture_output=True,
+        env=env,
+    )
+
+
+def _free_branch_from_main_repo(repo_path: str, branch: str, env: dict[str, str]) -> None:
+    """If the main repo's HEAD is on the given branch, switch away.
+
+    This recovers from a previous crash that left the repo on a worker
+    branch (e.g. old rebase_branch doing ``git checkout`` on the main repo).
+    """
+    current = subprocess.run(
+        ["git", "-C", repo_path, "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if current.stdout.strip() != branch:
+        return
+
+    # Try common default branch names
+    for candidate in ("main", "master"):
+        result = subprocess.run(
+            ["git", "-C", repo_path, "checkout", candidate],
+            capture_output=True,
+            env=env,
+        )
+        if result.returncode == 0:
+            return
+
+    # Last resort: detach HEAD to free the branch
+    subprocess.run(
+        ["git", "-C", repo_path, "checkout", "--detach"],
         capture_output=True,
         env=env,
     )
