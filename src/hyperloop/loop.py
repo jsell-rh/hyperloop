@@ -543,8 +543,6 @@ class Orchestrator:
                 continue
             if task.phase is None:
                 continue
-            if task.pr is None:
-                continue
 
             # Check if this phase corresponds to a gate step in the pipeline
             pos = self._find_position_for_step(executor, str(task.phase))
@@ -554,6 +552,17 @@ class Orchestrator:
             step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
             if not isinstance(step, GateStep):
                 continue
+
+            # Ensure the task has a PR — create one if missing (e.g. previous crash)
+            if task.pr is None:
+                branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
+                pr_url = self._pr_manager.create_draft(task.id, branch, task.title, task.spec_ref)
+                if pr_url:
+                    self._state.set_task_pr(task.id, pr_url)
+                    # Re-read task to get updated pr field
+                    task = self._state.get_task(task.id)
+                else:
+                    continue  # Can't poll gate without a PR
 
             # Task is at a gate — poll it
             cleared = self._pr_manager.check_gate(task.pr, step.gate)
