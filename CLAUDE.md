@@ -101,6 +101,6 @@ Ports define what the domain needs from the outside world. Adapters fulfill thos
 - One logical change per commit
 - Atomic commits — each commit should pass all tests
 
-## Spec
+## Specs
 
-The product spec lives at `specs/spec.md`. It is the source of truth for behavior. If code and spec disagree, align the code to the spec.
+The spec index lives at `specs/index.spec.md`. It is the table of contents for all spec files. The main product spec is `specs/spec.md`. If code and spec disagree, align the code to the spec.

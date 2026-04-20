@@ -1,541 +1,635 @@
 # hyperloop
 
-An orchestrator that turns a backlog of tasks into completed, merged work using AI agents.
+A reconciler that keeps code in sync with specs using AI agents. Specs are desired state. Code is actual state. Hyperloop continuously closes the gap.
 
 ## Core Concepts
 
-**The orchestrator has one job:** walk each task through a process pipeline until it reaches a terminal action (e.g. merge). It does not implement, review, or fix code. It spawns agents that do, reads their verdicts, and advances the pipeline.
+**Hyperloop is a reconciler, not a task runner.** Its job is to make the code match the specs. Tasks are an internal implementation detail — like Kubernetes pods. You don't manage pods, you manage Deployments. You don't manage tasks, you manage specs.
 
-**Three concerns, separated:**
+**Hyperloop is a control plane.** It does not run inside any particular repo or environment. It connects to spec sources, state stores, and runtimes through ports. The default adapter set is git-native, but the architecture is agnostic.
+
+**Specs are desired state.** All change requests — from Jira, GitHub Issues, or humans — flow through spec files. Want to add a feature? Update the spec. Want to cancel a feature? Remove it from the spec. Everything flows from specs.
+
+**The reconciliation loop:**
+
+```
+Spec (desired) ←→ Code (actual) = Gap
+Gap → Work (ephemeral) → PR → Gate → Merge → Gap closed
+```
+
+The orchestrator detects gaps between specs and code, creates work to close them, drives that work through a pipeline, and merges the result. If work fails, the gap persists and new work is created. The system converges when there are no gaps.
+
+**Seven concerns, separated:**
 
 | Concern | What it does | Swappable |
 |---|---|---|
 | Decision | Given the world, what actions to take | No (this is the orchestrator) |
-| State | Where task/worker state lives | Yes (git, ambient annotations, etc.) |
-| Runtime | Where agent sessions execute | Yes (local CLI, ambient platform, etc.) |
+| Specs | Where to read desired state | Yes (`SpecSource` port) |
+| State | Where task/worker state lives | Yes (`StateStore` port) |
+| Runtime | Where agent sessions execute | Yes (`Runtime` port) |
+| Gate | How gates are evaluated | Yes (`GatePort` port) |
+| Action | How pipeline actions execute | Yes (`ActionPort` port) |
+| Notification | How humans are told to act | Yes (`NotificationPort` port) |
 
 **Ownership rule:** Workers report verdicts. The orchestrator decides status transitions. Workers never write task status. This makes the runtime irrelevant to correctness.
 
-## Data Model
+## Reconciliation Model
 
-### Task
+### Specs are config, code is state
 
-Lives in the target repo at `.hyperloop/state/tasks/task-{id}.md`. Written only by the orchestrator on trunk. Pure metadata — no body content.
+The analogy to Kubernetes is intentional:
 
-```yaml
----
-id: task-027
-title: Implement Places DB persistent storage
-spec_ref: specs/persistence.md    # traceable link to the originating spec
-status: not-started               # not-started | in-progress | complete | failed
-phase: null                       # current pipeline step (for crash recovery)
-deps: [task-004]
-round: 0                          # incremented each time the loop restarts
-branch: null                      # set by orchestrator before first spawn
-pr: null                          # set by orchestrator when draft PR created
----
-```
+| Kubernetes | Hyperloop |
+|---|---|
+| Deployment YAML | Spec file |
+| Running pods | In-flight tasks / workers |
+| Desired replicas vs actual | Spec requirements vs implemented code |
+| Controller reconciliation loop | Orchestrator cycle |
+| Pod failure → controller creates new pod | Task failure → gap persists → new work created |
 
-Status is deliberately minimal: not started, being worked on, done, or failed. `phase` tracks where the task is in the pipeline so the orchestrator can resume after a crash. `spec_ref` traces this task back to the spec that originated it. `failed` is a terminal state — the task hit `max_task_rounds` without completing. The orchestrator halts when any task enters `failed`.
+### Failure is feedback, not terminal
 
-### Review
+When work fails — a task hits max rounds, a PR is rejected, a merge conflicts repeatedly — the gap between spec and code still exists. The orchestrator doesn't halt. It creates new work to close the gap, potentially with different context (updated guidelines from the process-improver, findings from prior attempts).
 
-Lives at `.hyperloop/state/reviews/task-{id}-round-{n}.md`. Written by the orchestrator after each failed round. Preserved as historical record (never cleared).
+A task's `failed` status means "this attempt at closing the gap didn't work." The gap itself is tracked by the existence of the spec requirement and the absence of its implementation.
+
+### Closing a PR is corrective, not destructive
+
+When a human closes a PR (rejects the approach), the orchestrator doesn't treat it as a fatal error. The gap still exists. The system creates new work to close it — with the rejection as context. The human is saying "not THIS approach," not "don't do anything."
+
+**Feedback flow:** When the orchestrator detects a PR is CLOSED, it reads the PR's comments and review comments, then stores them as a review finding:
 
 ```yaml
 ---
 task_id: task-027
 round: 0
+role: human
+verdict: fail
+---
+PR #4 was closed. Human feedback:
+"This approach adds a new dependency we don't want.
+ Use the existing auth module instead."
+```
+
+The gap re-enters intake. The PM creates a new task for the same gap. The next implementer's prompt includes the human's feedback as prior findings — the agent sees why the previous approach was rejected and tries differently.
+
+If the human closed without a comment, the findings record "PR was closed without feedback." The next attempt has less context but the process-improver may have updated guidelines from the pattern.
+
+The only way to stop work on a gap: change the spec. Remove the requirement, or mark it as deferred. The spec is the single control surface.
+
+### Loop prevention
+
+There is no formal "gap counter." The PM agent IS the loop-breaker. It receives the full failure history in its prompt context — reviews from prior attempts, findings, human feedback from closed PRs. After seeing multiple failures for the same spec area, the PM either proposes a different approach or stops proposing work (signaling the gap needs human attention).
+
+Individual tasks are bounded by `max_task_rounds` — a task that exceeds this limit fails. If the PM creates a new task for the same gap, it's a fresh task with fresh rounds, but with all prior failure context. The process-improver also learns from repeated failures and updates guidelines.
+
+## Data Model
+
+### Task
+
+Internal bookkeeping — not a user-facing concept. Persisted via `StateStore`. Written only by the orchestrator.
+
+```yaml
+id: task-027
+title: Implement Places DB persistent storage
+spec_ref: specs/persistence.md@abc123   # spec file @ version identifier
+status: not-started                     # not-started | in-progress | complete | failed
+phase: null                             # current pipeline step (for crash recovery)
+deps: [task-004]
+round: 0                                # incremented each time the loop restarts
+branch: null
+pr: null
+```
+
+`spec_ref` pins the spec version this task was scoped to. `failed` means this attempt didn't work — the gap is still open. A failed task does NOT halt the orchestrator.
+
+### spec_ref versioning
+
+```
+specs/persistence.md@abc123
+```
+
+The version identifier is captured at intake time. The prompt composer reads the spec at that version, not the latest. If the spec changes while tasks are in flight, existing tasks finish against their pinned version. New tasks are created for the new version's gaps.
+
+### Review
+
+Written after each failed round. Preserved as history — informs future attempts at the same gap.
+
+```yaml
+task_id: task-027
+round: 0
 role: verifier
 verdict: fail
-findings: 3
 ---
 Branch deletes 3 files from main that are out-of-scope for task-027...
 ```
 
-Separating reviews from tasks keeps task files as pure metadata and preserves the full review history across rounds. The process-improver reads review files to identify systemic patterns.
+Reviews are the institutional memory of the project. They must be durable and auditable — queryable across time.
 
 ### Worker Result
 
-Written by the worker on its branch (local) or via annotations (ambient). The only thing the orchestrator reads from a worker.
+The only thing the orchestrator reads from a worker:
 
-```json
-{
-  "verdict": "pass",
-  "findings": 0,
-  "detail": "All tests pass, check scripts pass"
-}
+```python
+@dataclass(frozen=True)
+class WorkerResult:
+    verdict: Verdict        # PASS or FAIL
+    detail: str             # free-text summary from the worker
 ```
 
-### Process
+### Task Proposal
 
-Defines the pipelines work moves through. Ships with a default; projects overlay it.
+Value object produced by the PM agent during intake:
+
+```python
+@dataclass(frozen=True)
+class TaskProposal:
+    title: str
+    spec_ref: str           # "specs/widget.md@abc123"
+    deps: tuple[str, ...]
+```
+
+## Pipeline DSL
+
+Users define the pipeline that work moves through in `process.yaml`:
 
 ```yaml
-kind: Process
-name: default
-
-intake:
-  - role: pm
-
 pipeline:
   - loop:
-      - role: implementer
-      - role: verifier
+      - agent: implementer
+      - agent: verifier
+  - gate: human-pr-approval
   - action: merge-pr
+
+gates:
+  human-pr-approval:
+    type: label
+
+actions:
+  merge-pr:
+    type: pr-merge
+
+hooks:
+  after_reap:
+    - type: process-improver
 ```
 
-Two pipelines in one process:
+### Primitives
 
-- **intake** runs at project level, serially on trunk. Creates tasks from specs (or Jira, or whatever the intake role does). Runs periodically or on-demand, not per-task.
-- **pipeline** runs per-task. Workers run in parallel on branches. Processes each task through implementation, review, and merge.
-
-Both use the same primitives.
-
-### Pipeline Primitives
-
-Four primitives:
-
-| Primitive | Behavior |
-|---|---|
-| `role: X` | Spawn agent with role X. Fail propagates to enclosing loop. |
-| `gate: X` | Block until external signal (e.g. human PR approval). |
-| `loop` | Wrap steps. On fail, retry from top. On pass, continue. |
-| `action: X` | Terminal operation (merge-pr, mark-pr-ready). |
-
-Convention: `on_pass` = next step in list. `on_fail` = restart enclosing loop. These can be explicitly overridden per-step for non-standard routing.
-
-### Gates
-
-Gates block a task's pipeline until an external signal is received. The orchestrator polls for the signal each cycle. Tasks at a gate do not consume a worker slot.
-
-The gate interface is transparent to the signal source, but v1 supports only **PR labels**:
-
-| Gate | Signal | Mechanism |
+| Primitive | What happens | Who executes |
 |---|---|---|
-| `human-pr-approval` | `lgtm` label on the task's PR | Orchestrator checks `gh pr view --json labels` each cycle |
+| `agent: X` | Spawn a worker agent with X's prompt template | Runtime |
+| `gate: X` | Block until external signal | GatePort adapter |
+| `action: X` | Execute an operation | ActionPort adapter |
+| `loop:` | Wrap agent steps — on fail restart from top, on pass continue | Pipeline executor (pure logic) |
 
-When the orchestrator sees the `lgtm` label, the gate clears and the task advances to the next pipeline step. The label is then removed to prevent re-triggering.
+The pipeline is a state machine. The orchestrator calls `PipelineExecutor.advance(position, result)` and receives back what the next step is. The pipeline executor is a pure function with no I/O.
 
-Future signal sources (webhooks, CI status, ambient annotations) can be added behind the same interface without changing the process yaml.
+Actions can appear anywhere in the pipeline, not just at the end. After SUCCESS, the pipeline advances to whatever comes next.
 
-### Agent Definition
+### Agent definitions
 
-Follows the Ambient platform resource model. Base definitions live in the hyperloop repo, referenced by git URL. Projects overlay with personas and project-specific rules via kustomize patches in a gitops repo.
+Agent prompts come through the kustomize template system. See `specs/prompt-composition.md`.
 
 ```yaml
+apiVersion: hyperloop.io/v1
 kind: Agent
-name: implementer
+metadata:
+  name: implementer
 prompt: |
-  You are a worker agent implementing a task.
-  Task spec is in the Spec section. Feedback in Findings.
-  Project rules in Guidelines. Do the work. Push to your branch.
-  You do NOT set task status.
+  You are a worker agent implementing a task...
 guidelines: ""
 ```
 
-`guidelines` is hyperloop-specific — the Ambient adapter concatenates it into `prompt` when syncing to the platform. Labels, annotations, and inbox are runtime state managed by the adapter, not part of the committed resource definition. Our resources use `metadata.name` (required by kustomize); the Ambient adapter extracts the name when syncing.
+## Cycle
+
+The orchestrator runs a fixed reconciliation loop with four phases:
+
+```
+while true:
+    1. COLLECT   — reap finished workers, run cycle hooks
+    2. INTAKE    — detect spec gaps, create work to close them
+    3. ADVANCE   — advance existing work through pipeline steps
+    4. SPAWN     — decide what to spawn, spawn workers
+    persist state
+    if no gaps remain → halt
+    otherwise → sleep and repeat
+```
+
+### COLLECT
+
+Poll every running worker. If done, reap its `WorkerResult`. Build a map of `task_id → WorkerResult`.
+
+If any results were reaped and cycle hooks are configured, call each hook's `after_reap(results)`. This runs BEFORE INTAKE, ADVANCE, and SPAWN — guideline changes from the process-improver are visible to workers spawned in the same cycle.
+
+### INTAKE
+
+Detect gaps and create work to close them. Intake fires when either trigger is present:
+
+- **Spec changes** — specs changed since the last-processed version
+- **Task failures** — tasks failed since the last intake run
+
+If neither trigger is present, INTAKE is skipped (no PM invocation).
+
+When triggered, a single PM invocation receives both as context:
+
+1. **Detection (mechanical):** Identify spec changes (via `SpecSource.detect_changes()`) and recently failed tasks (from `StateStore`).
+2. **Analysis (agent):** The PM agent reads the spec diffs, failure history, current tasks, and scoped codebase context. It proposes tasks scoped to the gaps — either new work from spec changes or reattempts for failed work with a different approach.
+3. **Creation (mechanical):** The orchestrator parses the PM's structured output as `TaskProposal[]` and creates tasks with `spec_ref@version` pinning.
+
+On the first run with no prior version, all specs are treated as new.
+
+Intake is its own phase because it creates new tasks (write). ADVANCE only reads and advances existing tasks.
+
+### PM agent interface
+
+The PM agent uses the same `Runtime` port as any other agent. The contract for its output is runtime-specific:
+
+- **Local runtime:** PM returns structured JSON (via structured output) containing `TaskProposal[]`. The orchestrator parses the JSON.
+- **Ambient runtime:** PM writes proposals as annotations. The orchestrator reads them via the ambient API.
+
+The PM's prompt template lives at `base/pm.yaml` and is overridable via kustomize, like any other agent.
+
+### ADVANCE
+
+For each existing task, check its current pipeline position:
+
+- **Has a WorkerResult?** Feed to pipeline executor → returns next step (`SpawnAgent`, `WaitForGate`, `PerformAction`, `PipelineComplete`, `PipelineFailed`). Update phase.
+- **At a `gate:` step?** Call `GatePort.check(task, gate_name)`. Cleared → advance. Not cleared → skip. On first entry, call `NotificationPort.gate_blocked()`.
+- **At an `action:` step?** Call `ActionPort.execute(task, action_name)`:
+  - SUCCESS → advance to next step (or COMPLETE if last)
+  - RETRY → stay, try again next cycle
+  - ERROR → increment `error_attempts[task]`, loop back after max
+
+### SPAWN
+
+`decide(world)` — pure function examining all tasks, dependencies, and running workers — returns a list of `SpawnWorker` actions. Compose prompts, call `Runtime.spawn()`. Workers run in the background until next COLLECT.
+
+### Halt condition
+
+The orchestrator halts when there are no open gaps: all tasks are terminal (COMPLETE or FAILED with no re-intake pending) and no spec changes are pending.
+
+For continuous operation: `hyperloop watch`. Suppresses halting — sleeps and re-checks for spec changes each cycle.
+
+### Why serial
+
+The reconciliation state is a shared mutable resource. A single writer per cycle eliminates races between state transitions, result merges, intake, and worker spawns.
+
+## Ports
+
+### SpecSource
+
+```python
+class SpecSource(Protocol):
+    def detect_changes(self, since: str | None) -> list[SpecChange]:
+        """Return spec files that changed since the given version marker.
+        If since is None (first run), return all specs."""
+        ...
+
+    def read(self, spec_ref: str) -> str:
+        """Read spec content at a pinned version (e.g. path@sha)."""
+        ...
+
+    def current_version(self) -> str:
+        """Return the current version marker (for tracking last-processed)."""
+        ...
+```
+
+The port that connects the reconciler to desired state. The orchestrator calls `detect_changes()` during INTAKE and `read()` during prompt composition.
+
+### StateStore
+
+```python
+class StateStore(Protocol):
+    def get_world(self) -> World: ...
+    def get_task(self, task_id: str) -> Task: ...
+    def add_task(self, task: Task) -> None: ...
+    def transition_task(self, task_id: str, status: TaskStatus, phase: Phase | None) -> None: ...
+    def store_review(self, task_id: str, round: int, role: str, verdict: str, detail: str) -> None: ...
+    def get_findings(self, task_id: str) -> str: ...
+    def persist(self, message: str) -> None: ...
+```
+
+The port for durable reconciliation state. State must be:
+
+- **Durable** — survives orchestrator crashes
+- **Auditable** — review history is queryable across time
+
+### GatePort
+
+```python
+class GatePort(Protocol):
+    def check(self, task: Task, gate_name: str) -> bool:
+        """Return True if the gate is cleared for this task."""
+        ...
+```
+
+Gates block until an external signal is received. Tasks at a gate do not consume a worker slot.
+
+Adapters:
+
+| Adapter | Signal | Mechanism |
+|---|---|---|
+| `LabelGate` | `lgtm` label on PR | Checks PR labels. Default. |
+| `PRApprovalGate` | GitHub PR approved review | Checks review status. |
+| `CIStatusGate` | All required CI checks pass | Checks status rollup. |
+| `AllGate` | Multiple conditions (AND) | Clears when ALL child gates clear. |
+
+Gates can be combined — a single gate requiring both label AND CI:
+
+```yaml
+gates:
+  human-pr-approval:
+    type: all
+    require:
+      - type: label
+      - type: ci-status
+```
+
+### ActionPort
+
+```python
+class ActionOutcome(Enum):
+    SUCCESS = "success"
+    RETRY = "retry"
+    ERROR = "error"
+
+@dataclass(frozen=True)
+class ActionResult:
+    outcome: ActionOutcome
+    detail: str
+    pr_url: str | None = None   # if set, orchestrator updates task.pr
+
+class ActionPort(Protocol):
+    def execute(self, task: Task, action_name: str) -> ActionResult:
+        """Execute an action for a task."""
+        ...
+```
+
+| Outcome | Meaning | Orchestrator action |
+|---|---|---|
+| SUCCESS | Action completed | Advance to next pipeline step |
+| RETRY | Transient failure | Stay, try next cycle. No counter. |
+| ERROR | Needs intervention | Increment `error_attempts[task]`. After max, loop back. |
+
+Adapter boundary:
+
+- **Orchestrator owns:** dependency ordering, attempt tracking, status/phase transitions, applying metadata from `ActionResult`.
+- **Adapter owns:** all mechanics. Returns metadata via `ActionResult`. Never reads or writes `StateStore`.
+
+### NotificationPort
+
+```python
+class NotificationPort(Protocol):
+    def gate_blocked(self, *, task: Task, gate_name: str) -> None:
+        """A task is waiting for human action at a gate."""
+        ...
+
+    def task_errored(self, *, task: Task, attempts: int, detail: str) -> None:
+        """A task hit max errors and needs investigation."""
+        ...
+```
+
+Notifications fire **once** per state entry, not every cycle. The orchestrator deduplicates.
+
+### CycleHook
+
+```python
+class CycleHook(Protocol):
+    def after_reap(
+        self, *, results: dict[str, WorkerResult], cycle: int
+    ) -> None:
+        """Called after all workers are reaped, with all results."""
+        ...
+```
+
+Extension point for cross-cutting concerns needing all cycle results. The process-improver is a `CycleHook` adapter. Config accepts a list of hooks.
+
+### Existing ports
+
+| Port | Purpose |
+|---|---|
+| `Runtime` | Agent execution. Workers run independently, push results to branches. |
+| `PRPort` | PR lifecycle (create, rebase, merge). Used by gate and action adapters. |
+| `OrchestratorProbe` | Domain observability (structured events). |
 
 ## Traceability
 
-Every artifact traces back to its originating spec through an unbroken chain:
+Every artifact traces back to its originating spec:
 
 ```
-spec (specs/*.md)
-  └── task (.hyperloop/state/tasks/task-{id}.md)   spec_ref: specs/persistence.md
-       ├── reviews (.hyperloop/state/reviews/)     task_id + round + findings
-       └── commits (on worker branch)              Spec-Ref: specs/persistence.md
-            │                                      Task-Ref: task-027
-            └── PR                                 labels: spec/persistence, task/task-027
-                 └── merged to trunk               trailers preserved in squash commit
+spec
+  └── task (spec_ref pinned)
+       ├── reviews (round history)
+       └── commits (Spec-Ref + Task-Ref trailers)
+            └── PR (spec + task labels)
+                 └── merged (trailers preserved in squash commit)
 ```
 
-### Commit Trailers
-
-Every commit produced by a worker must include git trailers linking back to the spec and task:
-
-```
-feat: implement Places DB schema and migration
-
-Spec-Ref: specs/persistence.md
-Task-Ref: task-027
-```
-
-The orchestrator injects `spec_ref` and `task_id` into the worker's prompt context. The worker's agent definition instructs it to include these as trailers in every commit. The base implementer prompt includes:
-
-```
-Include these trailers in every commit message:
-  Spec-Ref: {spec_ref}
-  Task-Ref: {task_id}
-```
-
-### PR Labels
-
-The orchestrator adds labels to the draft PR for traceability:
-
-- `spec/{spec_name}` — derived from `spec_ref` (e.g. `spec/persistence`)
-- `task/{task_id}` — the task ID (e.g. `task/task-027`)
-
-### Squash Merge
-
-When using `strategy: squash`, the squash commit message preserves the trailers:
-
-```
-feat: implement Places DB persistent storage (#42)
-
-Spec-Ref: specs/persistence.md
-Task-Ref: task-027
-```
-
-This means `git log --grep="Spec-Ref: specs/persistence.md"` returns every commit that implemented any part of that spec.
+`git log --grep="Spec-Ref: specs/persistence.md"` returns every commit that implemented any part of that spec.
 
 ## Prompt Composition
 
-Three layers, all resolved via kustomize. See `specs/prompt-composition.md` for full design.
+Three layers, all resolved via kustomize. See `specs/prompt-composition.md`.
 
 | Layer | Source | Field targeted | Who writes it |
 |---|---|---|---|
-| Base | hyperloop repo `base/` | `prompt` | Orchestrator maintainers |
-| Project overlay | gitops repo or in-repo patches | `guidelines`, `prompt` (can override) | Project team |
+| Base | hyperloop repo `base/` | `prompt` | Framework maintainers |
+| Project overlay | gitops repo or in-repo patches | `guidelines`, `prompt` | Project team |
 | Process overlay | `.hyperloop/agents/process/` | `guidelines` | Process-improver agent |
 
-Agent resources have two text fields: `prompt` (core identity) and `guidelines` (additive rules). All three layers resolve in a single `kustomize build .hyperloop/agents/`. The process overlay is a kustomize Component that patches `guidelines` — additive by convention, replaceable by capability.
-
-At compose time, the orchestrator takes the resolved template and injects:
+At compose time, the orchestrator injects:
 
 - `prompt` + `guidelines` (from kustomize build)
-- Task spec content (read from `spec_ref`)
-- Findings from prior rounds (read from review files)
-- Traceability refs (`spec_ref`, `task_id`) for commit trailers
+- Task spec content (read from `spec_ref@version` via `SpecSource`)
+- Findings from prior rounds (from `StateStore`)
+- Traceability refs for commit trailers
 
-The worker never needs to read the task file — everything it needs arrives in its prompt.
+## Concurrency
 
-When the process-improver modifies overlay files mid-run, the orchestrator re-runs `kustomize build` before spawning new workers. This is a mechanical guarantee: any agent spawned after a process improvement will see the updated guidelines.
-
-## Concurrency Model
-
-Each orchestrator cycle has a single serial section where all trunk mutations and decisions happen, followed by workers running independently on branches between cycles.
-
-### Serial Section
-
-The orchestrator does all its work sequentially in one pass. No concurrent trunk writers.
-
-1. **Reap** — collect results from finished workers.
-2. **Store findings** — append to task files on trunk for all failed tasks.
-3. **Process-improver** — runs once, serially, on trunk. Reads ALL findings from the current cycle. Writes `guidelines` overlays to `.hyperloop/agents/process/` and check scripts to `.hyperloop/checks/`. One agent, one pass, consolidated.
-4. **Intake** — PM runs on trunk if new specs exist. Creates task files. Rejects dependency cycles.
-5. **Merge PRs** — squash-merge any ready PRs. Rebase, resolve conflicts, merge one at a time (see Merge Conflict Handling).
-6. **Decide** — determine which tasks to spawn. Create branches from the now-stable HEAD. Compose prompts.
-7. **Update state** — transition task statuses and phases on trunk. Commit all state changes.
-8. **Spawn** — hand workers to the runtime. From this point, workers run independently on their own branches.
-
-After spawning, the orchestrator sleeps until the next poll interval. Workers push to their own branches — no trunk writes until the next serial section.
-
-### Why Serial
-
-Trunk is a shared mutable resource. Giving it a single writer eliminates:
-
-- Multiple process-improvers clobbering each other's commits.
-- Orchestrator commits racing with PR merges.
-- Intake creating tasks while findings are being written.
-- Workers spawning from a moving HEAD.
-- Task phase updates racing with trunk mutations.
-
-Process-improver is NOT a pipeline step — it's an orchestrator-internal serial operation. It runs between reap and spawn, sees all findings from the current cycle at once, and makes a single consolidated improvement pass. It writes `guidelines` overlays to `.hyperloop/agents/process/` and check scripts to `.hyperloop/checks/`. What it improves is defined by its agent definition, which projects can overlay.
-
-## Branch Lifecycle
-
-1. Orchestrator creates the branch (`worker/task-{id}`) from trunk HEAD during the serial section (after merging, before spawning).
-2. Worker receives the branch name and pushes commits to it.
-3. On subsequent rounds (loop retry), the same branch is reused with accumulated commits.
-4. Orchestrator creates a draft PR from the branch when the first verifier step begins.
-5. On completion, the PR is merged during the serial section.
-6. After merge, the branch is deleted.
-
-For local runtime: orchestrator creates a git worktree on the branch. For ambient runtime: orchestrator creates the branch via git/API, passes the branch name to the agent at spawn time.
-
-## PR Lifecycle
-
-PRs are the integration mechanism between workers and trunk.
-
-1. Worker pushes commits to its branch (with `Spec-Ref` and `Task-Ref` trailers).
-2. Orchestrator creates a **draft PR** before the first review step, with spec/task labels.
-3. The PR accumulates commits across rounds (every attempt, every fix).
-4. On review pass, orchestrator marks the PR **ready**.
-5. If `auto_merge: true`, orchestrator squash-merges during the serial section and deletes the branch.
-6. If `auto_merge: false`, PR waits for human merge.
-
-### Merge Conflict Handling
-
-When multiple tasks run in parallel, their PRs can conflict. Task A merges, trunk moves, Task B's branch now conflicts.
-
-The orchestrator handles this during the serial section:
-
-1. **Rebase** — orchestrator rebases the branch onto current trunk HEAD.
-2. **Clean rebase** — proceed with merge.
-3. **Conflict** — orchestrator aborts the rebase, marks the task `needs-rebase`, and defers it. During the spawn step, a **rebase-resolver** agent is spawned for the task:
-   - Rebase-resolver is a lightweight, orchestrator-internal agent. Not a pipeline step.
-   - It receives: the branch, the conflicting files, and what changed on trunk.
-   - Its job is narrow: resolve conflict markers, run tests, push. Not a full implementation round.
-   - It runs on the task's branch (not trunk), so it's safe to run in parallel with other workers.
-   - Next cycle's serial section re-attempts the rebase + merge.
-4. **Repeated conflicts** — if a task has been deferred for `max_rebase_attempts` (default: 3) consecutive cycles, the orchestrator treats it as a pipeline failure and sends the task back through the loop with conflict details as findings.
-
-Merge order: the serial section merges PRs one at a time, rebasing each onto the new HEAD after the previous merge. Merges in task dependency order when possible, falling back to completion order.
-
-## Findings Flow
-
-Findings serve two purposes: persistent audit trail and worker context.
-
-1. Verifier fails and reports findings in its `WorkerResult`.
-2. Orchestrator writes findings to `.hyperloop/state/reviews/task-{id}-round-{n}.md` on trunk during the serial section.
-3. On next spawn, orchestrator reads the latest review file and injects findings into the worker's prompt context.
-4. Worker receives findings as prompt content — it never reads the task or review files.
-5. On task completion, review files are preserved as historical record (not cleared).
-6. Process-improver reads all review files from the current cycle to identify systemic patterns.
-
-The review file is the ledger. Prompt injection is the delivery.
+The orchestrator cycle runs serially — one writer, no concurrent state mutations. Workers run independently between cycles. How workers execute is runtime-specific. Up to `max_workers` simultaneously.
 
 ## Recovery
 
 The orchestrator can crash and restart without losing progress.
 
-**What is persisted (survives crash):**
-- Task status and phase — in `.hyperloop/state/tasks/` on trunk
-- Branch with accumulated commits — in git
-- Draft PR with labels — on GitHub
-- Review findings — in `.hyperloop/state/reviews/` on trunk
-- Traceability (spec_ref, trailers, labels) — in git + GitHub
-
-**What is ephemeral (lost on crash, reconstructed):**
-- Worker handles (process IDs, agent IDs)
-
-**Recovery procedure:**
-
-1. Read `.hyperloop/state/tasks/*.md` from trunk → know all task statuses and phases.
-2. List open draft PRs with orchestrator labels → find in-flight work.
-3. **Check for orphaned workers** — before spawning, verify no worker is already active for a task:
-   - Local runtime: check if worktree/process exists for the branch.
-   - Ambient runtime: check if an agent with this task's label already exists.
-   - If an orphaned worker is found: cancel it via the runtime before re-spawning.
-4. For each task with `status: in-progress`:
-   a. Has a `phase` set? → resume from that phase (after clearing orphans).
-   b. Has a branch with commits but no PR? → re-spawn on same branch.
-   c. Has an open draft PR? → re-run current phase (verifier, etc.).
-   d. No branch? → start fresh.
-5. Resume normal loop.
-
-## State Store Interface
-
-```
-getWorld()                → tasks, workers, epoch
-getTask(id)               → single task with status, phase, spec_ref
-transitionTask(id, status, phase) → update status + phase
-storeReview(id, round, review) → write review file to .hyperloop/state/reviews/
-getFindings(id)           → read latest review findings for prompt injection
-getEpoch(key)             → content fingerprint for skip logic
-setEpoch(key, value)      → record last-run marker
-readFile(path)            → read from trunk
-commit(message)           → persist state changes
-```
-
-Implementations: `GitStateStore` (reads/writes files in `.hyperloop/state/`, commits to git), `AmbientStateStore` (reads/writes annotations via API).
-
-## Runtime Interface
-
-```
-spawn(task, role, prompt, branch)  → WorkerHandle
-poll(handle)                       → running | done | failed
-reap(handle)                       → WorkerResult
-cancel(handle)                     → void
-findOrphan(task, branch)           → WorkerHandle | null  (for crash recovery)
-```
-
-Implementations: `AgentSdkRuntime` (Claude Agent SDK + git worktrees), `AmbientRuntime` (Ambient Code Platform sessions). See `specs/ambient-runtime.md`.
-
-## Orchestrator Loop
-
-```
-startup:
-    read .hyperloop.yaml from target repo
-    kustomize build .hyperloop/agents/ → resolved templates
-    recovery (if resuming):
-        read task files → reconstruct in-flight state
-        match open PRs to tasks → recover phase
-        check for orphaned workers → cancel before re-spawning
-        validate dependency graph → reject cycles
-
-while true:
-    ┌── serial (all orchestrator work) ───────────────────────┐
-    │                                                         │
-    │  1. reap finished workers                               │
-    │     for each result:                                    │
-    │         if pass: advance to next pipeline step          │
-    │         if fail: store findings on trunk                │
-    │         if task.round >= max_task_rounds: → failed      │
-    │                                                         │
-    │  2. if any task failed → halt (needs human attention)   │
-    │                                                         │
-    │  3. if any failures this cycle:                         │
-    │         run process-improver ONCE on trunk              │
-    │         (reads all findings, writes guidelines/checks)  │
-    │         re-run kustomize build to pick up changes       │
-    │                                                         │
-    │  4. run intake if configured + new specs exist          │
-    │         (creates task files, rejects dep cycles)        │
-    │                                                         │
-    │  5. poll gates                                          │
-    │         for tasks at a gate: check PR labels            │
-    │         if lgtm label found: clear gate, advance task   │
-    │                                                         │
-    │  6. merge ready PRs (one at a time, dep order):         │
-    │         rebase branch onto HEAD                         │
-    │         if clean: squash-merge, preserve trailers       │
-    │         if conflict: mark needs-rebase, defer           │
-    │         if deferred > max_rebase_attempts:              │
-    │             store as findings, loop task back            │
-    │                                                         │
-    │  7. decide what to spawn                                │
-    │         priority: in-progress > not-started w/ deps met │
-    │         include: needs-rebase tasks (rebase-resolver)   │
-    │         limit: max_workers                              │
-    │         create branches from stable HEAD                │
-    │         compose prompts (template + guidelines + context)│
-    │         inject spec_ref + task_id for trailers          │
-    │                                                         │
-    │  8. update state                                        │
-    │         transition task statuses + phases on trunk      │
-    │         commit all state changes                        │
-    │                                                         │
-    │  9. spawn workers (hand to runtime)                     │
-    │                                                         │
-    └─────────────────────────────────────────────────────────┘
-
-    check convergence
-        all tasks complete + no active workers → halt
-
-    sleep(poll_interval)
-    (workers run independently on branches between cycles)
-```
+**Required properties of state:** durable (survives crash), consistent (no partial writes). On restart: read persisted state, cancel orphaned workers, resume from recorded phases.
 
 ## Configuration
 
-The target repo contains a `.hyperloop.yaml` file:
-
 ```yaml
-# Points to a kustomization directory — kustomize build resolves base + overlay
-overlay: git@gitlab.cee.redhat.com:hyperfleet/gitops//overlays/api
+# .hyperloop.yaml — infrastructure concerns
 
-target:
-  repo: owner/repo
-  base_branch: main
-  specs_dir: specs
+overlay: .hyperloop/agents/
+base_branch: main
+runtime: local                    # local | ambient
 
-runtime: local             # local | ambient
 max_workers: 6
-
-ambient:                   # required when runtime: ambient
-  project_id: my-project   # Ambient project name
-  acpctl: acpctl           # path to acpctl binary
-
-merge:
-  auto_merge: true
-  strategy: squash
-  delete_branch: true
-
 poll_interval: 30
 max_task_rounds: 50
-max_cycles: 200
-max_rebase_attempts: 3
+max_action_attempts: 3
+
+notifications:
+  type: github-comment            # github-comment | null (default: null)
 ```
 
-### Adoption Levels
+```yaml
+# .hyperloop/agents/process/process.yaml — process concerns (via kustomize)
+# May come from a remote overlay (level 1/2) and not exist locally (level 3).
 
-All levels require `hyperloop init` first. See `specs/prompt-composition.md`.
+pipeline:
+  - loop:
+      - agent: implementer
+      - agent: verifier
+  - gate: human-pr-approval
+  - action: merge-pr
 
-**Level 1 — base only:**
+gates:
+  human-pr-approval:
+    type: label
 
-```bash
-hyperloop init
-hyperloop run
+actions:
+  merge-pr:
+    type: pr-merge
+
+hooks:
+  after_reap:
+    - type: process-improver
 ```
 
-`hyperloop init` scaffolds `.hyperloop/agents/` pointing at the base. Base prompts, default process. Process-improver can start learning immediately.
+## Git Adapter Set
 
-**Level 2 — project overlay via gitops:**
+The default adapter set connects hyperloop to a git-based workflow. These are implementation details — the reconciler architecture does not require git.
 
-```bash
-hyperloop init --overlay github.com/org/hyperfleet-gitops//overlays/api?ref=main
-hyperloop run
-```
+### GitSpecSource
 
-`.hyperloop/agents/kustomization.yaml` references the gitops overlay (which references the base internally). Persona, custom pipeline, project-specific guidelines — all resolved by kustomize.
+Implements `SpecSource` using the local git repo:
 
-## Directory Structure
+- `detect_changes(since)` → `git diff <since>..HEAD -- specs/`
+- `read(spec_ref)` → `git show <sha>:<path>` for versioned refs, or file read for unversioned
+- `current_version()` → `git rev-parse HEAD`
 
-### Orchestrator repo (this repo)
+The version identifier in `spec_ref@sha` is a git commit SHA.
 
-```
-hyperloop/
-├── specs/
-│   └── spec.md              ← this file
-├── base/                    ← base agent + process definitions
-│   ├── process.yaml           referenced by gitops repos via kustomize remote resource
-│   ├── implementer.yaml       (github.com/org/hyperloop//base?ref=v1.2.0)
-│   ├── verifier.yaml
-│   ├── process-improver.yaml
-│   ├── rebase-resolver.yaml
-│   └── pm.yaml
-├── src/                     ← orchestrator engine (installed via pip/uvx)
-│   ├── loop.py              ← main loop (serial section) + recovery
-│   ├── decide.py            ← pure decision function
-│   ├── compose.py           ← spawn-time injection (layer 3 + task context)
-│   ├── pipeline.py          ← pipeline executor (recursive, handles loops)
-│   ├── state/
-│   │   ├── interface.py
-│   │   └── git.py
-│   └── runtime/
-│       ├── interface.py
-│       ├── agent_sdk.py       # local (worktrees + Claude Agent SDK)
-│       └── ambient.py         # remote (Ambient Code Platform sessions)
-└── tests/
-    ├── test_decide.py       ← decision function is pure, fully testable
-    └── test_pipeline.py     ← pipeline execution against mock runtime
-```
+### GitStateStore
 
-The `base/` directory is not bundled into the pip package. It lives in the repo and is referenced by gitops repos via kustomize remote resources. This decouples prompt evolution from tool releases.
+Implements `StateStore` using files in `.hyperloop/state/` committed to the repo:
 
-### Target repo (prescribed structure)
+- Tasks live at `.hyperloop/state/tasks/task-{id}.md` — YAML frontmatter
+- Reviews live at `.hyperloop/state/reviews/task-{id}-round-{n}.md` — YAML frontmatter + body
+- `persist()` → `git add .hyperloop/state/ && git commit`
 
-Created by `hyperloop init`. See `specs/prompt-composition.md` for full details.
+State files are committed to trunk. This provides full git-history auditability but creates merge conflicts when worker branches carry stale copies. The `PRMergeAction` adapter auto-resolves these: tasks/ take trunk version, reviews/ take branch version.
+
+### AgentSdkRuntime
+
+Implements `Runtime` using the Claude Agent SDK with local git worktrees:
+
+- `spawn()` → creates a git worktree on the task's branch, starts a Claude agent session in it
+- Workers are isolated: each has its own worktree, own branch, own working directory
+- Worker results are read from review files on the branch after the agent completes
+
+### PRMergeAction
+
+Implements `ActionPort` for `merge-pr` using the `gh` CLI:
+
+- Checks PR state (OPEN/CLOSED/MERGED) before operating
+- Recreates PRs if closed or stale-merged
+- Rebases the branch onto trunk, auto-resolving `.hyperloop/state/` file conflicts
+- Polls GitHub `mergeable` status after rebase (avoids race condition)
+- Squash-merges with trailers preserved
+
+Returns `ActionResult` with `pr_url` if the PR was recreated.
+
+### LabelGate
+
+Implements `GatePort` by checking for a `lgtm` label on the task's PR via `gh pr view --json labels`.
+
+### GitHubCommentNotification
+
+Implements `NotificationPort` by posting comments on the task's PR when human action is needed.
+
+### Directory layout (git adapter)
 
 ```
 target-repo/
-├── .hyperloop.yaml          ← orchestrator config
+├── .hyperloop.yaml              ← infrastructure config
 ├── .hyperloop/
-│   ├── agents/              ← kustomize composition point (all 3 layers resolve here)
+│   ├── agents/                  ← kustomize composition point
 │   │   ├── kustomization.yaml
-│   │   └── process/         ← kustomize Component (process-improver writes here)
-│   │       └── kustomization.yaml
-│   ├── state/
-│   │   ├── tasks/           ← task metadata (orchestrator writes on trunk)
+│   │   └── process/             ← process concerns + process-improver output
+│   │       ├── kustomization.yaml
+│   │       └── process.yaml     ← pipeline + gate/action/hook config
+│   ├── state/                   ← GitStateStore data (committed to trunk)
+│   │   ├── tasks/
 │   │   │   └── task-*.md
-│   │   └── reviews/         ← review findings (orchestrator writes on trunk)
-│   │       └── task-{id}-round-{n}.md
-│   └── checks/              ← executable validations (process-improver writes on trunk)
+│   │   └── reviews/
+│   │       └── task-*-round-*.md
+│   └── checks/                  ← executable validations (process-improver writes)
 │       └── *.sh
 └── specs/
-    └── *.md                 ← product specs only (human-written, referenced by spec_ref)
+    └── *.md                     ← desired state (source of truth)
 ```
 
-### Project gitops repo (level 3 adoption)
+## Orchestrator Repo Structure
 
 ```
-project-gitops/
-└── overlays/{project}/
-    ├── kustomization.yaml            ← references hyperloop//base as remote resource
-    ├── process-patch.yaml            ← replaces pipeline list
-    ├── implementer-patch.yaml        ← injects persona
-    ├── verifier-patch.yaml
-    └── process-improver-patch.yaml
+hyperloop/
+├── specs/                       ← specs for hyperloop itself
+├── base/                        ← base agent + process definitions
+│   ├── process.yaml
+│   ├── implementer.yaml
+│   ├── verifier.yaml
+│   ├── process-improver.yaml
+│   └── pm.yaml
+├── src/hyperloop/
+│   ├── domain/                  ← pure logic, no I/O
+│   │   ├── model.py             ← Task, AgentStep, TaskProposal, WorkerResult
+│   │   ├── decide.py            ← pure decision function
+│   │   └── pipeline.py          ← pipeline executor
+│   ├── ports/                   ← Protocol interfaces
+│   │   ├── spec_source.py
+│   │   ├── state.py
+│   │   ├── runtime.py
+│   │   ├── gate.py
+│   │   ├── action.py
+│   │   ├── notification.py
+│   │   ├── hook.py
+│   │   ├── pr.py
+│   │   └── probe.py
+│   ├── adapters/                ← Implementations
+│   │   ├── git/                 ← git adapter set
+│   │   │   ├── spec_source.py   ← GitSpecSource
+│   │   │   ├── state.py         ← GitStateStore
+│   │   │   └── runtime.py       ← AgentSdkRuntime
+│   │   ├── ambient/             ← ambient adapter set
+│   │   │   └── runtime.py       ← AmbientRuntime
+│   │   ├── gate/
+│   │   │   ├── label.py
+│   │   │   ├── pr_approval.py
+│   │   │   ├── ci_status.py
+│   │   │   └── all.py
+│   │   ├── action/
+│   │   │   └── pr_merge.py
+│   │   ├── notification/
+│   │   │   └── github_comment.py
+│   │   ├── hook/
+│   │   │   └── process_improver.py
+│   │   └── probe/
+│   │       ├── structlog.py
+│   │       ├── matrix.py
+│   │       └── otel.py
+│   ├── compose.py               ← prompt composition (kustomize + SpecSource)
+│   ├── wiring.py                ← config → object graph
+│   └── loop.py                  ← 4-phase reconciliation cycle
+└── tests/
+    └── fakes/
 ```
+
+## What This Does Not Cover
+
+- **Custom pipeline primitives.** The four primitives (`agent`, `gate`, `loop`, `action`) are sufficient.
+- **Plugin discovery.** Adapters are wired explicitly in config.
+- **External spec sources.** Jira, GitHub Issues, etc. operate upstream — they update specs, hyperloop watches specs.
+- **Multiple processes.** One process per orchestrator run.
+- **Conditional pipeline steps.** Conditional logic belongs in agent prompts or gate adapters.
