@@ -14,11 +14,11 @@ if TYPE_CHECKING:
 
 from hyperloop.domain.model import (
     ActionStep,
+    AgentStep,
     GateStep,
     LoopStep,
     PipelinePosition,
     PipelineStep,
-    RoleStep,
     Verdict,
     WorkerResult,
 )
@@ -29,10 +29,10 @@ from hyperloop.domain.model import (
 
 
 @dataclass(frozen=True)
-class SpawnRole:
-    """Spawn a worker with the given role."""
+class SpawnAgent:
+    """Spawn a worker with the given agent role."""
 
-    role: str
+    agent: str
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,7 @@ class PipelineFailed:
     reason: str
 
 
-PipelineAction = SpawnRole | WaitForGate | PerformAction | PipelineComplete | PipelineFailed
+PipelineAction = SpawnAgent | WaitForGate | PerformAction | PipelineComplete | PipelineFailed
 """Union of all pipeline action types."""
 
 
@@ -104,8 +104,8 @@ class PipelineExecutor:
         # --- Result received: decide what to do next ---
         is_pass = result.verdict == Verdict.PASS
 
-        # Handle on_pass/on_fail overrides on RoleStep
-        if isinstance(step, RoleStep):
+        # Handle on_pass/on_fail overrides on AgentStep
+        if isinstance(step, AgentStep):
             override = step.on_pass if is_pass else step.on_fail
             if override is not None:
                 # Find the named step in the current step list (same nesting level)
@@ -121,7 +121,7 @@ class PipelineExecutor:
                         else:
                             break
 
-                target_idx = self._find_step_by_role(parent_steps, override)
+                target_idx = self._find_step_by_agent(parent_steps, override)
                 if target_idx is not None:
                     return self._descend_to_leaf(parent_steps, prefix, target_idx)
 
@@ -170,21 +170,21 @@ class PipelineExecutor:
         return step
 
     @staticmethod
-    def _find_step_by_role(
+    def _find_step_by_agent(
         steps: Sequence[PipelineStep],
-        target_role: str,
+        target_agent: str,
     ) -> int | None:
-        """Find the index of a step matching the target role name at the top level."""
+        """Find the index of a step matching the target agent name at the top level."""
         for i, step in enumerate(steps):
-            if isinstance(step, RoleStep) and step.role == target_role:
+            if isinstance(step, AgentStep) and step.agent == target_agent:
                 return i
         return None
 
     @staticmethod
     def _action_for_step(step: PipelineStep) -> PipelineAction:
         """Return the immediate action for arriving at a step (no result yet)."""
-        if isinstance(step, RoleStep):
-            return SpawnRole(role=step.role)
+        if isinstance(step, AgentStep):
+            return SpawnAgent(agent=step.agent)
         if isinstance(step, GateStep):
             return WaitForGate(gate=step.gate)
         if isinstance(step, ActionStep):
