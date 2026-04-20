@@ -3,11 +3,8 @@ kind: Process
 metadata:
   name: default
 
-intake:
-  - role: pm
-
 pipeline:
   - loop:
-      - role: implementer
-      - role: verifier
+      - agent: implementer
+      - agent: verifier
   - action: merge-pr

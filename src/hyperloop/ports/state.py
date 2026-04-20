@@ -32,13 +32,16 @@ class StateStore(Protocol):
         """Update a task's status, phase, and optionally round."""
         ...
 
+    def add_task(self, task: Task) -> None:
+        """Add a new task to the store."""
+        ...
+
     def store_review(
         self,
         task_id: str,
         round: int,
         role: str,
         verdict: str,
-        findings_count: int,
         detail: str,
     ) -> None:
         """Write a review file for a task round."""
@@ -72,6 +75,6 @@ class StateStore(Protocol):
         """Set the PR URL on a task."""
         ...
 
-    def commit(self, message: str) -> None:
+    def persist(self, message: str) -> None:
         """Persist all pending state changes."""
         ...

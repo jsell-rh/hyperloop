@@ -22,10 +22,9 @@ prompt: |
       round: {round}
       role: verifier
       verdict: pass
-      findings: 0
       ---
       All checks pass.
-    If issues are found, set verdict to "fail", findings to the count, and list issues in the body.
+    If issues are found, set verdict to "fail" and list issues in the body.
   - Commit the review file along with your changes.
   - You do NOT set task status. The orchestrator handles that.
 

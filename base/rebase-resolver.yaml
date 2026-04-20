@@ -21,7 +21,6 @@ prompt: |
       round: {round}
       role: rebase-resolver
       verdict: pass
-      findings: 0
       ---
       Summary of what was done.
     If you cannot complete the task, set verdict to "fail" and describe what went wrong.
