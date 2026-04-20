@@ -22,7 +22,6 @@ if TYPE_CHECKING:
 _STATUS_FROM_YAML: dict[str, TaskStatus] = {
     "not-started": TaskStatus.NOT_STARTED,
     "in-progress": TaskStatus.IN_PROGRESS,
-    "needs-rebase": TaskStatus.NEEDS_REBASE,
     "complete": TaskStatus.COMPLETE,
     "failed": TaskStatus.FAILED,
 }
@@ -174,7 +173,6 @@ class GitStateStore:
         round: int,
         role: str,
         verdict: str,
-        findings_count: int,
         detail: str,
     ) -> None:
         """Write a review file for a task round."""
@@ -185,7 +183,6 @@ class GitStateStore:
             "round": round,
             "role": role,
             "verdict": verdict,
-            "findings": findings_count,
         }
         fm_text = yaml.dump(fm, default_flow_style=False, sort_keys=False)
         path.write_text(f"---\n{fm_text}---\n{detail}")
@@ -241,7 +238,22 @@ class GitStateStore:
         fm["pr"] = pr_url
         self._write_task_file(task_id, fm)
 
-    def commit(self, message: str) -> None:
+    def add_task(self, task: Task) -> None:
+        """Add a new task to the store."""
+        fm: dict[str, object] = {
+            "id": task.id,
+            "title": task.title,
+            "spec_ref": task.spec_ref,
+            "status": _STATUS_TO_YAML[task.status],
+            "phase": str(task.phase) if task.phase is not None else None,
+            "deps": list(task.deps) if task.deps else [],
+            "round": task.round,
+            "branch": task.branch,
+            "pr": task.pr,
+        }
+        self._write_task_file(task.id, fm)
+
+    def persist(self, message: str) -> None:
         """Stage all changes and create a git commit.
 
         Uses --no-verify to skip pre-commit hooks. State commits are

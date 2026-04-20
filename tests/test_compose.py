@@ -351,20 +351,17 @@ kind: Process
 metadata:
   name: default
 
-intake:
-  - role: pm
-
 pipeline:
   - loop:
-      - role: implementer
-      - role: verifier
+      - agent: implementer
+      - agent: verifier
   - action: merge-pr
 """
 
     def test_base_process_yaml_produces_correct_process(self) -> None:
         """parse_process on the base process.yaml produces correct Process with nested LoopStep."""
         from hyperloop.compose import parse_process
-        from hyperloop.domain.model import ActionStep, LoopStep, Process, RoleStep
+        from hyperloop.domain.model import ActionStep, AgentStep, LoopStep, Process
 
         process = parse_process(self.BASE_PROCESS_YAML)
 
@@ -372,22 +369,15 @@ pipeline:
         assert isinstance(process, Process)
         assert process.name == "default"
 
-        # intake: [role: pm]
-        assert len(process.intake) == 1
-        assert isinstance(process.intake[0], RoleStep)
-        assert process.intake[0].role == "pm"
-        assert process.intake[0].on_pass is None
-        assert process.intake[0].on_fail is None
-
         # pipeline: [loop([implementer, verifier]), action(merge-pr)]
         assert len(process.pipeline) == 2
         loop = process.pipeline[0]
         assert isinstance(loop, LoopStep)
         assert len(loop.steps) == 2
-        assert isinstance(loop.steps[0], RoleStep)
-        assert loop.steps[0].role == "implementer"
-        assert isinstance(loop.steps[1], RoleStep)
-        assert loop.steps[1].role == "verifier"
+        assert isinstance(loop.steps[0], AgentStep)
+        assert loop.steps[0].agent == "implementer"
+        assert isinstance(loop.steps[1], AgentStep)
+        assert loop.steps[1].agent == "verifier"
 
         action = process.pipeline[1]
         assert isinstance(action, ActionStep)
@@ -396,16 +386,13 @@ pipeline:
     def test_base_dir_process_yaml_matches(self) -> None:
         """parse_process on the real base/process.yaml file produces the default Process."""
         from hyperloop.compose import parse_process
-        from hyperloop.domain.model import ActionStep, LoopStep, RoleStep
+        from hyperloop.domain.model import ActionStep, LoopStep
 
         process_yaml = (BASE_DIR / "process.yaml").read_text()
         process = parse_process(process_yaml)
 
         assert process is not None
         assert process.name == "default"
-        assert len(process.intake) == 1
-        assert isinstance(process.intake[0], RoleStep)
-        assert process.intake[0].role == "pm"
         assert len(process.pipeline) == 2
         assert isinstance(process.pipeline[0], LoopStep)
         assert isinstance(process.pipeline[1], ActionStep)
@@ -413,15 +400,14 @@ pipeline:
     def test_overridden_pipeline_no_loop(self) -> None:
         """parse_process with an overridden pipeline (no loop, just implementer + action)."""
         from hyperloop.compose import parse_process
-        from hyperloop.domain.model import ActionStep, RoleStep
+        from hyperloop.domain.model import ActionStep, AgentStep
 
         yaml_input = """\
 kind: Process
 metadata:
   name: simple
-intake: []
 pipeline:
-  - role: implementer
+  - agent: implementer
   - action: merge-pr
 """
         process = parse_process(yaml_input)
@@ -429,8 +415,8 @@ pipeline:
         assert process is not None
         assert process.name == "simple"
         assert len(process.pipeline) == 2
-        assert isinstance(process.pipeline[0], RoleStep)
-        assert process.pipeline[0].role == "implementer"
+        assert isinstance(process.pipeline[0], AgentStep)
+        assert process.pipeline[0].agent == "implementer"
         assert isinstance(process.pipeline[1], ActionStep)
         assert process.pipeline[1].action == "merge-pr"
 
@@ -472,7 +458,7 @@ pipeline:
     def test_multi_doc_yaml_finds_process(self) -> None:
         """parse_process finds the Process doc in multi-document YAML."""
         from hyperloop.compose import parse_process
-        from hyperloop.domain.model import RoleStep
+        from hyperloop.domain.model import AgentStep
 
         yaml_input = """\
 kind: Agent
@@ -484,33 +470,31 @@ prompt: |
 kind: Process
 metadata:
   name: default
-intake: []
 pipeline:
-  - role: implementer
+  - agent: implementer
 """
         process = parse_process(yaml_input)
         assert process is not None
         assert process.name == "default"
         assert len(process.pipeline) == 1
-        assert isinstance(process.pipeline[0], RoleStep)
-        assert process.pipeline[0].role == "implementer"
+        assert isinstance(process.pipeline[0], AgentStep)
+        assert process.pipeline[0].agent == "implementer"
 
     def test_nested_loops_parsed_recursively(self) -> None:
         """parse_process handles nested loops (loop within loop)."""
         from hyperloop.compose import parse_process
-        from hyperloop.domain.model import ActionStep, LoopStep, RoleStep
+        from hyperloop.domain.model import ActionStep, AgentStep, LoopStep
 
         yaml_input = """\
 kind: Process
 metadata:
   name: nested
-intake: []
 pipeline:
   - loop:
       - loop:
-          - role: implementer
-          - role: verifier
-      - role: reviewer
+          - agent: implementer
+          - agent: verifier
+      - agent: reviewer
   - action: merge-pr
 """
         process = parse_process(yaml_input)
@@ -519,10 +503,10 @@ pipeline:
         assert isinstance(outer_loop, LoopStep)
         inner_loop = outer_loop.steps[0]
         assert isinstance(inner_loop, LoopStep)
-        assert isinstance(inner_loop.steps[0], RoleStep)
-        assert inner_loop.steps[0].role == "implementer"
-        assert isinstance(outer_loop.steps[1], RoleStep)
-        assert outer_loop.steps[1].role == "reviewer"
+        assert isinstance(inner_loop.steps[0], AgentStep)
+        assert inner_loop.steps[0].agent == "implementer"
+        assert isinstance(outer_loop.steps[1], AgentStep)
+        assert outer_loop.steps[1].agent == "reviewer"
         assert isinstance(process.pipeline[1], ActionStep)
 
     def test_gate_step_parsed(self) -> None:
@@ -544,26 +528,25 @@ pipeline:
         assert isinstance(process.pipeline[0], GateStep)
         assert process.pipeline[0].gate == "human-pr-approval"
 
-    def test_role_step_with_on_pass_on_fail(self) -> None:
+    def test_agent_step_with_on_pass_on_fail(self) -> None:
         """parse_process populates on_pass and on_fail when present."""
         from hyperloop.compose import parse_process
-        from hyperloop.domain.model import RoleStep
+        from hyperloop.domain.model import AgentStep
 
         yaml_input = """\
 kind: Process
 metadata:
   name: routing
-intake: []
 pipeline:
-  - role: implementer
+  - agent: implementer
     on_pass: next
     on_fail: retry
 """
         process = parse_process(yaml_input)
         assert process is not None
         step = process.pipeline[0]
-        assert isinstance(step, RoleStep)
-        assert step.role == "implementer"
+        assert isinstance(step, AgentStep)
+        assert step.agent == "implementer"
         assert step.on_pass == "next"
         assert step.on_fail == "retry"
 

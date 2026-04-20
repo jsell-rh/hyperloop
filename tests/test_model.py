@@ -3,17 +3,14 @@
 from hyperloop.domain.model import (
     ActionStep,
     AdvanceTask,
+    AgentStep,
     GateStep,
     Halt,
     LoopStep,
-    MergePR,
     Phase,
     PipelineStep,
     Process,
     ReapWorker,
-    RoleStep,
-    RunPM,
-    RunProcessImprover,
     SpawnWorker,
     Task,
     TaskStatus,
@@ -29,25 +26,22 @@ class TestTaskStatus:
     def test_enum_values(self):
         assert TaskStatus.NOT_STARTED.value == "not_started"
         assert TaskStatus.IN_PROGRESS.value == "in_progress"
-        assert TaskStatus.NEEDS_REBASE.value == "needs_rebase"
         assert TaskStatus.COMPLETE.value == "complete"
         assert TaskStatus.FAILED.value == "failed"
 
     def test_all_members(self):
         members = {s.name for s in TaskStatus}
-        assert members == {"NOT_STARTED", "IN_PROGRESS", "NEEDS_REBASE", "COMPLETE", "FAILED"}
+        assert members == {"NOT_STARTED", "IN_PROGRESS", "COMPLETE", "FAILED"}
 
 
 class TestVerdict:
     def test_enum_values(self):
         assert Verdict.PASS.value == "pass"
         assert Verdict.FAIL.value == "fail"
-        assert Verdict.TIMEOUT.value == "timeout"
-        assert Verdict.ERROR.value == "error"
 
     def test_all_members(self):
         members = {v.name for v in Verdict}
-        assert members == {"PASS", "FAIL", "TIMEOUT", "ERROR"}
+        assert members == {"PASS", "FAIL"}
 
 
 class TestTask:
@@ -127,21 +121,17 @@ class TestWorkerResult:
     def test_creation(self):
         result = WorkerResult(
             verdict=Verdict.PASS,
-            findings=0,
             detail="All tests pass, check scripts pass",
         )
         assert result.verdict == Verdict.PASS
-        assert result.findings == 0
         assert result.detail == "All tests pass, check scripts pass"
 
-    def test_fail_verdict_with_findings(self):
+    def test_fail_verdict(self):
         result = WorkerResult(
             verdict=Verdict.FAIL,
-            findings=3,
             detail="3 test failures in module X",
         )
         assert result.verdict == Verdict.FAIL
-        assert result.findings == 3
 
 
 class TestWorkerHandle:
@@ -168,13 +158,13 @@ class TestWorkerHandle:
 
 
 class TestPipelineStep:
-    def test_role_step(self):
-        step = RoleStep(role="implementer", on_pass=None, on_fail=None)
-        assert step.role == "implementer"
-        assert isinstance(step, RoleStep)
+    def test_agent_step(self):
+        step = AgentStep(agent="implementer", on_pass=None, on_fail=None)
+        assert step.agent == "implementer"
+        assert isinstance(step, AgentStep)
 
-    def test_role_step_with_routing(self):
-        step = RoleStep(role="verifier", on_pass="merge", on_fail="implement")
+    def test_agent_step_with_routing(self):
+        step = AgentStep(agent="verifier", on_pass="merge", on_fail="implement")
         assert step.on_pass == "merge"
         assert step.on_fail == "implement"
 
@@ -188,64 +178,61 @@ class TestPipelineStep:
         assert step.action == "merge-pr"
         assert isinstance(step, ActionStep)
 
-    def test_loop_step_with_nested_roles(self):
-        impl = RoleStep(role="implementer", on_pass=None, on_fail=None)
-        verify = RoleStep(role="verifier", on_pass=None, on_fail=None)
+    def test_loop_step_with_nested_agents(self):
+        impl = AgentStep(agent="implementer", on_pass=None, on_fail=None)
+        verify = AgentStep(agent="verifier", on_pass=None, on_fail=None)
         loop = LoopStep(steps=(impl, verify))
         assert len(loop.steps) == 2
-        assert isinstance(loop.steps[0], RoleStep)
-        assert isinstance(loop.steps[1], RoleStep)
+        assert isinstance(loop.steps[0], AgentStep)
+        assert isinstance(loop.steps[1], AgentStep)
 
     def test_pipeline_step_union_isinstance(self):
         """Verify that all pipeline step types satisfy the PipelineStep union."""
         steps: list[PipelineStep] = [
-            RoleStep(role="implementer", on_pass=None, on_fail=None),
+            AgentStep(agent="implementer", on_pass=None, on_fail=None),
             GateStep(gate="approval"),
             LoopStep(steps=()),
             ActionStep(action="merge-pr"),
         ]
         for step in steps:
-            assert isinstance(step, RoleStep | GateStep | LoopStep | ActionStep)
+            assert isinstance(step, AgentStep | GateStep | LoopStep | ActionStep)
 
 
 class TestProcess:
     def test_creation(self):
         process = Process(
             name="default",
-            intake=(RoleStep(role="pm", on_pass=None, on_fail=None),),
             pipeline=(
                 LoopStep(
                     steps=(
-                        RoleStep(role="implementer", on_pass=None, on_fail=None),
-                        RoleStep(role="verifier", on_pass=None, on_fail=None),
+                        AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                        AgentStep(agent="verifier", on_pass=None, on_fail=None),
                     )
                 ),
                 ActionStep(action="merge-pr"),
             ),
         )
         assert process.name == "default"
-        assert len(process.intake) == 1
         assert len(process.pipeline) == 2
         assert isinstance(process.pipeline[0], LoopStep)
         assert isinstance(process.pipeline[1], ActionStep)
 
     def test_nested_loop_structure(self):
-        """Process with a loop containing role steps matches the spec example."""
+        """Process with a loop containing agent steps matches the spec example."""
         inner_loop = LoopStep(
             steps=(
-                RoleStep(role="implementer", on_pass=None, on_fail=None),
-                RoleStep(role="verifier", on_pass=None, on_fail=None),
+                AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                AgentStep(agent="verifier", on_pass=None, on_fail=None),
             )
         )
         process = Process(
             name="complex",
-            intake=(),
             pipeline=(inner_loop, ActionStep(action="merge-pr")),
         )
         loop = process.pipeline[0]
         assert isinstance(loop, LoopStep)
-        assert loop.steps[0] == RoleStep(role="implementer", on_pass=None, on_fail=None)
-        assert loop.steps[1] == RoleStep(role="verifier", on_pass=None, on_fail=None)
+        assert loop.steps[0] == AgentStep(agent="implementer", on_pass=None, on_fail=None)
+        assert loop.steps[1] == AgentStep(agent="verifier", on_pass=None, on_fail=None)
 
 
 class TestWorkerState:
@@ -307,18 +294,6 @@ class TestActions:
             to_phase=None,
         )
         assert action.to_phase is None
-
-    def test_run_pm(self):
-        action = RunPM()
-        assert isinstance(action, RunPM)
-
-    def test_run_process_improver(self):
-        action = RunProcessImprover(findings={"task-001": 3, "task-002": 1})
-        assert action.findings == {"task-001": 3, "task-002": 1}
-
-    def test_merge_pr(self):
-        action = MergePR(task_id="task-001")
-        assert action.task_id == "task-001"
 
     def test_halt(self):
         action = Halt(reason="max_rounds exceeded")

@@ -203,13 +203,13 @@ class TestStoreReviewContract:
     def test_store_review_does_not_raise(
         self, state_store: InMemoryStateStore | GitStateStore
     ) -> None:
-        state_store.store_review("task-001", 1, "verifier", "fail", 1, "Test X failed.")
+        state_store.store_review("task-001", 1, "verifier", "fail", "Test X failed.")
 
     def test_store_review_multiple_rounds(
         self, state_store: InMemoryStateStore | GitStateStore
     ) -> None:
-        state_store.store_review("task-001", 1, "verifier", "fail", 2, "Round 1 failed.")
-        state_store.store_review("task-001", 2, "verifier", "fail", 1, "Round 2 failed.")
+        state_store.store_review("task-001", 1, "verifier", "fail", "Round 1 failed.")
+        state_store.store_review("task-001", 2, "verifier", "fail", "Round 2 failed.")
 
         # get_findings returns the latest review's detail
         findings = state_store.get_findings("task-001")
@@ -227,15 +227,15 @@ class TestGetFindingsContract:
     def test_get_findings_returns_stored_detail(
         self, state_store: InMemoryStateStore | GitStateStore
     ) -> None:
-        state_store.store_review("task-001", 1, "verifier", "fail", 1, "Tests failed.")
+        state_store.store_review("task-001", 1, "verifier", "fail", "Tests failed.")
         findings = state_store.get_findings("task-001")
         assert "Tests failed." in findings
 
     def test_get_findings_returns_latest_review(
         self, state_store: InMemoryStateStore | GitStateStore
     ) -> None:
-        state_store.store_review("task-001", 1, "verifier", "fail", 2, "Round 1 failed.")
-        state_store.store_review("task-001", 2, "verifier", "fail", 1, "Round 2 failed.")
+        state_store.store_review("task-001", 1, "verifier", "fail", "Round 1 failed.")
+        state_store.store_review("task-001", 2, "verifier", "fail", "Round 2 failed.")
         findings = state_store.get_findings("task-001")
         assert "Round 2 failed." in findings
 
@@ -289,10 +289,10 @@ class TestReadFileContract:
         assert state_store.read_file("does-not-exist.txt") is None
 
 
-class TestCommitContract:
-    """commit does not raise."""
+class TestPersistContract:
+    """persist does not raise."""
 
-    def test_commit_does_not_raise(self, state_store: InMemoryStateStore | GitStateStore) -> None:
-        # Make a change first so there's something to commit (git requires it)
+    def test_persist_does_not_raise(self, state_store: InMemoryStateStore | GitStateStore) -> None:
+        # Make a change first so there's something to persist (git requires it)
         state_store.transition_task("task-001", TaskStatus.IN_PROGRESS, Phase("implementer"))
-        state_store.commit("chore: contract test commit")
+        state_store.persist("chore: contract test commit")

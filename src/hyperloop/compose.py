@@ -28,13 +28,13 @@ import yaml
 from hyperloop.domain.model import (
     ActionStep,
     AgentContext,
+    AgentStep,
     GateStep,
     ImprovementContext,
     IntakeContext,
     LoopStep,
     PipelineStep,
     Process,
-    RoleStep,
     TaskContext,
 )
 
@@ -331,7 +331,7 @@ def _parse_steps(steps_raw: object) -> list[PipelineStep]:
         raise ValueError(msg)
 
     result: list[PipelineStep] = []
-    known_primitives = {"role", "gate", "loop", "action"}
+    known_primitives = {"agent", "gate", "loop", "action"}
 
     for raw_step in cast("list[object]", steps_raw):
         if not isinstance(raw_step, dict):
@@ -346,7 +346,7 @@ def _parse_steps(steps_raw: object) -> list[PipelineStep]:
             unknown = sorted(set(step_dict.keys()) - {"on_pass", "on_fail"})
             msg = (
                 f"Unrecognised pipeline primitive key(s): {unknown!r}. "
-                "Expected one of: role, gate, loop, action"
+                "Expected one of: agent, gate, loop, action"
             )
             raise ValueError(msg)
 
@@ -357,12 +357,12 @@ def _parse_steps(steps_raw: object) -> list[PipelineStep]:
         key = next(iter(primitive_keys))
         value = step_dict[key]
 
-        if key == "role":
+        if key == "agent":
             on_pass_val = step_dict.get("on_pass")
             on_fail_val = step_dict.get("on_fail")
             result.append(
-                RoleStep(
-                    role=str(value),
+                AgentStep(
+                    agent=str(value),
                     on_pass=str(on_pass_val) if on_pass_val is not None else None,
                     on_fail=str(on_fail_val) if on_fail_val is not None else None,
                 )
@@ -398,11 +398,9 @@ def parse_process(raw: str) -> Process | None:
         if doc.get("kind") != "Process":
             continue
         name = _extract_name(doc)
-        intake_raw: object = doc.get("intake") or []
         pipeline_raw: object = doc.get("pipeline") or []
-        intake = tuple(_parse_steps(intake_raw))
         pipeline = tuple(_parse_steps(pipeline_raw))
-        return Process(name=name, intake=intake, pipeline=pipeline)
+        return Process(name=name, pipeline=pipeline)
     return None
 
 

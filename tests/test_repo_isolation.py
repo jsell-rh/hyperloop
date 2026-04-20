@@ -260,9 +260,9 @@ class TestLocalMergeIsolation:
         # Set up minimal orchestrator dependencies for _merge_local
         from hyperloop.adapters.state import GitStateStore
         from hyperloop.domain.model import (
+            AgentStep,
             LoopStep,
             Process,
-            RoleStep,
         )
         from hyperloop.loop import Orchestrator
         from tests.fakes.probe import RecordingProbe
@@ -292,12 +292,11 @@ class TestLocalMergeIsolation:
         probe = RecordingProbe()
         process = Process(
             name="test",
-            intake=(),
             pipeline=(
                 LoopStep(
                     steps=(
-                        RoleStep(role="implementer", on_pass=None, on_fail=None),
-                        RoleStep(role="verifier", on_pass=None, on_fail=None),
+                        AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                        AgentStep(agent="verifier", on_pass=None, on_fail=None),
                     ),
                 ),
             ),
@@ -342,9 +341,9 @@ class TestLocalMergeIsolation:
 
         from hyperloop.adapters.state import GitStateStore
         from hyperloop.domain.model import (
+            AgentStep,
             LoopStep,
             Process,
-            RoleStep,
         )
         from hyperloop.loop import Orchestrator
         from tests.fakes.probe import RecordingProbe
@@ -373,12 +372,11 @@ class TestLocalMergeIsolation:
         probe = RecordingProbe()
         process = Process(
             name="test",
-            intake=(),
             pipeline=(
                 LoopStep(
                     steps=(
-                        RoleStep(role="implementer", on_pass=None, on_fail=None),
-                        RoleStep(role="verifier", on_pass=None, on_fail=None),
+                        AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                        AgentStep(agent="verifier", on_pass=None, on_fail=None),
                     ),
                 ),
             ),
@@ -399,7 +397,7 @@ class TestLocalMergeIsolation:
         assert _current_branch(repo) == "main"
 
         # The merge itself was aborted cleanly — only the task file was
-        # modified by transition_task (NEEDS_REBASE), which is expected
+        # modified by transition_task, which is expected
         # state-store behaviour, not merge pollution.
         status = _porcelain_status(repo)
         if status:
@@ -492,9 +490,9 @@ class TestLocalMergeIsolation:
 
         from hyperloop.adapters.state import GitStateStore
         from hyperloop.domain.model import (
+            AgentStep,
             LoopStep,
             Process,
-            RoleStep,
         )
         from hyperloop.loop import Orchestrator
         from tests.fakes.probe import RecordingProbe
@@ -505,12 +503,11 @@ class TestLocalMergeIsolation:
         probe = RecordingProbe()
         process = Process(
             name="test",
-            intake=(),
             pipeline=(
                 LoopStep(
                     steps=(
-                        RoleStep(role="implementer", on_pass=None, on_fail=None),
-                        RoleStep(role="verifier", on_pass=None, on_fail=None),
+                        AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                        AgentStep(agent="verifier", on_pass=None, on_fail=None),
                     ),
                 ),
             ),
@@ -583,7 +580,7 @@ class TestLocalMergeIsolation:
         reviews_dir_branch = repo / ".hyperloop" / "state" / "reviews"
         reviews_dir_branch.mkdir(parents=True, exist_ok=True)
         (reviews_dir_branch / "task-002-r0-verifier.md").write_text(
-            "---\nverdict: pass\nfindings: 0\n---\nLooks good.\n"
+            "---\nverdict: pass\n---\nLooks good.\n"
         )
         # Worker also modifies the task file (creating a conflict with trunk)
         (tasks_dir / "task-002.md").write_text(
@@ -622,9 +619,9 @@ class TestLocalMergeIsolation:
 
         from hyperloop.adapters.state import GitStateStore
         from hyperloop.domain.model import (
+            AgentStep,
             LoopStep,
             Process,
-            RoleStep,
             TaskStatus,
         )
         from hyperloop.loop import Orchestrator
@@ -636,12 +633,11 @@ class TestLocalMergeIsolation:
         probe = RecordingProbe()
         process = Process(
             name="test",
-            intake=(),
             pipeline=(
                 LoopStep(
                     steps=(
-                        RoleStep(role="implementer", on_pass=None, on_fail=None),
-                        RoleStep(role="verifier", on_pass=None, on_fail=None),
+                        AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                        AgentStep(agent="verifier", on_pass=None, on_fail=None),
                     ),
                 ),
             ),
@@ -684,9 +680,9 @@ class TestMergeViaPRStateResilience:
         from hyperloop.adapters.state import GitStateStore
         from hyperloop.domain.model import (
             ActionStep,
+            AgentStep,
             LoopStep,
             Process,
-            RoleStep,
         )
         from hyperloop.loop import Orchestrator
         from tests.fakes.pr import FakePRManager
@@ -757,16 +753,15 @@ class TestMergeViaPRStateResilience:
         # Wire up PR on the task
         state = GitStateStore(repo_path=repo)
         state.set_task_pr("task-001", pr_url)
-        state.commit("orchestrator: set PR")
+        state.persist("orchestrator: set PR")
 
         process = Process(
             name="test",
-            intake=(),
             pipeline=(
                 LoopStep(
                     steps=(
-                        RoleStep(role="implementer", on_pass=None, on_fail=None),
-                        RoleStep(role="verifier", on_pass=None, on_fail=None),
+                        AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                        AgentStep(agent="verifier", on_pass=None, on_fail=None),
                     ),
                 ),
                 ActionStep(action="merge-pr"),
@@ -795,9 +790,9 @@ class TestMergeViaPRStateResilience:
         from hyperloop.adapters.state import GitStateStore
         from hyperloop.domain.model import (
             ActionStep,
+            AgentStep,
             LoopStep,
             Process,
-            RoleStep,
             TaskStatus,
         )
         from hyperloop.loop import Orchestrator
@@ -866,16 +861,15 @@ class TestMergeViaPRStateResilience:
 
         state = GitStateStore(repo_path=repo)
         state.set_task_pr("task-001", pr_url)
-        state.commit("orchestrator: set PR")
+        state.persist("orchestrator: set PR")
 
         process = Process(
             name="test",
-            intake=(),
             pipeline=(
                 LoopStep(
                     steps=(
-                        RoleStep(role="implementer", on_pass=None, on_fail=None),
-                        RoleStep(role="verifier", on_pass=None, on_fail=None),
+                        AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                        AgentStep(agent="verifier", on_pass=None, on_fail=None),
                     ),
                 ),
                 ActionStep(action="merge-pr"),

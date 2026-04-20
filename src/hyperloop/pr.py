@@ -286,7 +286,7 @@ class PRManager:
     def merge(self, pr_url: str, task_id: str, spec_ref: str) -> bool:
         """Squash-merge a PR, preserving trailers. Returns True on success.
 
-        If merge conflict, returns False (caller handles NEEDS_REBASE).
+        If merge conflict, returns False (caller handles conflict internally).
         """
         delete_flag = "--delete-branch" if self.delete_branch else ""
         body = f"Spec-Ref: {spec_ref}\nTask-Ref: {task_id}"

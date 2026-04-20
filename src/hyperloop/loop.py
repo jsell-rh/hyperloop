@@ -17,6 +17,7 @@ from hyperloop.domain.decide import decide
 from hyperloop.domain.deps import detect_cycles
 from hyperloop.domain.model import (
     ActionStep,
+    AgentStep,
     GateStep,
     Halt,
     ImprovementContext,
@@ -25,7 +26,6 @@ from hyperloop.domain.model import (
     Phase,
     PipelinePosition,
     ReapWorker,
-    RoleStep,
     SpawnWorker,
     TaskContext,
     TaskStatus,
@@ -39,7 +39,7 @@ from hyperloop.domain.pipeline import (
     PipelineComplete,
     PipelineExecutor,
     PipelineFailed,
-    SpawnRole,
+    SpawnAgent,
     WaitForGate,
 )
 
@@ -124,7 +124,6 @@ class Orchestrator:
             return
 
         roles = _collect_roles(self._process.pipeline)
-        roles.update(_collect_roles(self._process.intake))
         missing = [r for r in roles if r not in self._composer._templates]
         if missing:
             msg = (
@@ -266,12 +265,8 @@ class Orchestrator:
                 round=task.round,
                 cycle=cycle_num,
                 spec_ref=task.spec_ref,
-                findings_count=result.findings,
                 detail=result.detail,
                 duration_s=time.monotonic() - spawn_time,
-                cost_usd=result.cost_usd,
-                num_turns=result.num_turns,
-                api_duration_ms=result.api_duration_ms,
             )
 
             pipe_action, new_pos = executor.next_action(position, result)
@@ -296,7 +291,6 @@ class Orchestrator:
                     round=task.round,
                     role=_handle.role,
                     verdict=result.verdict.value,
-                    findings_count=result.findings,
                     detail=result.detail,
                 )
                 halt_reason = f"task {task_id} pipeline failed: {pipe_action.reason}"
@@ -309,8 +303,8 @@ class Orchestrator:
                     cycle=cycle_num,
                 )
 
-            elif isinstance(pipe_action, SpawnRole):
-                if result.verdict in (Verdict.FAIL, Verdict.ERROR, Verdict.TIMEOUT):
+            elif isinstance(pipe_action, SpawnAgent):
+                if result.verdict == Verdict.FAIL:
                     had_failures_this_cycle = True
                     new_round = task.round + 1
                     if new_round >= self._max_task_rounds:
@@ -336,13 +330,12 @@ class Orchestrator:
                         round=task.round,
                         role=_handle.role,
                         verdict=result.verdict.value,
-                        findings_count=result.findings,
                         detail=result.detail,
                     )
                     self._state.transition_task(
                         task_id,
                         TaskStatus.IN_PROGRESS,
-                        phase=Phase(pipe_action.role),
+                        phase=Phase(pipe_action.agent),
                         round=new_round,
                     )
                     self._probe.task_looped_back(
@@ -351,7 +344,6 @@ class Orchestrator:
                         round=new_round,
                         cycle=cycle_num,
                         findings_preview=result.detail[:200],
-                        findings_count=result.findings,
                     )
                 else:
                     # Advancing forward on PASS — create draft PR if needed
@@ -366,19 +358,19 @@ class Orchestrator:
                     self._state.transition_task(
                         task_id,
                         TaskStatus.IN_PROGRESS,
-                        phase=Phase(pipe_action.role),
+                        phase=Phase(pipe_action.agent),
                     )
                     self._probe.task_advanced(
                         task_id=task_id,
                         spec_ref=task.spec_ref,
                         from_phase=str(task.phase) if task.phase else None,
-                        to_phase=pipe_action.role,
+                        to_phase=pipe_action.agent,
                         from_status=task.status.value,
                         to_status=TaskStatus.IN_PROGRESS.value,
                         round=task.round,
                         cycle=cycle_num,
                     )
-                to_spawn.append((task_id, pipe_action.role, new_pos))
+                to_spawn.append((task_id, pipe_action.agent, new_pos))
 
             else:
                 # WaitForGate, PerformAction — record phase, don't spawn
@@ -401,7 +393,7 @@ class Orchestrator:
 
         # ---- 2b. Halt if any task failed -------------------------------------
         if halt_reason is not None:
-            self._state.commit("orchestrator: halt")
+            self._state.persist("orchestrator: halt")
             return halt_reason
 
         # ---- 3. Process-improver ------------------------------------------------
@@ -417,7 +409,7 @@ class Orchestrator:
         # ---- 6. Merge ready PRs ----------------------------------------------
         # Commit state before merge — local merge does git checkout which
         # fails if there are uncommitted changes to task files on trunk.
-        self._state.commit("orchestrator: pre-merge state")
+        self._state.persist("orchestrator: pre-merge state")
         self._merge_ready_prs()
 
         # ---- 7. Decide what to spawn (via decide()) -------------------------
@@ -428,7 +420,7 @@ class Orchestrator:
         # Check for Halt from decide() (convergence or max_task_rounds)
         for action in spawn_actions:
             if isinstance(action, Halt):
-                self._state.commit("orchestrator: halt")
+                self._state.persist("orchestrator: halt")
                 return action.reason
 
         # Process SpawnWorker actions
@@ -451,22 +443,22 @@ class Orchestrator:
                     pos = self._find_position_for_step(executor, phase_name)
                     if pos is not None:
                         step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
-                        if isinstance(step, RoleStep):
+                        if isinstance(step, AgentStep):
                             to_spawn.append((action.task_id, phase_name, pos))
                 else:
                     pos = executor.initial_position()
                     pipe_action, pos = executor.next_action(pos, result=None)
-                    if isinstance(pipe_action, SpawnRole):
+                    if isinstance(pipe_action, SpawnAgent):
                         self._state.transition_task(
                             action.task_id,
                             TaskStatus.IN_PROGRESS,
-                            phase=Phase(pipe_action.role),
+                            phase=Phase(pipe_action.agent),
                         )
-                        to_spawn.append((action.task_id, pipe_action.role, pos))
+                        to_spawn.append((action.task_id, pipe_action.agent, pos))
 
         # ---- 8. Commit state -------------------------------------------------
         if reaped_results or to_spawn:
-            self._state.commit("orchestrator: cycle update")
+            self._state.persist("orchestrator: cycle update")
 
         # ---- 9. Spawn workers ------------------------------------------------
         # Skip spawning during cooldown (after consecutive failures)
@@ -645,8 +637,8 @@ class Orchestrator:
                     TaskStatus.IN_PROGRESS,
                     phase=Phase(phase_name) if phase_name else None,
                 )
-                if isinstance(next_action, SpawnRole):
-                    to_spawn.append((task.id, next_action.role, new_pos))
+                if isinstance(next_action, SpawnAgent):
+                    to_spawn.append((task.id, next_action.agent, new_pos))
             else:
                 self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
 
@@ -660,7 +652,7 @@ class Orchestrator:
 
         With a PRManager: rebase + squash-merge the PR.
         Without a PRManager: local git merge of worker branch into base branch.
-        On conflict, transitions to NEEDS_REBASE.
+        On conflict, stays IN_PROGRESS (adapter handles rebase internally).
 
         If auto_merge is False, skip merging entirely — the PR stays ready
         for human merge.
@@ -824,7 +816,7 @@ class Orchestrator:
 
     def _handle_rebase_failure(self, task_id: str, branch: str) -> None:
         """Handle a rebase or merge conflict — track attempts, loop back if needed."""
-        logger.warning("Rebase/merge conflict for task %s, marking NEEDS_REBASE", task_id)
+        logger.warning("Rebase/merge conflict for task %s", task_id)
         self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
         looping_back = self._rebase_attempts[task_id] >= self._max_rebase_attempts
         self._probe.rebase_conflict(
@@ -849,7 +841,6 @@ class Orchestrator:
                 round=task.round,
                 role="orchestrator",
                 verdict="fail",
-                findings_count=1,
                 detail=detail,
             )
             self._state.transition_task(
@@ -859,7 +850,7 @@ class Orchestrator:
                 round=task.round + 1,
             )
             return
-        self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
+        self._state.transition_task(task_id, TaskStatus.IN_PROGRESS, phase=Phase("merge-pr"))
 
     def _merge_local(self, task_id: str, branch: str, spec_ref: str) -> None:
         """Merge worker branch into base branch locally (no PR).
@@ -1004,7 +995,7 @@ class Orchestrator:
 
     def _handle_local_merge_conflict(self, task_id: str, branch: str, git_cmd: list[str]) -> None:
         """Handle a local merge conflict — increment rebase counter or loop back."""
-        logger.warning("Local merge conflict for task %s, marking NEEDS_REBASE", task_id)
+        logger.warning("Local merge conflict for task %s", task_id)
         self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
         looping_back = self._rebase_attempts[task_id] >= self._max_rebase_attempts
         self._probe.rebase_conflict(
@@ -1029,7 +1020,6 @@ class Orchestrator:
                 round=task.round,
                 role="orchestrator",
                 verdict="fail",
-                findings_count=1,
                 detail=detail,
             )
             self._state.transition_task(
@@ -1039,7 +1029,7 @@ class Orchestrator:
                 round=task.round + 1,
             )
             return
-        self._state.transition_task(task_id, TaskStatus.NEEDS_REBASE, phase=Phase("merge-pr"))
+        self._state.transition_task(task_id, TaskStatus.IN_PROGRESS, phase=Phase("merge-pr"))
 
     def _delete_local_branch(self, branch: str) -> None:
         """Delete a local branch after merge (best-effort)."""
@@ -1070,7 +1060,7 @@ class Orchestrator:
         """Collect findings from all failed results this cycle into a single string."""
         sections: list[str] = []
         for task_id, result in reaped_results.items():
-            if result.verdict in (Verdict.FAIL, Verdict.ERROR, Verdict.TIMEOUT):
+            if result.verdict == Verdict.FAIL:
                 sections.append(f"### {task_id}\n{result.detail}")
         return "\n\n".join(sections)
 
@@ -1123,9 +1113,7 @@ class Orchestrator:
         prompt = self._composer.compose(role="process-improver", context=context)
 
         failed_ids = tuple(
-            task_id
-            for task_id, r in reaped_results.items()
-            if r.verdict in (Verdict.FAIL, Verdict.ERROR, Verdict.TIMEOUT)
+            task_id for task_id, r in reaped_results.items() if r.verdict == Verdict.FAIL
         )
 
         improver_start = time.monotonic()
@@ -1201,14 +1189,14 @@ class Orchestrator:
 
     @staticmethod
     def _find_position_for_role(executor: PipelineExecutor, role: str) -> PipelinePosition | None:
-        """Walk the pipeline for a RoleStep matching the given role name."""
+        """Walk the pipeline for an AgentStep matching the given role name."""
 
         def _search(
             steps: tuple[PipelineStep, ...], prefix: tuple[int, ...]
         ) -> PipelinePosition | None:
             for i, step in enumerate(steps):
                 path = (*prefix, i)
-                if isinstance(step, RoleStep) and step.role == role:
+                if isinstance(step, AgentStep) and step.agent == role:
                     return PipelinePosition(path=path)
                 if isinstance(step, LoopStep):
                     found = _search(step.steps, path)
@@ -1224,12 +1212,12 @@ class Orchestrator:
     ) -> PipelinePosition | None:
         """Walk the pipeline for any step whose name matches phase_name.
 
-        Searches depth-first across RoleStep, GateStep, and ActionStep.
+        Searches depth-first across AgentStep, GateStep, and ActionStep.
         """
 
         def _step_name(step: PipelineStep) -> str | None:
-            if isinstance(step, RoleStep):
-                return step.role
+            if isinstance(step, AgentStep):
+                return step.agent
             if isinstance(step, GateStep):
                 return step.gate
             if isinstance(step, ActionStep):
@@ -1267,11 +1255,11 @@ def _phase_for_action(action: object) -> str | None:
 
 
 def _phase_for_pipe_action(
-    action: SpawnRole | WaitForGate | PerformAction | PipelineComplete | PipelineFailed,
+    action: SpawnAgent | WaitForGate | PerformAction | PipelineComplete | PipelineFailed,
 ) -> str | None:
     """Extract a phase name from any pipeline action type."""
-    if isinstance(action, SpawnRole):
-        return action.role
+    if isinstance(action, SpawnAgent):
+        return action.agent
     if isinstance(action, WaitForGate):
         return action.gate
     if isinstance(action, PerformAction):
@@ -1335,8 +1323,8 @@ def _collect_roles(steps: tuple[PipelineStep, ...]) -> set[str]:
     """Recursively collect all role names from a pipeline."""
     roles: set[str] = set()
     for step in steps:
-        if isinstance(step, RoleStep):
-            roles.add(step.role)
+        if isinstance(step, AgentStep):
+            roles.add(step.agent)
         elif isinstance(step, LoopStep):
             roles.update(_collect_roles(step.steps))
     return roles

@@ -109,12 +109,8 @@ class OrchestratorProbe(Protocol):
         round: int,
         cycle: int,
         spec_ref: str,
-        findings_count: int,
         detail: str,
         duration_s: float,
-        cost_usd: float | None = None,
-        num_turns: int | None = None,
-        api_duration_ms: float | None = None,
     ) -> None:
         """Agent session completed and result collected."""
         ...
@@ -146,7 +142,6 @@ class OrchestratorProbe(Protocol):
         round: int,
         cycle: int,
         findings_preview: str,
-        findings_count: int,
     ) -> None:
         """Verification failed, task restarting the pipeline loop."""
         ...

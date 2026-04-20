@@ -62,12 +62,8 @@ class TestWorkerLifecycleCreatesSpan:
             round=1,
             cycle=3,
             spec_ref="specs/task-001.md",
-            findings_count=0,
             detail="All tests pass",
             duration_s=42.5,
-            cost_usd=0.35,
-            num_turns=5,
-            api_duration_ms=8000.0,
         )
 
         spans = exporter.get_finished_spans()
@@ -81,9 +77,6 @@ class TestWorkerLifecycleCreatesSpan:
         assert attrs["hyperloop.round"] == 1
         assert attrs["hyperloop.verdict"] == "pass"
         assert attrs["hyperloop.duration_s"] == 42.5
-        assert attrs["hyperloop.cost_usd"] == 0.35
-        assert attrs["hyperloop.num_turns"] == 5
-        assert attrs["hyperloop.api_duration_ms"] == 8000.0
 
     def test_fail_verdict_sets_error_status(self) -> None:
         probe, exporter, _reader = _make_probe()
@@ -103,7 +96,6 @@ class TestWorkerLifecycleCreatesSpan:
             round=2,
             cycle=5,
             spec_ref="specs/task-002.md",
-            findings_count=3,
             detail="Tests failed",
             duration_s=55.0,
         )
@@ -130,7 +122,6 @@ class TestWorkerLifecycleCreatesSpan:
             round=1,
             cycle=1,
             spec_ref="specs/task-003.md",
-            findings_count=0,
             detail="ok",
             duration_s=10.0,
         )
@@ -167,7 +158,6 @@ class TestWorkerMessageAddsEvent:
             round=1,
             cycle=1,
             spec_ref="specs/task-001.md",
-            findings_count=0,
             detail="ok",
             duration_s=20.0,
         )
@@ -205,7 +195,6 @@ class TestWorkerMessageAddsEvent:
             round=1,
             cycle=1,
             spec_ref="specs/task-001.md",
-            findings_count=0,
             detail="ok",
             duration_s=5.0,
         )
@@ -272,7 +261,6 @@ class TestMetricsRecorded:
             round=1,
             cycle=1,
             spec_ref="specs/task-001.md",
-            findings_count=0,
             detail="ok",
             duration_s=42.5,
         )
@@ -374,7 +362,6 @@ class TestProbeDoesNotRaise:
             round=1,
             cycle=1,
             spec_ref="specs/x.md",
-            findings_count=0,
             detail="",
             duration_s=1.0,
         )
@@ -587,7 +574,6 @@ class TestTaskLifecycleEvents:
             round=2,
             cycle=4,
             findings_preview="test failures",
-            findings_count=3,
         )
         probe.orchestrator_halted(
             reason="all tasks complete",

@@ -10,11 +10,11 @@ from pathlib import Path
 from hyperloop.compose import PromptComposer, load_templates_from_dir
 from hyperloop.domain.model import (
     ActionStep,
+    AgentStep,
     GateStep,
     LoopStep,
     Phase,
     Process,
-    RoleStep,
     Task,
     TaskStatus,
     Verdict,
@@ -30,17 +30,16 @@ from tests.fakes.state import InMemoryStateStore
 # Helpers
 # ---------------------------------------------------------------------------
 
-PASS_RESULT = WorkerResult(verdict=Verdict.PASS, findings=0, detail="All tests pass")
-FAIL_RESULT = WorkerResult(verdict=Verdict.FAIL, findings=1, detail="Tests failed")
+PASS_RESULT = WorkerResult(verdict=Verdict.PASS, detail="All tests pass")
+FAIL_RESULT = WorkerResult(verdict=Verdict.FAIL, detail="Tests failed")
 
 DEFAULT_PROCESS = Process(
     name="default",
-    intake=(),
     pipeline=(
         LoopStep(
             steps=(
-                RoleStep(role="implementer", on_pass=None, on_fail=None),
-                RoleStep(role="verifier", on_pass=None, on_fail=None),
+                AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                AgentStep(agent="verifier", on_pass=None, on_fail=None),
             ),
         ),
     ),
@@ -440,75 +439,6 @@ class TestRunCycleStepByStep:
         assert "all tasks complete" in result.lower()
 
 
-class TestNeedsRebaseSpawning:
-    """NEEDS_REBASE tasks get a rebase-resolver worker spawned."""
-
-    def test_needs_rebase_task_spawns_rebase_resolver(self) -> None:
-        """A task in NEEDS_REBASE status should spawn a rebase-resolver worker."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.NEEDS_REBASE,
-                phase=Phase("verifier"),
-                branch="hyperloop/task-001",
-            )
-        )
-
-        orch = _make_orchestrator(state, runtime)
-        orch.run_cycle()
-
-        task = state.get_task("task-001")
-        assert task.status == TaskStatus.IN_PROGRESS
-        assert task.phase == Phase("rebase-resolver")
-
-    def test_needs_rebase_spawns_with_correct_role(self) -> None:
-        """The spawned worker should have role='rebase-resolver'."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.NEEDS_REBASE,
-                branch="hyperloop/task-001",
-            )
-        )
-
-        orch = _make_orchestrator(state, runtime)
-        orch.run_cycle()
-
-        # Check the runtime received a spawn with rebase-resolver role
-        handle = runtime.handles.get("task-001")
-        assert handle is not None
-        assert handle.role == "rebase-resolver"
-
-    def test_needs_rebase_prioritized_over_not_started(self) -> None:
-        """NEEDS_REBASE tasks should spawn before NOT_STARTED tasks when slots are limited."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.NOT_STARTED,
-            )
-        )
-        state.add_task(
-            _task(
-                id="task-002",
-                status=TaskStatus.NEEDS_REBASE,
-                branch="hyperloop/task-002",
-            )
-        )
-
-        orch = _make_orchestrator(state, runtime, max_workers=1)
-        orch.run_cycle()
-
-        # task-002 (needs_rebase) should have gotten the single slot
-        assert state.get_task("task-002").status == TaskStatus.IN_PROGRESS
-        assert state.get_task("task-001").status == TaskStatus.NOT_STARTED
-
-
 class TestRecovery:
     """Crash recovery: orphaned workers are cancelled, in-progress tasks are re-spawned."""
 
@@ -648,12 +578,11 @@ class TestGatePolling:
 
     GATE_PROCESS = Process(
         name="gate-process",
-        intake=(),
         pipeline=(
             LoopStep(
                 steps=(
-                    RoleStep(role="implementer", on_pass=None, on_fail=None),
-                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
                 ),
             ),
             GateStep(gate="human-pr-approval"),
@@ -742,12 +671,11 @@ class TestMergeWithPRManager:
 
     MERGE_PROCESS = Process(
         name="merge-process",
-        intake=(),
         pipeline=(
             LoopStep(
                 steps=(
-                    RoleStep(role="implementer", on_pass=None, on_fail=None),
-                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
                 ),
             ),
             ActionStep(action="merge-pr"),
@@ -778,8 +706,8 @@ class TestMergeWithPRManager:
         task = state.get_task("task-001")
         assert task.status == TaskStatus.COMPLETE
 
-    def test_rebase_conflict_spawns_rebase_resolver(self) -> None:
-        """When rebase fails, task gets rebase-resolver spawned."""
+    def test_rebase_conflict_stays_in_progress(self) -> None:
+        """When rebase fails, task stays IN_PROGRESS at merge-pr."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
@@ -802,10 +730,10 @@ class TestMergeWithPRManager:
 
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS
-        assert task.phase == Phase("rebase-resolver")
+        assert task.phase == Phase("merge-pr")
 
-    def test_merge_conflict_spawns_rebase_resolver(self) -> None:
-        """When merge fails, task gets rebase-resolver spawned."""
+    def test_merge_conflict_stays_in_progress(self) -> None:
+        """When merge fails, task stays IN_PROGRESS at merge-pr."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
@@ -828,7 +756,7 @@ class TestMergeWithPRManager:
 
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS
-        assert task.phase == Phase("rebase-resolver")
+        assert task.phase == Phase("merge-pr")
 
     def test_no_pr_manager_merge_does_not_crash(self) -> None:
         """Without a PRManager, local merge is attempted — should not crash."""
@@ -848,12 +776,10 @@ class TestMergeWithPRManager:
         # Should not crash — _merge_local handles both success and failure
         orch.run_cycle()
         task = state.get_task("task-001")
-        # Result depends on whether branch exists locally: COMPLETE (merged),
-        # NEEDS_REBASE (conflict/missing branch), or IN_PROGRESS with
-        # rebase-resolver (decide() spawns a resolver in the same cycle).
+        # Result depends on whether branch exists locally: COMPLETE (merged)
+        # or IN_PROGRESS (conflict/missing branch — adapter handles rebase internally).
         assert task.status in (
             TaskStatus.COMPLETE,
-            TaskStatus.NEEDS_REBASE,
             TaskStatus.IN_PROGRESS,
         )
 
@@ -863,12 +789,11 @@ class TestPRStateResilience:
 
     GATE_PROCESS = Process(
         name="gate-process",
-        intake=(),
         pipeline=(
             LoopStep(
                 steps=(
-                    RoleStep(role="implementer", on_pass=None, on_fail=None),
-                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
                 ),
             ),
             GateStep(gate="human-pr-approval"),
@@ -878,12 +803,11 @@ class TestPRStateResilience:
 
     MERGE_PROCESS = Process(
         name="merge-process",
-        intake=(),
         pipeline=(
             LoopStep(
                 steps=(
-                    RoleStep(role="implementer", on_pass=None, on_fail=None),
-                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
                 ),
             ),
             ActionStep(action="merge-pr"),
@@ -1221,7 +1145,7 @@ class TestPromptComposition:
         runtime = InMemoryRuntime()
         state.add_task(_task())
         state.set_file("specs/task-001.md", "Build a widget.")
-        state.store_review("task-001", 1, "verifier", "fail", 1, "Missing null check.")
+        state.store_review("task-001", 1, "verifier", "fail", "Missing null check.")
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, composer=composer)
@@ -1237,12 +1161,11 @@ class TestPRLifecycle:
 
     MERGE_PROCESS = Process(
         name="merge-process",
-        intake=(),
         pipeline=(
             LoopStep(
                 steps=(
-                    RoleStep(role="implementer", on_pass=None, on_fail=None),
-                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
                 ),
             ),
             ActionStep(action="merge-pr"),
@@ -1400,12 +1323,11 @@ class TestMaxRebaseAttempts:
 
     MERGE_PROCESS = Process(
         name="merge-process",
-        intake=(),
         pipeline=(
             LoopStep(
                 steps=(
-                    RoleStep(role="implementer", on_pass=None, on_fail=None),
-                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
                 ),
             ),
             ActionStep(action="merge-pr"),
@@ -1441,12 +1363,11 @@ class TestMaxRebaseAttempts:
             max_rebase_attempts=3,
         )
 
-        # First two failures: task stays in NEEDS_REBASE / rebase-resolver cycle
+        # First two failures: task stays IN_PROGRESS
         for _ in range(2):
             orch.run_cycle()
             task = state.get_task("task-001")
-            # Should be NEEDS_REBASE or spawning rebase-resolver
-            assert task.status in (TaskStatus.NEEDS_REBASE, TaskStatus.IN_PROGRESS)
+            assert task.status == TaskStatus.IN_PROGRESS
 
             # If rebase-resolver was spawned, let it complete and return to merge-pr
             if task.phase == Phase("rebase-resolver"):
@@ -1601,12 +1522,11 @@ class TestMergeDepOrder:
 
     MERGE_PROCESS = Process(
         name="merge-process",
-        intake=(),
         pipeline=(
             LoopStep(
                 steps=(
-                    RoleStep(role="implementer", on_pass=None, on_fail=None),
-                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
                 ),
             ),
             ActionStep(action="merge-pr"),

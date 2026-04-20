@@ -90,11 +90,6 @@ class OtelProbe:
             description="Worker execution duration in seconds",
             unit="s",
         )
-        self._worker_cost: Histogram = meter.create_histogram(
-            "hyperloop.worker.cost_usd",
-            description="Worker cost in USD",
-            unit="USD",
-        )
         self._cycle_duration: Histogram = meter.create_histogram(
             "hyperloop.cycle.duration_s",
             description="Cycle duration in seconds",
@@ -240,12 +235,8 @@ class OtelProbe:
         round: int,
         cycle: int,
         spec_ref: str,
-        findings_count: int,
         detail: str,
         duration_s: float,
-        cost_usd: float | None = None,
-        num_turns: int | None = None,
-        api_duration_ms: float | None = None,
         **_kw: object,
     ) -> None:
         try:
@@ -256,14 +247,7 @@ class OtelProbe:
                 attrs: dict[str, str | int | float] = {
                     "hyperloop.verdict": verdict,
                     "hyperloop.duration_s": duration_s,
-                    "hyperloop.findings_count": findings_count,
                 }
-                if cost_usd is not None:
-                    attrs["hyperloop.cost_usd"] = cost_usd
-                if num_turns is not None:
-                    attrs["hyperloop.num_turns"] = num_turns
-                if api_duration_ms is not None:
-                    attrs["hyperloop.api_duration_ms"] = api_duration_ms
                 span.set_attributes(attrs)
                 if verdict != "pass":
                     span.set_status(StatusCode.ERROR, f"verdict={verdict}")
@@ -271,8 +255,6 @@ class OtelProbe:
 
             self._workers_active.add(-1)
             self._worker_duration.record(duration_s)
-            if cost_usd is not None:
-                self._worker_cost.record(cost_usd)
         except Exception:
             _log.exception("otel: worker_reaped failed")
 

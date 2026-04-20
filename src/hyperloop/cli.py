@@ -322,18 +322,17 @@ def run(
 
     # 5. Construct runtime and state store, run loop
     from hyperloop.adapters.state import GitStateStore
-    from hyperloop.domain.model import ActionStep, LoopStep, Process, RoleStep
+    from hyperloop.domain.model import ActionStep, AgentStep, LoopStep, Process
     from hyperloop.loop import Orchestrator
 
     # Default process: loop(implementer, verifier) -> merge-pr
     default_process = Process(
         name="default",
-        intake=(),
         pipeline=(
             LoopStep(
                 steps=(
-                    RoleStep(role="implementer", on_pass=None, on_fail=None),
-                    RoleStep(role="verifier", on_pass=None, on_fail=None),
+                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
                 )
             ),
             ActionStep(action="merge-pr"),

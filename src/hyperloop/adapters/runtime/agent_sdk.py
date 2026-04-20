@@ -6,7 +6,7 @@ tool execution, context management, and clean exit — no subprocess polling
 or result-file conventions needed.
 
 Completion and verdict are derived from the SDK's ``ResultMessage``:
-``is_error`` maps to ``Verdict.ERROR``, otherwise ``Verdict.PASS``.
+``is_error`` maps to ``Verdict.FAIL``, otherwise ``Verdict.PASS``.
 """
 
 from __future__ import annotations
@@ -153,8 +153,7 @@ class AgentSdkRuntime:
                 result = future.result()
             else:
                 result = WorkerResult(
-                    verdict=Verdict.ERROR,
-                    findings=0,
+                    verdict=Verdict.FAIL,
                     detail="Agent future missing or failed",
                 )
 
@@ -256,9 +255,6 @@ class AgentSdkRuntime:
 
         result_text = ""
         is_error = False
-        cost_usd: float | None = None
-        num_turns: int | None = None
-        api_duration_ms: float | None = None
 
         async for message in query(prompt=prompt, options=options):
             if isinstance(message, AssistantMessage):
@@ -266,30 +262,19 @@ class AgentSdkRuntime:
             elif isinstance(message, ResultMessage):
                 result_text = message.result or ""
                 is_error = message.is_error
-                cost_usd = message.total_cost_usd
-                num_turns = message.num_turns
-                api_duration_ms = float(message.duration_api_ms)
                 self._emit_probe(
                     task_id, role, "result", result_text[:200] if result_text else "done"
                 )
 
         if is_error:
             return WorkerResult(
-                verdict=Verdict.ERROR,
-                findings=0,
+                verdict=Verdict.FAIL,
                 detail=result_text or "Agent completed with error",
-                cost_usd=cost_usd,
-                num_turns=num_turns,
-                api_duration_ms=api_duration_ms,
             )
 
         return WorkerResult(
             verdict=Verdict.PASS,
-            findings=0,
             detail=result_text or "Agent completed",
-            cost_usd=cost_usd,
-            num_turns=num_turns,
-            api_duration_ms=api_duration_ms,
         )
 
     def _emit_assistant_messages(self, message: object, task_id: str, role: str) -> None:
@@ -324,8 +309,8 @@ def _read_review_from_worktree(worktree_path: str, task_id: str) -> WorkerResult
     """Read and parse a worker-written review file from a worktree.
 
     Globs for ``.hyperloop/state/reviews/{task_id}-round-*.md`` in the worktree,
-    takes the last one (highest round), and parses YAML frontmatter for verdict,
-    findings, and body detail.
+    takes the last one (highest round), and parses YAML frontmatter for verdict
+    and body detail.
 
     Returns None if no review file is found or if parsing fails.
     """
@@ -351,7 +336,6 @@ def _read_review_from_worktree(worktree_path: str, task_id: str) -> WorkerResult
         body = match.group(2)
         return WorkerResult(
             verdict=Verdict(str(fm["verdict"])),
-            findings=int(str(fm["findings"])),
             detail=body.strip(),
         )
     except Exception:

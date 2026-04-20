@@ -128,32 +128,6 @@ class TestRecordingProbe:
         with pytest.raises(AssertionError, match="No calls to 'worker_reaped'"):
             probe.last("worker_reaped")
 
-    def test_runtime_metrics_flow_through_worker_reaped(self) -> None:
-        """Runtime metrics (cost, turns, API duration) are captured in kwargs."""
-        probe = RecordingProbe()
-        probe.worker_reaped(
-            task_id="task-001",
-            verdict="pass",
-            cost_usd=0.42,
-            num_turns=7,
-            api_duration_ms=8500.0,
-        )
-
-        last = probe.last("worker_reaped")
-        assert last["cost_usd"] == 0.42
-        assert last["num_turns"] == 7
-        assert last["api_duration_ms"] == 8500.0
-
-    def test_runtime_metrics_none_by_default(self) -> None:
-        """When runtime metrics are not passed, they are absent from kwargs."""
-        probe = RecordingProbe()
-        probe.worker_reaped(task_id="task-001", verdict="pass")
-
-        last = probe.last("worker_reaped")
-        assert "cost_usd" not in last
-        assert "num_turns" not in last
-        assert "api_duration_ms" not in last
-
     def test_all_17_methods_are_recorded(self) -> None:
         """Every probe method is captured by RecordingProbe."""
         probe = RecordingProbe()

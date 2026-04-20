@@ -23,7 +23,6 @@ class ReviewRecord:
     round: int
     role: str
     verdict: str
-    findings_count: int
     detail: str
 
 
@@ -118,7 +117,6 @@ class InMemoryStateStore:
         round: int,
         role: str,
         verdict: str,
-        findings_count: int,
         detail: str,
     ) -> None:
         """Write a review record for a task round."""
@@ -128,7 +126,6 @@ class InMemoryStateStore:
                 round=round,
                 role=role,
                 verdict=verdict,
-                findings_count=findings_count,
                 detail=detail,
             )
         )
@@ -163,6 +160,6 @@ class InMemoryStateStore:
         """Read a file from the in-memory filesystem. Returns None if not found."""
         return self._files.get(path)
 
-    def commit(self, message: str) -> None:
-        """Record the commit message (no-op for in-memory, but stores for test assertions)."""
+    def persist(self, message: str) -> None:
+        """Record the persist message (no-op for in-memory, but stores for test assertions)."""
         self.committed_messages.append(message)

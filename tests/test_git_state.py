@@ -210,7 +210,7 @@ class TestStoreReview:
         _write_task_file(tmp_path, "task-027", TASK_027_CONTENT)
 
         store = GitStateStore(repo_path=tmp_path)
-        store.store_review("task-027", 0, "verifier", "fail", 3, "Build failed: missing import.")
+        store.store_review("task-027", 0, "verifier", "fail", "Build failed: missing import.")
 
         review_path = tmp_path / ".hyperloop" / "state" / "reviews" / "task-027-round-0.md"
         assert review_path.exists()
@@ -219,7 +219,6 @@ class TestStoreReview:
         assert "round: 0" in content
         assert "role: verifier" in content
         assert "verdict: fail" in content
-        assert "findings: 3" in content
         assert "Build failed: missing import." in content
 
     def test_overwrites_review_for_same_round(self, tmp_path: Path) -> None:
@@ -227,8 +226,8 @@ class TestStoreReview:
         _write_task_file(tmp_path, "task-027", TASK_027_CONTENT)
 
         store = GitStateStore(repo_path=tmp_path)
-        store.store_review("task-027", 0, "verifier", "fail", 2, "Round 0: build failed.")
-        store.store_review("task-027", 0, "verifier", "pass", 0, "Round 0: all clear.")
+        store.store_review("task-027", 0, "verifier", "fail", "Round 0: build failed.")
+        store.store_review("task-027", 0, "verifier", "pass", "Round 0: all clear.")
 
         review_path = tmp_path / ".hyperloop" / "state" / "reviews" / "task-027-round-0.md"
         content = review_path.read_text()
@@ -240,8 +239,8 @@ class TestStoreReview:
         _write_task_file(tmp_path, "task-027", TASK_027_CONTENT)
 
         store = GitStateStore(repo_path=tmp_path)
-        store.store_review("task-027", 0, "verifier", "fail", 2, "Round 0 findings.")
-        store.store_review("task-027", 1, "verifier", "fail", 1, "Round 1 findings.")
+        store.store_review("task-027", 0, "verifier", "fail", "Round 0 findings.")
+        store.store_review("task-027", 1, "verifier", "fail", "Round 1 findings.")
 
         assert (tmp_path / ".hyperloop" / "state" / "reviews" / "task-027-round-0.md").exists()
         assert (tmp_path / ".hyperloop" / "state" / "reviews" / "task-027-round-1.md").exists()
@@ -253,8 +252,8 @@ class TestGetFindings:
         _write_task_file(tmp_path, "task-027", TASK_027_CONTENT)
 
         store = GitStateStore(repo_path=tmp_path)
-        store.store_review("task-027", 0, "verifier", "fail", 2, "Round 0 problem.")
-        store.store_review("task-027", 1, "verifier", "fail", 1, "Round 1 problem.")
+        store.store_review("task-027", 0, "verifier", "fail", "Round 0 problem.")
+        store.store_review("task-027", 1, "verifier", "fail", "Round 1 problem.")
 
         findings = store.get_findings("task-027")
         assert findings == "Round 1 problem."
@@ -326,7 +325,7 @@ class TestCommit:
         store = GitStateStore(repo_path=tmp_path)
         # Make a change that needs committing
         store.transition_task("task-027", TaskStatus.IN_PROGRESS, Phase("implementer"))
-        store.commit("chore: advance task-027")
+        store.persist("chore: advance task-027")
 
         # Verify the commit was created
         result = subprocess.run(
@@ -342,8 +341,8 @@ class TestCommit:
         _write_task_file(tmp_path, "task-027", TASK_027_CONTENT)
 
         store = GitStateStore(repo_path=tmp_path)
-        store.store_review("task-027", 0, "verifier", "fail", 1, "Something broke.")
-        store.commit("chore: store review")
+        store.store_review("task-027", 0, "verifier", "fail", "Something broke.")
+        store.persist("chore: store review")
 
         # Verify the file is in the commit
         result = subprocess.run(

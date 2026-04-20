@@ -121,7 +121,7 @@ class TestStateStoreReview:
         )
         store.add_task(task)
 
-        store.store_review("task-001", 1, "verifier", "fail", 2, "Test X failed: expected 3, got 5")
+        store.store_review("task-001", 1, "verifier", "fail", "Test X failed: expected 3, got 5")
         findings = store.get_findings("task-001")
         assert "Test X failed: expected 3, got 5" in findings
 
@@ -140,8 +140,8 @@ class TestStateStoreReview:
         )
         store.add_task(task)
 
-        store.store_review("task-001", 1, "verifier", "fail", 1, "Round 1 failed")
-        store.store_review("task-001", 2, "verifier", "fail", 1, "Round 2 failed")
+        store.store_review("task-001", 1, "verifier", "fail", "Round 1 failed")
+        store.store_review("task-001", 2, "verifier", "fail", "Round 2 failed")
 
         findings = store.get_findings("task-001")
         assert "Round 2 failed" in findings
@@ -195,10 +195,10 @@ class TestStateStoreReadFile:
         assert store.read_file("nonexistent.md") is None
 
 
-class TestStateStoreCommit:
-    def test_commit_records_message(self):
+class TestStateStorePersist:
+    def test_persist_records_message(self):
         store = InMemoryStateStore()
-        store.commit("feat: update task-001 status")
+        store.persist("feat: update task-001 status")
         assert "feat: update task-001 status" in store.committed_messages
 
 
@@ -284,7 +284,6 @@ class TestRuntimeReap:
         # Worker finishes
         expected_result = WorkerResult(
             verdict=Verdict.PASS,
-            findings=0,
             detail="All tests pass",
         )
         runtime.set_result("task-001", expected_result)
@@ -295,7 +294,6 @@ class TestRuntimeReap:
         # Reap the result
         result = runtime.reap(handle)
         assert result.verdict == Verdict.PASS
-        assert result.findings == 0
         assert result.detail == "All tests pass"
 
     def test_reap_with_failure(self):
@@ -304,7 +302,6 @@ class TestRuntimeReap:
 
         result = WorkerResult(
             verdict=Verdict.FAIL,
-            findings=3,
             detail="3 tests failed",
         )
         runtime.set_result("task-001", result)
@@ -312,7 +309,6 @@ class TestRuntimeReap:
 
         reaped = runtime.reap(handle)
         assert reaped.verdict == Verdict.FAIL
-        assert reaped.findings == 3
 
 
 class TestRuntimeCancel:
@@ -337,7 +333,7 @@ class TestRuntimeFindOrphan:
         runtime = InMemoryRuntime()
         handle = runtime.spawn("task-001", "implementer", "Do the work", "hyperloop/task-001")
 
-        result = WorkerResult(verdict=Verdict.PASS, findings=0, detail="ok")
+        result = WorkerResult(verdict=Verdict.PASS, detail="ok")
         runtime.set_result("task-001", result)
         runtime.reap(handle)
 

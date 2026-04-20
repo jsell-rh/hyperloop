@@ -19,26 +19,23 @@ class TestReadReviewFromWorktree:
         reviews_dir.mkdir(parents=True)
         (reviews_dir / "task-001-round-0.md").write_text(
             "---\ntask_id: task-001\nround: 0\nrole: verifier\n"
-            "verdict: fail\nfindings: 3\n---\nThree issues found.\n"
+            "verdict: fail\n---\nThree issues found.\n"
         )
 
         result = _read_review_from_worktree(str(tmp_path), "task-001")
 
         assert result is not None
         assert result.verdict == Verdict.FAIL
-        assert result.findings == 3
         assert result.detail == "Three issues found."
 
     def test_takes_latest_round(self, tmp_path: Path) -> None:
         reviews_dir = tmp_path / ".hyperloop" / "state" / "reviews"
         reviews_dir.mkdir(parents=True)
         (reviews_dir / "task-001-round-0.md").write_text(
-            "---\ntask_id: task-001\nround: 0\nrole: verifier\n"
-            "verdict: fail\nfindings: 2\n---\nOld findings.\n"
+            "---\ntask_id: task-001\nround: 0\nrole: verifier\nverdict: fail\n---\nOld findings.\n"
         )
         (reviews_dir / "task-001-round-1.md").write_text(
-            "---\ntask_id: task-001\nround: 1\nrole: verifier\n"
-            "verdict: pass\nfindings: 0\n---\nAll good now.\n"
+            "---\ntask_id: task-001\nround: 1\nrole: verifier\nverdict: pass\n---\nAll good now.\n"
         )
 
         result = _read_review_from_worktree(str(tmp_path), "task-001")
@@ -71,8 +68,7 @@ class TestReadReviewFromWorktree:
         reviews_dir = tmp_path / ".hyperloop" / "state" / "reviews"
         reviews_dir.mkdir(parents=True)
         (reviews_dir / "task-002-round-0.md").write_text(
-            "---\ntask_id: task-002\nround: 0\nrole: verifier\n"
-            "verdict: pass\nfindings: 0\n---\nWrong task.\n"
+            "---\ntask_id: task-002\nround: 0\nrole: verifier\nverdict: pass\n---\nWrong task.\n"
         )
 
         result = _read_review_from_worktree(str(tmp_path), "task-001")

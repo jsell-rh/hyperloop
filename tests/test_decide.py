@@ -202,40 +202,6 @@ class TestMaxRounds:
         assert "max_task_rounds" in halts[0].reason.lower()
 
 
-class TestNeedsRebase:
-    def test_needs_rebase_spawns_rebase_resolver(self):
-        t = _task(status=TaskStatus.NEEDS_REBASE, branch="hyperloop/task-001")
-        actions = decide(_world(tasks={t.id: t}), max_workers=4, max_task_rounds=50)
-        spawns = [a for a in actions if isinstance(a, SpawnWorker)]
-        assert len(spawns) == 1
-        assert spawns[0].task_id == "task-001"
-        assert spawns[0].role == "rebase-resolver"
-
-    def test_needs_rebase_prioritized_over_not_started(self):
-        rebase = _task(id="task-001", status=TaskStatus.NEEDS_REBASE, branch="hyperloop/task-001")
-        fresh = _task(id="task-002")
-        actions = decide(
-            _world(tasks={rebase.id: rebase, fresh.id: fresh}),
-            max_workers=1,
-            max_task_rounds=50,
-        )
-        spawns = [a for a in actions if isinstance(a, SpawnWorker)]
-        assert len(spawns) == 1
-        assert spawns[0].task_id == "task-001"
-        assert spawns[0].role == "rebase-resolver"
-
-    def test_needs_rebase_with_active_worker_not_respawned(self):
-        t = _task(status=TaskStatus.NEEDS_REBASE, branch="hyperloop/task-001")
-        worker = WorkerState(task_id="task-001", role="rebase-resolver", status="running")
-        actions = decide(
-            _world(tasks={t.id: t}, workers={"w1": worker}),
-            max_workers=4,
-            max_task_rounds=50,
-        )
-        spawns = [a for a in actions if isinstance(a, SpawnWorker)]
-        assert len(spawns) == 0
-
-
 class TestDependencyCycles:
     def test_deps_not_in_task_list_are_treated_as_unmet(self):
         """A dep referencing a task not in the world should be treated as unmet."""

@@ -296,7 +296,7 @@ class TestReap:
         reviews_dir.mkdir(parents=True)
         (reviews_dir / "task-001-round-0.md").write_text(
             "---\ntask_id: task-001\nround: 0\nrole: verifier\n"
-            "verdict: fail\nfindings: 2\n---\nTwo issues found.\n"
+            "verdict: fail\n---\nTwo issues found.\n"
         )
         subprocess.run(["git", "-C", str(remote), "add", "."], check=True, capture_output=True)
         subprocess.run(
@@ -343,7 +343,6 @@ class TestReap:
 
         result = rt.reap(handle)
         assert result.verdict == Verdict.FAIL
-        assert result.findings == 2
         assert "Two issues found" in result.detail
 
     def test_reap_falls_back_when_no_review(self, tmp_path: Path, acpctl_log: Path) -> None:

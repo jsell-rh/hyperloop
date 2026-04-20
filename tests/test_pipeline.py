@@ -6,10 +6,10 @@ current position and worker result, returns the next action to take and the new 
 
 from hyperloop.domain.model import (
     ActionStep,
+    AgentStep,
     GateStep,
     LoopStep,
     PipelinePosition,
-    RoleStep,
     Verdict,
     WorkerResult,
 )
@@ -18,7 +18,7 @@ from hyperloop.domain.pipeline import (
     PipelineComplete,
     PipelineExecutor,
     PipelineFailed,
-    SpawnRole,
+    SpawnAgent,
     WaitForGate,
 )
 
@@ -26,16 +26,16 @@ from hyperloop.domain.pipeline import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-PASS = WorkerResult(verdict=Verdict.PASS, findings=0, detail="ok")
-FAIL = WorkerResult(verdict=Verdict.FAIL, findings=1, detail="failed")
+PASS = WorkerResult(verdict=Verdict.PASS, detail="ok")
+FAIL = WorkerResult(verdict=Verdict.FAIL, detail="failed")
 
 
 def pos(*indices: int) -> PipelinePosition:
     return PipelinePosition(path=indices)
 
 
-def role(name: str) -> RoleStep:
-    return RoleStep(role=name, on_pass=None, on_fail=None)
+def role(name: str) -> AgentStep:
+    return AgentStep(agent=name, on_pass=None, on_fail=None)
 
 
 # ---------------------------------------------------------------------------
@@ -52,13 +52,13 @@ class TestSimpleSequence:
     def test_start_spawns_first_role(self):
         """At step 0 with no result, spawn implementer."""
         action, new_pos = self.executor.next_action(pos(0), result=None)
-        assert action == SpawnRole(role="implementer")
+        assert action == SpawnAgent(agent="implementer")
         assert new_pos == pos(0)
 
     def test_pass_advances_to_next_role(self):
         """At step 0 with pass, advance to step 1 and spawn verifier."""
         action, new_pos = self.executor.next_action(pos(0), result=PASS)
-        assert action == SpawnRole(role="verifier")
+        assert action == SpawnAgent(agent="verifier")
         assert new_pos == pos(1)
 
     def test_verifier_pass_advances_to_action(self):
@@ -95,13 +95,13 @@ class TestLoop:
     def test_start_enters_loop_at_first_step(self):
         """At loop start with no result, spawn implementer (inside loop)."""
         action, new_pos = self.executor.next_action(pos(0, 0), result=None)
-        assert action == SpawnRole(role="implementer")
+        assert action == SpawnAgent(agent="implementer")
         assert new_pos == pos(0, 0)
 
     def test_implementer_pass_advances_to_verifier(self):
         """Inside loop, implementer pass advances to verifier."""
         action, new_pos = self.executor.next_action(pos(0, 0), result=PASS)
-        assert action == SpawnRole(role="verifier")
+        assert action == SpawnAgent(agent="verifier")
         assert new_pos == pos(0, 1)
 
     def test_verifier_pass_exits_loop(self):
@@ -113,13 +113,13 @@ class TestLoop:
     def test_verifier_fail_restarts_loop(self):
         """Inside loop, verifier fail restarts loop from implementer."""
         action, new_pos = self.executor.next_action(pos(0, 1), result=FAIL)
-        assert action == SpawnRole(role="implementer")
+        assert action == SpawnAgent(agent="implementer")
         assert new_pos == pos(0, 0)
 
     def test_implementer_fail_restarts_loop(self):
         """Inside loop, implementer fail also restarts loop from beginning."""
         action, new_pos = self.executor.next_action(pos(0, 0), result=FAIL)
-        assert action == SpawnRole(role="implementer")
+        assert action == SpawnAgent(agent="implementer")
         assert new_pos == pos(0, 0)
 
 
@@ -145,30 +145,30 @@ class TestNestedLoops:
 
     def test_start_at_inner_implementer(self):
         action, new_pos = self.executor.next_action(pos(0, 0, 0), result=None)
-        assert action == SpawnRole(role="implementer")
+        assert action == SpawnAgent(agent="implementer")
         assert new_pos == pos(0, 0, 0)
 
     def test_inner_implementer_pass_to_verifier(self):
         action, new_pos = self.executor.next_action(pos(0, 0, 0), result=PASS)
-        assert action == SpawnRole(role="verifier")
+        assert action == SpawnAgent(agent="verifier")
         assert new_pos == pos(0, 0, 1)
 
     def test_inner_verifier_fail_restarts_inner_loop(self):
         """Verifier fail in inner loop restarts inner loop (back to implementer)."""
         action, new_pos = self.executor.next_action(pos(0, 0, 1), result=FAIL)
-        assert action == SpawnRole(role="implementer")
+        assert action == SpawnAgent(agent="implementer")
         assert new_pos == pos(0, 0, 0)
 
     def test_inner_verifier_pass_exits_inner_advances_to_security(self):
         """Verifier pass exits inner loop, advances to security."""
         action, new_pos = self.executor.next_action(pos(0, 0, 1), result=PASS)
-        assert action == SpawnRole(role="security")
+        assert action == SpawnAgent(agent="security")
         assert new_pos == pos(0, 1)
 
     def test_security_fail_restarts_outer_loop(self):
         """Security fail restarts outer loop (back to inner loop start = implementer)."""
         action, new_pos = self.executor.next_action(pos(0, 1), result=FAIL)
-        assert action == SpawnRole(role="implementer")
+        assert action == SpawnAgent(agent="implementer")
         assert new_pos == pos(0, 0, 0)
 
     def test_security_pass_exits_both_loops_to_merge(self):
@@ -222,10 +222,10 @@ class TestGate:
 
 
 class TestRoutingOverrides:
-    """RoleStep with explicit on_pass/on_fail routing targets."""
+    """AgentStep with explicit on_pass/on_fail routing targets."""
 
     pipeline = (
-        RoleStep(role="implementer", on_pass="security", on_fail=None),
+        AgentStep(agent="implementer", on_pass="security", on_fail=None),
         role("verifier"),
         role("security"),
         ActionStep(action="merge-pr"),
@@ -235,19 +235,19 @@ class TestRoutingOverrides:
     def test_on_pass_override_jumps_to_named_role(self):
         """Implementer with on_pass='security' skips verifier, goes to security."""
         action, new_pos = self.executor.next_action(pos(0), result=PASS)
-        assert action == SpawnRole(role="security")
+        assert action == SpawnAgent(agent="security")
         assert new_pos == pos(2)
 
     def test_on_fail_override_jumps_to_named_role(self):
-        """RoleStep with on_fail='implementer' jumps back to implementer."""
+        """AgentStep with on_fail='implementer' jumps back to implementer."""
         pipeline = (
             role("implementer"),
-            RoleStep(role="verifier", on_pass=None, on_fail="implementer"),
+            AgentStep(agent="verifier", on_pass=None, on_fail="implementer"),
             ActionStep(action="merge-pr"),
         )
         executor = PipelineExecutor(pipeline)
         action, new_pos = executor.next_action(pos(1), result=FAIL)
-        assert action == SpawnRole(role="implementer")
+        assert action == SpawnAgent(agent="implementer")
         assert new_pos == pos(0)
 
 
@@ -277,7 +277,7 @@ class TestEdgeCases:
         pipeline = (LoopStep(steps=(role("implementer"),)),)
         executor = PipelineExecutor(pipeline)
         action, new_pos = executor.next_action(pos(0, 0), result=FAIL)
-        assert action == SpawnRole(role="implementer")
+        assert action == SpawnAgent(agent="implementer")
         assert new_pos == pos(0, 0)
 
     def test_position_into_loop_entry(self):
@@ -285,5 +285,5 @@ class TestEdgeCases:
         pipeline = (LoopStep(steps=(role("implementer"), role("verifier"))),)
         executor = PipelineExecutor(pipeline)
         action, new_pos = executor.next_action(pos(0, 0), result=None)
-        assert action == SpawnRole(role="implementer")
+        assert action == SpawnAgent(agent="implementer")
         assert new_pos == pos(0, 0)

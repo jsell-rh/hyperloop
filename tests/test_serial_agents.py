@@ -11,10 +11,10 @@ from pathlib import Path
 
 from hyperloop.compose import PromptComposer, load_templates_from_dir
 from hyperloop.domain.model import (
+    AgentStep,
     LoopStep,
     Phase,
     Process,
-    RoleStep,
     Task,
     TaskStatus,
     Verdict,
@@ -28,20 +28,17 @@ from tests.fakes.state import InMemoryStateStore
 # Helpers
 # ---------------------------------------------------------------------------
 
-PASS_RESULT = WorkerResult(verdict=Verdict.PASS, findings=0, detail="All tests pass")
-FAIL_RESULT = WorkerResult(
-    verdict=Verdict.FAIL, findings=1, detail="Tests failed: missing null check"
-)
-ERROR_RESULT = WorkerResult(verdict=Verdict.ERROR, findings=0, detail="Agent crashed")
+PASS_RESULT = WorkerResult(verdict=Verdict.PASS, detail="All tests pass")
+FAIL_RESULT = WorkerResult(verdict=Verdict.FAIL, detail="Tests failed: missing null check")
+FAIL_CRASH_RESULT = WorkerResult(verdict=Verdict.FAIL, detail="Agent crashed")
 
 DEFAULT_PROCESS = Process(
     name="default",
-    intake=(),
     pipeline=(
         LoopStep(
             steps=(
-                RoleStep(role="implementer", on_pass=None, on_fail=None),
-                RoleStep(role="verifier", on_pass=None, on_fail=None),
+                AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                AgentStep(agent="verifier", on_pass=None, on_fail=None),
             ),
         ),
     ),
@@ -194,7 +191,7 @@ class TestCollectCycleFindings:
 
         results: dict[str, WorkerResult] = {
             "task-001": FAIL_RESULT,
-            "task-002": ERROR_RESULT,
+            "task-002": FAIL_CRASH_RESULT,
             "task-003": PASS_RESULT,
         }
         text = orch._collect_cycle_findings(results)

@@ -23,7 +23,6 @@ class TestWorkerReaped:
                 round=0,
                 cycle=1,
                 spec_ref="specs/task-001.md",
-                findings_count=0,
                 detail="All tests pass",
                 duration_s=42.567,
             )
@@ -41,7 +40,6 @@ class TestWorkerReaped:
                 round=1,
                 cycle=2,
                 spec_ref="specs/task-001.md",
-                findings_count=3,
                 detail="Tests failed",
                 duration_s=55.0,
             )
@@ -127,7 +125,6 @@ class TestLogEntryContainsAllKwargs:
                 round=0,
                 cycle=1,
                 spec_ref="specs/task-001.md",
-                findings_count=0,
                 detail="All tests pass",
                 duration_s=42.5,
             )
@@ -136,56 +133,7 @@ class TestLogEntryContainsAllKwargs:
         assert entry["role"] == "verifier"
         assert entry["verdict"] == "pass"
         assert entry["spec_ref"] == "specs/task-001.md"
-        assert entry["findings_count"] == 0
         assert entry["detail"] == "All tests pass"
-
-
-class TestRuntimeMetrics:
-    """Runtime metrics (cost, turns, API duration) are included when present."""
-
-    def test_none_metrics_omitted_from_log(self) -> None:
-        with structlog.testing.capture_logs() as logs:
-            probe = StructlogProbe()
-            probe.worker_reaped(
-                task_id="task-001",
-                role="implementer",
-                verdict="pass",
-                round=0,
-                cycle=1,
-                spec_ref="specs/task-001.md",
-                findings_count=0,
-                detail="ok",
-                duration_s=10.0,
-                cost_usd=None,
-                num_turns=None,
-                api_duration_ms=None,
-            )
-        entry = logs[0]
-        assert "cost_usd" not in entry
-        assert "num_turns" not in entry
-        assert "api_duration_ms" not in entry
-
-    def test_present_metrics_included_in_log(self) -> None:
-        with structlog.testing.capture_logs() as logs:
-            probe = StructlogProbe()
-            probe.worker_reaped(
-                task_id="task-001",
-                role="implementer",
-                verdict="pass",
-                round=0,
-                cycle=1,
-                spec_ref="specs/task-001.md",
-                findings_count=0,
-                detail="ok",
-                duration_s=10.0,
-                cost_usd=0.42,
-                num_turns=7,
-                api_duration_ms=8500.0,
-            )
-        entry = logs[0]
-        assert entry["cost_usd"] == 0.42
-        assert entry["num_turns"] == 7
-        assert entry["api_duration_ms"] == 8500.0
 
 
 class TestDurationRounding:
@@ -201,7 +149,6 @@ class TestDurationRounding:
                 round=0,
                 cycle=1,
                 spec_ref="specs/task-001.md",
-                findings_count=0,
                 detail="ok",
                 duration_s=142.3456,
             )

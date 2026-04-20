@@ -226,8 +226,7 @@ class AmbientRuntime:
             self._stop_session(session_id)
             self._cleanup(task_id, session_id)
             return WorkerResult(
-                verdict=Verdict.ERROR,
-                findings=0,
+                verdict=Verdict.FAIL,
                 detail="branch not fetchable after push",
             )
 
@@ -236,7 +235,6 @@ class AmbientRuntime:
         if result is None:
             result = WorkerResult(
                 verdict=Verdict.PASS,
-                findings=0,
                 detail="Agent completed",
             )
 
@@ -591,7 +589,6 @@ class AmbientRuntime:
         body = match.group(2)
         return WorkerResult(
             verdict=Verdict(str(fm["verdict"])),
-            findings=int(str(fm["findings"])),
             detail=body.strip(),
         )
 

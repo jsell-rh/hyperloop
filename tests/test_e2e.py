@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING
 
 from hyperloop.adapters.state import GitStateStore
 from hyperloop.domain.model import (
+    AgentStep,
     LoopStep,
     Process,
-    RoleStep,
     TaskStatus,
     Verdict,
     WorkerResult,
@@ -30,17 +30,16 @@ if TYPE_CHECKING:
 # Helpers
 # ---------------------------------------------------------------------------
 
-PASS_RESULT = WorkerResult(verdict=Verdict.PASS, findings=0, detail="All tests pass")
-FAIL_RESULT = WorkerResult(verdict=Verdict.FAIL, findings=1, detail="Tests failed")
+PASS_RESULT = WorkerResult(verdict=Verdict.PASS, detail="All tests pass")
+FAIL_RESULT = WorkerResult(verdict=Verdict.FAIL, detail="Tests failed")
 
 DEFAULT_PROCESS = Process(
     name="default",
-    intake=(),
     pipeline=(
         LoopStep(
             steps=(
-                RoleStep(role="implementer", on_pass=None, on_fail=None),
-                RoleStep(role="verifier", on_pass=None, on_fail=None),
+                AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                AgentStep(agent="verifier", on_pass=None, on_fail=None),
             ),
         ),
     ),

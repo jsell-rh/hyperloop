@@ -114,7 +114,7 @@ class TestSdkAgentWritesReviewFile:
             "Write 'hello' to hello.txt in the current directory. "
             "Then write your review file to "
             ".hyperloop/state/reviews/task-001-round-0.md "
-            "with YAML frontmatter containing verdict: pass, findings: 0, "
+            "with YAML frontmatter containing verdict: pass, "
             "and a body saying 'Done'."
         )
 
@@ -133,4 +133,4 @@ class TestSdkAgentWritesReviewFile:
         assert status in ("done", "failed"), f"Agent timed out after {timeout}s"
 
         result = runtime.reap(handle)
-        assert result.verdict != Verdict.ERROR, f"Agent errored: {result.detail}"
+        assert result.verdict != Verdict.FAIL, f"Agent failed: {result.detail}"
