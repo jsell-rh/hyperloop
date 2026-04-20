@@ -1,8 +1,8 @@
-"""Orchestrator loop — wires decide, pipeline, state store, and runtime.
+"""Orchestrator loop -- wires decide, pipeline, state store, and runtime.
 
-Runs the serial section from the spec: reap finished workers, check for halt,
-run process-improver/intake, poll gates, merge PRs, decide what to spawn,
-update state, spawn workers, and check convergence.
+Runs a 4-phase cycle: COLLECT, INTAKE, ADVANCE, SPAWN.
+Uses pluggable ports (GatePort, ActionPort, CycleHook, NotificationPort)
+for all external interactions.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from hyperloop.adapters.notification.null import NullNotification
 from hyperloop.adapters.probe import NullProbe
 from hyperloop.domain.decide import decide
 from hyperloop.domain.deps import detect_cycles
@@ -20,7 +21,6 @@ from hyperloop.domain.model import (
     AgentStep,
     GateStep,
     Halt,
-    ImprovementContext,
     IntakeContext,
     LoopStep,
     Phase,
@@ -42,11 +42,15 @@ from hyperloop.domain.pipeline import (
     SpawnAgent,
     WaitForGate,
 )
+from hyperloop.ports.action import ActionOutcome
 
 if TYPE_CHECKING:
     from hyperloop.compose import PromptComposer
     from hyperloop.domain.model import PipelineStep, Process, Task, WorkerResult
-    from hyperloop.ports.pr import PRPort
+    from hyperloop.ports.action import ActionPort
+    from hyperloop.ports.gate import GatePort
+    from hyperloop.ports.hook import CycleHook
+    from hyperloop.ports.notification import NotificationPort
     from hyperloop.ports.probe import OrchestratorProbe
     from hyperloop.ports.runtime import Runtime
     from hyperloop.ports.state import StateStore
@@ -57,19 +61,13 @@ BRANCH_PREFIX = "hyperloop"
 
 
 class Orchestrator:
-    """Main orchestrator loop — one serial section per cycle.
+    """Main orchestrator loop -- 4-phase cycle with pluggable ports.
 
-    The orchestrator tracks active workers and their pipeline positions.
-    Each cycle follows the spec's serial section order:
-      1. Reap finished workers
-      2. Halt if any task failed
-      3. Process-improver (serial on trunk)
-      4. Intake (serial on trunk)
-      5. Poll gates
-      6. Merge ready PRs
-      7. Decide what to spawn (via decide())
-      8. Update state (transition tasks, commit)
-      9. Spawn workers
+    Each cycle follows four phases:
+      1. COLLECT -- reap finished workers, run hooks
+      2. INTAKE -- detect spec gaps, create work
+      3. ADVANCE -- advance tasks through pipeline (gates, actions, results)
+      4. SPAWN -- decide, spawn workers
     """
 
     def __init__(
@@ -79,37 +77,43 @@ class Orchestrator:
         process: Process,
         max_workers: int = 6,
         max_task_rounds: int = 50,
-        pr_manager: PRPort | None = None,
+        max_action_attempts: int = 3,
+        gate: GatePort | None = None,
+        action: ActionPort | None = None,
+        hooks: tuple[CycleHook, ...] = (),
+        notification: NotificationPort | None = None,
         composer: PromptComposer | None = None,
-        repo_path: str | None = None,
         poll_interval: float = 30.0,
         probe: OrchestratorProbe | None = None,
-        max_rebase_attempts: int = 3,
-        auto_merge: bool = True,
     ) -> None:
         self._state = state
         self._runtime = runtime
         self._process = process
         self._max_workers = max_workers
         self._max_task_rounds = max_task_rounds
-        self._pr_manager = pr_manager
+        self._max_action_attempts = max_action_attempts
+        self._gate = gate
+        self._action = action
+        self._hooks = hooks
+        self._notification: NotificationPort = notification or NullNotification()
         self._composer = composer
-        self._repo_path = repo_path
         self._poll_interval = poll_interval
         self._probe = probe or NullProbe()
-        self._max_rebase_attempts = max_rebase_attempts
-        self._auto_merge = auto_merge
 
         # Active worker tracking: task_id -> (handle, pipeline_position, spawn_time)
         self._workers: dict[str, tuple[WorkerHandle, PipelinePosition, float]] = {}
-        # Consecutive rebase failure count per task
-        self._rebase_attempts: dict[str, int] = {}
-        # Current cycle number — set at the start of each run_cycle
+        # Action attempt count per task
+        self._action_attempts: dict[str, int] = {}
+        # Current cycle number -- set at the start of each run_cycle
         self._current_cycle: int = 0
         # Spawn backoff: global consecutive failures + per-task retry counts
         self._spawn_failures: int = 0
         self._spawn_skip_until: int = 0
         self._spawn_task_failures: dict[str, int] = {}
+        # Notification deduplication: task_ids that have been notified for gate_blocked
+        self._notified_gates: set[str] = set()
+        # Halt reason set during collect phase
+        self._halt_reason: str | None = None
 
     def validate_templates(self) -> None:
         """Validate that every role in the pipeline has a resolved template.
@@ -197,7 +201,7 @@ class Orchestrator:
                 self._runtime.cancel(orphan)
                 self._probe.orphan_found(task_id=task.id, branch=branch)
 
-            # We don't add to _workers here — instead leave it workerless
+            # We don't add to _workers here -- instead leave it workerless
             # so decide() will emit a SpawnWorker for it next cycle.
             logger.info(
                 "recover: task %s is IN_PROGRESS at phase %s, will re-spawn",
@@ -206,7 +210,7 @@ class Orchestrator:
             )
 
     def run_cycle(self, cycle_num: int = 0) -> str | None:
-        """Run one serial section cycle.
+        """Run one 4-phase cycle.
 
         Returns a halt reason string if the loop should stop, or None to continue.
         """
@@ -214,16 +218,16 @@ class Orchestrator:
         cycle_start = time.monotonic()
         executor = PipelineExecutor(self._process.pipeline)
 
-        # Cache world snapshot once per cycle — augmented with worker state
+        # Cache world snapshot once per cycle -- augmented with worker state
         world = self._build_world()
 
-        # ---- 0. Early exit on zero tasks -------------------------------------
+        # ---- 0. Early exit on zero tasks ----------------------------------------
         if not world.tasks and not self._workers:
-            # Try intake first — it may create tasks from new specs
+            # Try intake first -- it may create tasks from new specs
             self._run_intake()
             world = self._build_world()
             if not world.tasks and not self._workers:
-                reason = "no tasks found — nothing to do"
+                reason = "no tasks found -- nothing to do"
                 return reason
 
         self._probe.cycle_started(
@@ -235,25 +239,65 @@ class Orchestrator:
             failed=sum(1 for t in world.tasks.values() if t.status == TaskStatus.FAILED),
         )
 
-        # ---- 1. Reap finished workers ----------------------------------------
-        reaped_results: dict[str, WorkerResult] = {}
-        had_failures_this_cycle = False
+        # ==== PHASE 1: COLLECT ====
+        reaped_results = self._collect(cycle_num, executor)
 
+        # Run hooks after reap
+        if reaped_results:
+            for hook in self._hooks:
+                hook.after_reap(results=reaped_results, cycle=cycle_num)
+
+        # Check for halt from COLLECT (pipeline failures)
+        halt_reason = self._check_halt_from_results(cycle_num)
+        if halt_reason is not None:
+            self._state.persist("orchestrator: halt")
+            return halt_reason
+
+        # ==== PHASE 2: INTAKE ====
+        self._run_intake()
+
+        # ==== PHASE 3: ADVANCE ====
+        halt_reason = self._advance(cycle_num, executor)
+        if halt_reason is not None:
+            self._state.persist("orchestrator: halt")
+            return halt_reason
+
+        # ==== PHASE 4: SPAWN ====
+        to_spawn = self._spawn(cycle_num, executor)
+
+        # ---- Persist state -------
+        self._state.persist("orchestrator: cycle update")
+
+        # ---- Execute spawns ------
+        self._execute_spawns(to_spawn, cycle_num)
+
+        # ---- Check convergence ----
+        self._emit_cycle_completed(cycle_num, cycle_start, to_spawn, reaped_results)
+        return self._check_convergence()
+
+    # -----------------------------------------------------------------------
+    # PHASE 1: COLLECT -- reap finished workers
+    # -----------------------------------------------------------------------
+
+    def _collect(
+        self,
+        cycle_num: int,
+        executor: PipelineExecutor,
+    ) -> dict[str, WorkerResult]:
+        """Reap finished workers. Returns dict of task_id -> WorkerResult."""
+        world = self._build_world()
         actions = decide(world, self._max_workers, self._max_task_rounds)
 
-        # Process ReapWorker actions from decide()
-        for action in actions:
-            if isinstance(action, ReapWorker):
-                task_id = action.task_id
+        reaped_results: dict[str, WorkerResult] = {}
+        for act in actions:
+            if isinstance(act, ReapWorker):
+                task_id = act.task_id
                 if task_id in self._workers:
                     handle, _pos, _spawn_time = self._workers[task_id]
                     result = self._runtime.reap(handle)
                     reaped_results[task_id] = result
 
-        # ---- 2. Process reaped results through pipeline ----------------------
-        to_spawn: list[tuple[str, str, PipelinePosition]] = []
-        halt_reason: str | None = None
-
+        # Process reaped results through pipeline
         for task_id, result in reaped_results.items():
             _handle, position, spawn_time = self._workers.pop(task_id)
             task = self._state.get_task(task_id)
@@ -269,12 +313,9 @@ class Orchestrator:
                 duration_s=time.monotonic() - spawn_time,
             )
 
-            pipe_action, new_pos = executor.next_action(position, result)
+            pipe_action, _new_pos = executor.next_action(position, result)
 
             if isinstance(pipe_action, PipelineComplete):
-                # Mark PR ready if reviews passed and pipeline is done
-                if self._pr_manager is not None and task.pr is not None:
-                    self._pr_manager.mark_ready(task.pr)
                 self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
                 self._probe.task_completed(
                     task_id=task_id,
@@ -293,8 +334,7 @@ class Orchestrator:
                     verdict=result.verdict.value,
                     detail=result.detail,
                 )
-                halt_reason = f"task {task_id} pipeline failed: {pipe_action.reason}"
-                had_failures_this_cycle = True
+                self._halt_reason = f"task {task_id} pipeline failed: {pipe_action.reason}"
                 self._probe.task_failed(
                     task_id=task_id,
                     spec_ref=task.spec_ref,
@@ -305,7 +345,6 @@ class Orchestrator:
 
             elif isinstance(pipe_action, SpawnAgent):
                 if result.verdict == Verdict.FAIL:
-                    had_failures_this_cycle = True
                     new_round = task.round + 1
                     if new_round >= self._max_task_rounds:
                         self._state.transition_task(
@@ -314,7 +353,7 @@ class Orchestrator:
                             phase=None,
                             round=new_round,
                         )
-                        halt_reason = (
+                        self._halt_reason = (
                             f"task {task_id} exceeded max_task_rounds ({self._max_task_rounds})"
                         )
                         self._probe.task_failed(
@@ -346,11 +385,14 @@ class Orchestrator:
                         findings_preview=result.detail[:200],
                     )
                 else:
-                    # Advancing forward on PASS — create draft PR if needed
-                    if self._pr_manager is not None and task.pr is None:
+                    # Advancing forward on PASS -- create draft PR if needed
+                    if task.pr is None and hasattr(self._gate, "_pr"):
                         branch = task.branch or f"{BRANCH_PREFIX}/{task_id}"
-                        pr_url = self._pr_manager.create_draft(
-                            task_id, branch, task.title, task.spec_ref
+                        pr_url = self._gate._pr.create_draft(  # type: ignore[union-attr]
+                            task_id,
+                            branch,
+                            task.title,
+                            task.spec_ref,
                         )
                         if pr_url:
                             self._state.set_task_pr(task_id, pr_url)
@@ -370,10 +412,9 @@ class Orchestrator:
                         round=task.round,
                         cycle=cycle_num,
                     )
-                to_spawn.append((task_id, pipe_action.agent, new_pos))
 
             else:
-                # WaitForGate, PerformAction — record phase, don't spawn
+                # WaitForGate, PerformAction -- record phase, don't spawn
                 phase_name = _phase_for_action(pipe_action)
                 self._state.transition_task(
                     task_id,
@@ -391,79 +432,305 @@ class Orchestrator:
                     cycle=cycle_num,
                 )
 
-        # ---- 2b. Halt if any task failed -------------------------------------
-        if halt_reason is not None:
-            self._state.persist("orchestrator: halt")
-            return halt_reason
+        return reaped_results
 
-        # ---- 3. Process-improver ------------------------------------------------
-        if had_failures_this_cycle:
-            self._run_process_improver(reaped_results)
+    def _check_halt_from_results(
+        self,
+        cycle_num: int,
+    ) -> str | None:
+        """Check if any task was marked FAILED during collect -> halt."""
+        # Track halt reasons set during _collect
+        if self._halt_reason is not None:
+            reason = self._halt_reason
+            self._halt_reason = None
+            return reason
+        return None
 
-        # ---- 4. Intake ----------------------------------------------------------
-        self._run_intake()
+    # -----------------------------------------------------------------------
+    # PHASE 3: ADVANCE -- advance tasks through gates and actions
+    # -----------------------------------------------------------------------
 
-        # ---- 5. Poll gates ---------------------------------------------------
-        self._poll_gates(executor, to_spawn)
+    def _advance(
+        self,
+        cycle_num: int,
+        executor: PipelineExecutor,
+    ) -> str | None:
+        """Advance tasks through gates and actions. Returns halt reason or None."""
+        all_tasks = self._state.get_world().tasks
 
-        # ---- 6. Merge ready PRs ----------------------------------------------
-        # Commit state before merge — local merge does git checkout which
-        # fails if there are uncommitted changes to task files on trunk.
-        self._state.persist("orchestrator: pre-merge state")
-        self._merge_ready_prs()
+        for task in all_tasks.values():
+            if task.status != TaskStatus.IN_PROGRESS:
+                continue
+            if task.phase is None:
+                continue
+            if task.id in self._workers:
+                continue  # Worker running, don't advance
 
-        # ---- 7. Decide what to spawn (via decide()) -------------------------
-        # Rebuild world after reaping + gates + merges (tasks may have changed)
-        world_after_reap = self._build_world()
-        spawn_actions = decide(world_after_reap, self._max_workers, self._max_task_rounds)
+            pos = self._find_position_for_step(executor, str(task.phase))
+            if pos is None:
+                continue
 
-        # Check for Halt from decide() (convergence or max_task_rounds)
-        for action in spawn_actions:
-            if isinstance(action, Halt):
-                self._state.persist("orchestrator: halt")
-                return action.reason
+            step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
 
-        # Process SpawnWorker actions
-        already_spawning = {tid for tid, _role, _pos in to_spawn}
-        for action in spawn_actions:
-            if isinstance(action, SpawnWorker) and action.task_id not in already_spawning:
-                task = self._state.get_task(action.task_id)
+            # -- Gate step --
+            if isinstance(step, GateStep):
+                halt = self._advance_gate(task, step, pos, executor, cycle_num)
+                if halt is not None:
+                    return halt
 
-                if action.role == "rebase-resolver":
-                    pos = executor.initial_position()
-                    self._state.transition_task(
-                        action.task_id,
-                        TaskStatus.IN_PROGRESS,
-                        phase=Phase("rebase-resolver"),
-                    )
-                    to_spawn.append((action.task_id, "rebase-resolver", pos))
-                elif task.status == TaskStatus.IN_PROGRESS and task.phase is not None:
-                    # Only spawn for role steps — gates and actions wait, not spawn
-                    phase_name = str(task.phase)
-                    pos = self._find_position_for_step(executor, phase_name)
-                    if pos is not None:
-                        step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
-                        if isinstance(step, AgentStep):
-                            to_spawn.append((action.task_id, phase_name, pos))
+            # -- Action step --
+            elif isinstance(step, ActionStep):
+                halt = self._advance_action(task, step, pos, executor, cycle_num)
+                if halt is not None:
+                    return halt
+
+        return None
+
+    def _advance_gate(
+        self,
+        task: Task,
+        step: GateStep,
+        pos: PipelinePosition,
+        executor: PipelineExecutor,
+        cycle_num: int,
+    ) -> str | None:
+        """Handle a task at a gate step. Returns halt reason or None."""
+        if self._gate is None:
+            logger.debug("gates: no gate adapter -- skipping gate polling")
+            return None
+
+        # Ensure the task has a PR -- create one if missing
+        if task.pr is None and hasattr(self._gate, "_pr"):
+            branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
+            pr_url = self._gate._pr.create_draft(  # type: ignore[union-attr]
+                task.id, branch, task.title, task.spec_ref
+            )
+            if pr_url:
+                self._state.set_task_pr(task.id, pr_url)
+                task = self._state.get_task(task.id)
+            else:
+                return None  # Can't poll gate without a PR
+
+        # Handle CLOSED PRs: recreate before checking gate
+        if task.pr is not None and hasattr(self._gate, "_pr"):
+            pr_state = self._gate._pr.get_pr_state(task.pr)  # type: ignore[union-attr]
+            if pr_state is not None and pr_state.state == "CLOSED":
+                branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
+                new_url = self._gate._pr.create_draft(  # type: ignore[union-attr]
+                    task.id, branch, task.title, task.spec_ref
+                )
+                if new_url:
+                    self._state.set_task_pr(task.id, new_url)
+                    task = self._state.get_task(task.id)
                 else:
-                    pos = executor.initial_position()
-                    pipe_action, pos = executor.next_action(pos, result=None)
-                    if isinstance(pipe_action, SpawnAgent):
-                        self._state.transition_task(
-                            action.task_id,
-                            TaskStatus.IN_PROGRESS,
-                            phase=Phase(pipe_action.agent),
-                        )
-                        to_spawn.append((action.task_id, pipe_action.agent, pos))
+                    return None
 
-        # ---- 8. Commit state -------------------------------------------------
-        if reaped_results or to_spawn:
-            self._state.persist("orchestrator: cycle update")
+        # Notification deduplication: notify once per gate entry
+        if task.id not in self._notified_gates:
+            self._notification.gate_blocked(task=task, gate_name=step.gate)
+            self._notified_gates.add(task.id)
 
-        # ---- 9. Spawn workers ------------------------------------------------
+        cleared = self._gate.check(task, step.gate)
+        self._probe.gate_checked(
+            task_id=task.id,
+            gate=step.gate,
+            cleared=cleared,
+            cycle=cycle_num,
+        )
+
+        if not cleared:
+            return None
+
+        # Gate cleared -- remove from notified set and advance
+        self._notified_gates.discard(task.id)
+
+        # Check if the gate check returned True because PR was merged
+        # (LabelGate returns True for MERGED PRs)
+        if task.pr is not None and hasattr(self._gate, "_pr"):
+            pr_state_check = self._gate._pr.get_pr_state(task.pr)  # type: ignore[union-attr]
+            if pr_state_check is not None and pr_state_check.state == "MERGED":
+                self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
+                self._probe.merge_attempted(
+                    task_id=task.id,
+                    branch=task.branch or f"{BRANCH_PREFIX}/{task.id}",
+                    spec_ref=task.spec_ref,
+                    outcome="merged_externally",
+                    attempt=0,
+                    cycle=cycle_num,
+                )
+                return None
+
+        advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
+        if advanced is not None:
+            next_action, _new_pos = advanced
+            phase_name = _phase_for_pipe_action(next_action)
+            self._state.transition_task(
+                task.id,
+                TaskStatus.IN_PROGRESS,
+                phase=Phase(phase_name) if phase_name else None,
+            )
+        else:
+            self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
+
+        return None
+
+    def _advance_action(
+        self,
+        task: Task,
+        step: ActionStep,
+        pos: PipelinePosition,
+        executor: PipelineExecutor,
+        cycle_num: int,
+    ) -> str | None:
+        """Handle a task at an action step. Returns halt reason or None."""
+        if self._action is None:
+            logger.debug(
+                "actions: no action adapter -- skipping action %s",
+                step.action,
+            )
+            return None
+
+        result = self._action.execute(task, step.action)
+
+        if result.outcome == ActionOutcome.SUCCESS:
+            # Update PR URL if the action recreated it
+            if result.pr_url is not None:
+                self._state.set_task_pr(task.id, result.pr_url)
+            self._action_attempts.pop(task.id, None)
+            self._probe.merge_attempted(
+                task_id=task.id,
+                branch=task.branch or f"{BRANCH_PREFIX}/{task.id}",
+                spec_ref=task.spec_ref,
+                outcome="merged",
+                attempt=0,
+                cycle=cycle_num,
+            )
+
+            # Advance past action or complete
+            advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
+            if advanced is not None:
+                next_act, _new_pos = advanced
+                phase_name = _phase_for_pipe_action(next_act)
+                self._state.transition_task(
+                    task.id,
+                    TaskStatus.IN_PROGRESS,
+                    phase=Phase(phase_name) if phase_name else None,
+                )
+            else:
+                self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
+
+        elif result.outcome == ActionOutcome.RETRY:
+            # Update PR URL if the action recreated it
+            if result.pr_url is not None:
+                self._state.set_task_pr(task.id, result.pr_url)
+            # Stay at current step, try again next cycle
+
+        elif result.outcome == ActionOutcome.ERROR:
+            attempts = self._action_attempts.get(task.id, 0) + 1
+            self._action_attempts[task.id] = attempts
+
+            looping_back = attempts >= self._max_action_attempts
+            self._probe.rebase_conflict(
+                task_id=task.id,
+                branch=task.branch or f"{BRANCH_PREFIX}/{task.id}",
+                attempt=attempts,
+                max_attempts=self._max_action_attempts,
+                looping_back=looping_back,
+                cycle=cycle_num,
+            )
+
+            if looping_back:
+                self._action_attempts.pop(task.id, None)
+                detail = f"Action error after {self._max_action_attempts} attempts: {result.detail}"
+                self._state.store_review(
+                    task.id,
+                    round=task.round,
+                    role="orchestrator",
+                    verdict="fail",
+                    detail=detail,
+                )
+                self._state.transition_task(
+                    task.id,
+                    TaskStatus.IN_PROGRESS,
+                    phase=Phase("implementer"),
+                    round=task.round + 1,
+                )
+            else:
+                # Stay at merge-pr, retry next cycle
+                self._state.transition_task(
+                    task.id,
+                    TaskStatus.IN_PROGRESS,
+                    phase=Phase(step.action),
+                )
+
+        return None
+
+    # -----------------------------------------------------------------------
+    # PHASE 4: SPAWN -- decide and spawn workers
+    # -----------------------------------------------------------------------
+
+    def _spawn(
+        self,
+        cycle_num: int,
+        executor: PipelineExecutor,
+    ) -> list[tuple[str, str, PipelinePosition]]:
+        """Decide what to spawn and return spawn list."""
+        to_spawn: list[tuple[str, str, PipelinePosition]] = []
+
+        # Rebuild world after reaping + gates + actions
+        world_after = self._build_world()
+        spawn_actions = decide(world_after, self._max_workers, self._max_task_rounds)
+
+        # Check for Halt from decide()
+        for act in spawn_actions:
+            if isinstance(act, Halt):
+                # We can't return halt from here; check convergence will catch it
+                pass
+
+        for act in spawn_actions:
+            if not isinstance(act, SpawnWorker):
+                continue
+
+            task = self._state.get_task(act.task_id)
+
+            if act.role == "rebase-resolver":
+                pos = executor.initial_position()
+                self._state.transition_task(
+                    act.task_id,
+                    TaskStatus.IN_PROGRESS,
+                    phase=Phase("rebase-resolver"),
+                )
+                to_spawn.append((act.task_id, "rebase-resolver", pos))
+            elif task.status == TaskStatus.IN_PROGRESS and task.phase is not None:
+                # Only spawn for agent steps -- gates and actions are handled in ADVANCE
+                phase_name = str(task.phase)
+                pos = self._find_position_for_step(executor, phase_name)
+                if pos is not None:
+                    step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
+                    if isinstance(step, AgentStep):
+                        to_spawn.append((act.task_id, phase_name, pos))
+            else:
+                pos = executor.initial_position()
+                pipe_action, pos = executor.next_action(pos, result=None)
+                if isinstance(pipe_action, SpawnAgent):
+                    self._state.transition_task(
+                        act.task_id,
+                        TaskStatus.IN_PROGRESS,
+                        phase=Phase(pipe_action.agent),
+                    )
+                    to_spawn.append((act.task_id, pipe_action.agent, pos))
+
+        return to_spawn
+
+    def _execute_spawns(
+        self,
+        to_spawn: list[tuple[str, str, PipelinePosition]],
+        cycle_num: int,
+    ) -> None:
+        """Execute spawn operations."""
         # Skip spawning during cooldown (after consecutive failures)
         if to_spawn and self._current_cycle < self._spawn_skip_until:
-            to_spawn = []
+            return
 
         for task_id, role, position in to_spawn:
             task = self._state.get_task(task_id)
@@ -510,7 +777,7 @@ class Orchestrator:
                     break  # Stop trying more spawns this cycle
                 continue
 
-            # Success — reset counters
+            # Success -- reset counters
             self._spawn_failures = 0
             self._spawn_task_failures.pop(task_id, None)
             self._workers[task_id] = (handle, position, time.monotonic())
@@ -523,534 +790,32 @@ class Orchestrator:
                 spec_ref=task.spec_ref,
             )
 
-        # ---- Check convergence -----------------------------------------------
+    # -----------------------------------------------------------------------
+    # Convergence check
+    # -----------------------------------------------------------------------
+
+    def _check_convergence(self) -> str | None:
+        """Check if all tasks are complete/failed. Returns halt reason or None."""
         all_tasks = self._state.get_world().tasks
         if not all_tasks:
-            self._emit_cycle_completed(cycle_num, cycle_start, to_spawn, reaped_results)
             return None
 
-        self._emit_cycle_completed(cycle_num, cycle_start, to_spawn, reaped_results)
+        all_done = all(
+            t.status in (TaskStatus.COMPLETE, TaskStatus.FAILED) for t in all_tasks.values()
+        )
+        if all_done and not self._workers:
+            all_complete = all(t.status == TaskStatus.COMPLETE for t in all_tasks.values())
+            if all_complete:
+                return "all tasks complete"
+            return "all tasks resolved (some failed)"
         return None
 
-    def _emit_cycle_completed(
-        self,
-        cycle_num: int,
-        cycle_start: float,
-        to_spawn: list[tuple[str, str, PipelinePosition]],
-        reaped_results: dict[str, WorkerResult],
-    ) -> None:
-        """Emit cycle_completed probe event."""
-        all_tasks = self._state.get_world().tasks
-        self._probe.cycle_completed(
-            cycle=cycle_num,
-            active_workers=len(self._workers),
-            not_started=sum(1 for t in all_tasks.values() if t.status == TaskStatus.NOT_STARTED),
-            in_progress=sum(1 for t in all_tasks.values() if t.status == TaskStatus.IN_PROGRESS),
-            complete=sum(1 for t in all_tasks.values() if t.status == TaskStatus.COMPLETE),
-            failed=sum(1 for t in all_tasks.values() if t.status == TaskStatus.FAILED),
-            spawned_ids=tuple(tid for tid, _, _ in to_spawn),
-            reaped_ids=tuple(reaped_results.keys()),
-            duration_s=time.monotonic() - cycle_start,
-        )
-
     # -----------------------------------------------------------------------
-    # Gate polling and merge
-    # -----------------------------------------------------------------------
-
-    def _poll_gates(
-        self,
-        executor: PipelineExecutor,
-        to_spawn: list[tuple[str, str, PipelinePosition]],
-    ) -> None:
-        """Poll gates for tasks at a gate step. If cleared, advance the task."""
-        if self._pr_manager is None:
-            logger.debug("gates: no PRManager — skipping gate polling")
-            return
-
-        all_tasks = self._state.get_world().tasks
-        for task in all_tasks.values():
-            if task.status != TaskStatus.IN_PROGRESS:
-                continue
-            if task.phase is None:
-                continue
-
-            # Check if this phase corresponds to a gate step in the pipeline
-            pos = self._find_position_for_step(executor, str(task.phase))
-            if pos is None:
-                continue
-
-            step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
-            if not isinstance(step, GateStep):
-                continue
-
-            # Ensure the task has a PR — create one if missing (e.g. previous crash)
-            if task.pr is None:
-                branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
-                pr_url = self._pr_manager.create_draft(task.id, branch, task.title, task.spec_ref)
-                if pr_url:
-                    self._state.set_task_pr(task.id, pr_url)
-                    task = self._state.get_task(task.id)
-                else:
-                    continue  # Can't poll gate without a PR
-
-            # Check PR state — handle closed/merged PRs before polling
-            pr_state = self._pr_manager.get_pr_state(task.pr)
-            if pr_state is not None and pr_state.state == "MERGED":
-                # Someone merged the PR manually — all remaining steps are done
-                self._probe.merge_attempted(
-                    task_id=task.id,
-                    branch=task.branch or f"{BRANCH_PREFIX}/{task.id}",
-                    spec_ref=task.spec_ref,
-                    outcome="merged_externally",
-                    attempt=0,
-                    cycle=self._current_cycle,
-                )
-                self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
-                continue
-
-            if pr_state is not None and pr_state.state == "CLOSED":
-                # PR was closed — create a new one so humans can review/approve
-                branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
-                new_url = self._pr_manager.create_draft(task.id, branch, task.title, task.spec_ref)
-                if new_url:
-                    self._state.set_task_pr(task.id, new_url)
-                    task = self._state.get_task(task.id)
-                else:
-                    continue
-
-            # Task is at a gate — poll it
-            cleared = self._pr_manager.check_gate(task.pr, step.gate)
-            self._probe.gate_checked(
-                task_id=task.id,
-                gate=step.gate,
-                cleared=cleared,
-                cycle=self._current_cycle,
-            )
-            if not cleared:
-                continue
-            advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
-            if advanced is not None:
-                next_action, new_pos = advanced
-                phase_name = _phase_for_pipe_action(next_action)
-                self._state.transition_task(
-                    task.id,
-                    TaskStatus.IN_PROGRESS,
-                    phase=Phase(phase_name) if phase_name else None,
-                )
-                if isinstance(next_action, SpawnAgent):
-                    to_spawn.append((task.id, next_action.agent, new_pos))
-            else:
-                self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
-
-    def _merge_ready_prs(self) -> None:
-        """Merge branches for tasks at the merge-pr action step.
-
-        Tasks are merged in dependency order (deps before dependents) to avoid
-        unnecessary rebase conflicts and produce a correct merge history.
-        Within the same dependency tier, tasks are merged in task-ID order for
-        determinism.
-
-        With a PRManager: rebase + squash-merge the PR.
-        Without a PRManager: local git merge of worker branch into base branch.
-        On conflict, stays IN_PROGRESS (adapter handles rebase internally).
-
-        If auto_merge is False, skip merging entirely — the PR stays ready
-        for human merge.
-        """
-        if not self._auto_merge:
-            logger.debug("auto_merge disabled — skipping merge step")
-            return
-
-        all_tasks = self._state.get_world().tasks
-
-        # Collect candidates at merge-pr, sorted by task ID for stable tiebreaking
-        candidate_ids = sorted(
-            task_id
-            for task_id, task in all_tasks.items()
-            if task.status == TaskStatus.IN_PROGRESS and task.phase == Phase("merge-pr")
-        )
-
-        # Apply topological ordering so dependencies merge before dependents
-        ordered_ids = _dep_order_ids(all_tasks, candidate_ids)
-
-        for task_id in ordered_ids:
-            task = all_tasks[task_id]
-            branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
-
-            if self._pr_manager is not None and task.pr is not None:
-                self._merge_via_pr(task.id, task.pr, task.spec_ref, branch)
-            else:
-                self._merge_local(task.id, branch, task.spec_ref)
-
-    def _merge_via_pr(self, task_id: str, pr_url: str, spec_ref: str, branch: str) -> None:
-        """Merge via GitHub PR: mark ready, rebase, then squash-merge.
-
-        Checks PR state first to handle PRs that were closed or merged
-        externally (by a human).  For MERGED PRs, verifies that the
-        branch tip matches what was merged — if not, there is unmerged
-        work and a new PR is created.
-        """
-        assert self._pr_manager is not None
-
-        # ---- Check PR state before operating on it --------------------------
-        pr_state = self._pr_manager.get_pr_state(pr_url)
-
-        if pr_state is None:
-            self._probe.merge_attempted(
-                task_id=task_id,
-                branch=branch,
-                spec_ref=spec_ref,
-                outcome="pr_not_found",
-                attempt=0,
-                cycle=self._current_cycle,
-            )
-            return
-
-        if pr_state.state == "MERGED":
-            # Verify all work is on trunk by comparing merge head to branch tip
-            branch_tip = self._get_branch_tip(branch)
-            if branch_tip is None or pr_state.head_sha == branch_tip:
-                # All work captured (or branch deleted) — mark complete
-                self._rebase_attempts.pop(task_id, None)
-                self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
-                self._probe.merge_attempted(
-                    task_id=task_id,
-                    branch=branch,
-                    spec_ref=spec_ref,
-                    outcome="merged_externally",
-                    attempt=0,
-                    cycle=self._current_cycle,
-                )
-                return
-            # Branch has commits beyond what was merged — create new PR
-            self._probe.merge_attempted(
-                task_id=task_id,
-                branch=branch,
-                spec_ref=spec_ref,
-                outcome="stale_merge",
-                attempt=0,
-                cycle=self._current_cycle,
-            )
-            pr_url = self._recreate_pr(task_id, branch, spec_ref)
-            if not pr_url:
-                return
-
-        elif pr_state.state == "CLOSED":
-            self._probe.merge_attempted(
-                task_id=task_id,
-                branch=branch,
-                spec_ref=spec_ref,
-                outcome="pr_closed",
-                attempt=0,
-                cycle=self._current_cycle,
-            )
-            pr_url = self._recreate_pr(task_id, branch, spec_ref)
-            if not pr_url:
-                return
-
-        # ---- PR is OPEN — proceed with normal merge flow --------------------
-        self._pr_manager.mark_ready(pr_url)
-
-        if not self._pr_manager.rebase_branch(branch, "main"):
-            self._handle_rebase_failure(task_id, branch)
-            return
-
-        if not self._pr_manager.wait_mergeable(pr_url):
-            self._handle_rebase_failure(task_id, branch)
-            return
-
-        if not self._pr_manager.merge(pr_url, task_id, spec_ref):
-            self._handle_rebase_failure(task_id, branch)
-            return
-
-        # Merge succeeded — reset counter, remove gate label
-        self._rebase_attempts.pop(task_id, None)
-        self._pr_manager.remove_gate_label(pr_url)
-        self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
-        self._probe.merge_attempted(
-            task_id=task_id,
-            branch=branch,
-            spec_ref=spec_ref,
-            outcome="merged",
-            attempt=0,
-            cycle=self._current_cycle,
-        )
-
-    def _recreate_pr(self, task_id: str, branch: str, spec_ref: str) -> str:
-        """Create a new draft PR for a task, updating state. Returns URL or ""."""
-        assert self._pr_manager is not None
-        task = self._state.get_task(task_id)
-        new_url = self._pr_manager.create_draft(task_id, branch, task.title, spec_ref)
-        if not new_url:
-            logger.warning("Failed to create replacement PR for task %s", task_id)
-            return ""
-        self._state.set_task_pr(task_id, new_url)
-        return new_url
-
-    def _get_branch_tip(self, branch: str) -> str | None:
-        """Return the SHA of a remote branch tip, or None if not found.
-
-        Fetches from origin first to ensure the tracking ref is current.
-        """
-        import subprocess
-
-        git_cmd = ["git"]
-        if self._repo_path is not None:
-            git_cmd = ["git", "-C", self._repo_path]
-
-        # Fetch to ensure tracking ref is up to date
-        subprocess.run(
-            [*git_cmd, "fetch", "origin", branch],
-            capture_output=True,
-            text=True,
-        )
-
-        result = subprocess.run(
-            [*git_cmd, "rev-parse", f"origin/{branch}"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            return None
-        return result.stdout.strip()
-
-    def _handle_rebase_failure(self, task_id: str, branch: str) -> None:
-        """Handle a rebase or merge conflict — track attempts, loop back if needed."""
-        logger.warning("Rebase/merge conflict for task %s", task_id)
-        self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
-        looping_back = self._rebase_attempts[task_id] >= self._max_rebase_attempts
-        self._probe.rebase_conflict(
-            task_id=task_id,
-            branch=branch,
-            attempt=self._rebase_attempts[task_id],
-            max_attempts=self._max_rebase_attempts,
-            looping_back=looping_back,
-            cycle=self._current_cycle,
-        )
-        if looping_back:
-            logger.warning(
-                "Task %s exceeded max_rebase_attempts (%d), looping back",
-                task_id,
-                self._max_rebase_attempts,
-            )
-            self._rebase_attempts.pop(task_id, None)
-            task = self._state.get_task(task_id)
-            detail = f"Rebase conflict after {self._max_rebase_attempts} attempts"
-            self._state.store_review(
-                task_id,
-                round=task.round,
-                role="orchestrator",
-                verdict="fail",
-                detail=detail,
-            )
-            self._state.transition_task(
-                task_id,
-                TaskStatus.IN_PROGRESS,
-                phase=Phase("implementer"),
-                round=task.round + 1,
-            )
-            return
-        self._state.transition_task(task_id, TaskStatus.IN_PROGRESS, phase=Phase("merge-pr"))
-
-    def _merge_local(self, task_id: str, branch: str, spec_ref: str) -> None:
-        """Merge worker branch into base branch locally (no PR).
-
-        Uses --no-commit so we can resolve .hyperloop/state/ conflicts
-        before finalizing.  The orchestrator owns task state files
-        (.hyperloop/state/tasks/) — on conflict those always take the
-        trunk version.  Review files (.hyperloop/state/reviews/) are
-        worker output — on conflict those take the branch version.
-        Non-state conflicts are real and trigger NEEDS_REBASE.
-        """
-        import subprocess
-
-        git_cmd = ["git"]
-        if self._repo_path is not None:
-            git_cmd = ["git", "-C", self._repo_path]
-
-        merge_result = subprocess.run(
-            [*git_cmd, "merge", branch, "--no-commit", "--no-ff"],
-            capture_output=True,
-            text=True,
-        )
-
-        if merge_result.returncode != 0 and not self._resolve_state_conflicts(git_cmd, branch):
-            # Non-state conflicts exist — abort and handle normally
-            subprocess.run(
-                [*git_cmd, "merge", "--abort"],
-                capture_output=True,
-                check=False,
-            )
-            self._handle_local_merge_conflict(task_id, branch, git_cmd)
-            return
-
-        # Restore trunk's version of task state files (orchestrator owns these)
-        subprocess.run(
-            [*git_cmd, "checkout", "HEAD", "--", ".hyperloop/state/tasks/"],
-            capture_output=True,
-        )
-        # Ensure review files from the branch are kept (worker output)
-        subprocess.run(
-            [*git_cmd, "checkout", branch, "--", ".hyperloop/state/reviews/"],
-            capture_output=True,
-        )
-        # Stage any changes from the checkout resolutions
-        subprocess.run(
-            [*git_cmd, "add", ".hyperloop/state/"],
-            capture_output=True,
-        )
-
-        # Commit the merge
-        try:
-            subprocess.run(
-                [*git_cmd, "commit", "--no-edit", "-m", f"merge: {task_id}"],
-                check=True,
-                capture_output=True,
-            )
-        except subprocess.CalledProcessError:
-            # Commit failed (e.g. nothing to commit, branch missing) — abort
-            subprocess.run(
-                [*git_cmd, "merge", "--abort"],
-                capture_output=True,
-                check=False,
-            )
-            self._handle_local_merge_conflict(task_id, branch, git_cmd)
-            return
-
-        self._rebase_attempts.pop(task_id, None)
-        self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
-        self._delete_local_branch(branch)
-        self._probe.merge_attempted(
-            task_id=task_id,
-            branch=branch,
-            spec_ref=spec_ref,
-            outcome="merged",
-            attempt=0,
-            cycle=self._current_cycle,
-        )
-        logger.info("Local merge of %s into base branch", task_id)
-
-    def _resolve_state_conflicts(self, git_cmd: list[str], branch: str) -> bool:
-        """Attempt to resolve conflicts limited to .hyperloop/state/.
-
-        Returns True if all conflicts were in .hyperloop/state/ and have
-        been resolved.  Returns False if any non-state file has a conflict
-        (caller should abort the merge).
-        """
-        import subprocess
-
-        # List conflicted files
-        result = subprocess.run(
-            [*git_cmd, "diff", "--name-only", "--diff-filter=U"],
-            capture_output=True,
-            text=True,
-        )
-        conflicted = [f for f in result.stdout.strip().splitlines() if f]
-
-        if not conflicted:
-            return True
-
-        for path in conflicted:
-            if path.startswith(".hyperloop/state/tasks/"):
-                # Orchestrator owns task state — take trunk (ours)
-                subprocess.run(
-                    [*git_cmd, "checkout", "--ours", "--", path],
-                    check=True,
-                    capture_output=True,
-                )
-                subprocess.run(
-                    [*git_cmd, "add", path],
-                    check=True,
-                    capture_output=True,
-                )
-            elif path.startswith(".hyperloop/state/reviews/"):
-                # Worker output — take branch (theirs)
-                subprocess.run(
-                    [*git_cmd, "checkout", "--theirs", "--", path],
-                    check=True,
-                    capture_output=True,
-                )
-                subprocess.run(
-                    [*git_cmd, "add", path],
-                    check=True,
-                    capture_output=True,
-                )
-            elif path.startswith(".hyperloop/state/"):
-                # Other state files — take trunk (ours) by default
-                subprocess.run(
-                    [*git_cmd, "checkout", "--ours", "--", path],
-                    check=True,
-                    capture_output=True,
-                )
-                subprocess.run(
-                    [*git_cmd, "add", path],
-                    check=True,
-                    capture_output=True,
-                )
-            else:
-                # Non-state conflict — cannot auto-resolve
-                return False
-
-        return True
-
-    def _handle_local_merge_conflict(self, task_id: str, branch: str, git_cmd: list[str]) -> None:
-        """Handle a local merge conflict — increment rebase counter or loop back."""
-        logger.warning("Local merge conflict for task %s", task_id)
-        self._rebase_attempts[task_id] = self._rebase_attempts.get(task_id, 0) + 1
-        looping_back = self._rebase_attempts[task_id] >= self._max_rebase_attempts
-        self._probe.rebase_conflict(
-            task_id=task_id,
-            branch=branch,
-            attempt=self._rebase_attempts[task_id],
-            max_attempts=self._max_rebase_attempts,
-            looping_back=looping_back,
-            cycle=self._current_cycle,
-        )
-        if looping_back:
-            logger.warning(
-                "Task %s exceeded max_rebase_attempts (%d), looping back",
-                task_id,
-                self._max_rebase_attempts,
-            )
-            self._rebase_attempts.pop(task_id, None)
-            task = self._state.get_task(task_id)
-            detail = f"Merge conflict after {self._max_rebase_attempts} attempts"
-            self._state.store_review(
-                task_id,
-                round=task.round,
-                role="orchestrator",
-                verdict="fail",
-                detail=detail,
-            )
-            self._state.transition_task(
-                task_id,
-                TaskStatus.IN_PROGRESS,
-                phase=Phase("implementer"),
-                round=task.round + 1,
-            )
-            return
-        self._state.transition_task(task_id, TaskStatus.IN_PROGRESS, phase=Phase("merge-pr"))
-
-    def _delete_local_branch(self, branch: str) -> None:
-        """Delete a local branch after merge (best-effort)."""
-        import subprocess
-
-        git_cmd = ["git"]
-        if self._repo_path is not None:
-            git_cmd = ["git", "-C", self._repo_path]
-        subprocess.run([*git_cmd, "branch", "-D", branch], capture_output=True)
-
-    # -----------------------------------------------------------------------
-    # Serial agents (PM intake + process-improver)
+    # Serial agents (PM intake)
     # -----------------------------------------------------------------------
 
     def _unprocessed_specs(self) -> list[str]:
-        """Return spec file paths that have no corresponding task.
-
-        Scans specs/*.md (product specs only — tasks and reviews live under
-        .hyperloop/state/) and checks whether any existing task references
-        each spec via its spec_ref field.
-        """
+        """Return spec file paths that have no corresponding task."""
         all_specs = self._state.list_files("specs/*.md")
         world = self._state.get_world()
         covered_refs = {task.spec_ref for task in world.tasks.values()}
@@ -1067,12 +832,12 @@ class Orchestrator:
     def _run_intake(self) -> None:
         """Run PM intake if there are unprocessed specs."""
         if self._composer is None:
-            logger.debug("intake: no composer — skipping")
+            logger.debug("intake: no composer -- skipping")
             return
 
         unprocessed = self._unprocessed_specs()
         if not unprocessed:
-            logger.debug("intake: no unprocessed specs — skipping")
+            logger.debug("intake: no unprocessed specs -- skipping")
             return
 
         logger.info("intake: %d unprocessed spec(s), running PM", len(unprocessed))
@@ -1095,39 +860,6 @@ class Orchestrator:
             cycle=self._current_cycle,
             duration_s=time.monotonic() - intake_start,
         )
-
-    def _run_process_improver(self, reaped_results: dict[str, WorkerResult]) -> None:
-        """Run process-improver with findings from failed results this cycle."""
-        if self._composer is None:
-            logger.info("process-improver: no composer — skipping")
-            return
-
-        findings_text = self._collect_cycle_findings(reaped_results)
-        if not findings_text:
-            logger.debug("process-improver: no failure findings this cycle — skipping")
-            return
-
-        logger.info("process-improver: running with this cycle's findings")
-
-        context = ImprovementContext(findings=findings_text)
-        prompt = self._composer.compose(role="process-improver", context=context)
-
-        failed_ids = tuple(
-            task_id for task_id, r in reaped_results.items() if r.verdict == Verdict.FAIL
-        )
-
-        improver_start = time.monotonic()
-        success = self._runtime.run_serial("process-improver", prompt)
-        self._probe.process_improver_ran(
-            failed_task_ids=failed_ids,
-            success=success,
-            cycle=self._current_cycle,
-            duration_s=time.monotonic() - improver_start,
-        )
-        if success:
-            # Re-resolve templates so agents spawned after this point
-            # see updated guidelines (mechanical guarantee from spec).
-            self._composer.rebuild()
 
     # -----------------------------------------------------------------------
     # World building
@@ -1161,10 +893,15 @@ class Orchestrator:
 
         findings = self._state.get_findings(task.id)
         context = TaskContext(
-            task_id=task.id, spec_ref=task.spec_ref, findings=findings, round=task.round
+            task_id=task.id,
+            spec_ref=task.spec_ref,
+            findings=findings,
+            round=task.round,
         )
         prompt = self._composer.compose(
-            role=role, context=context, epilogue=self._runtime.worker_epilogue()
+            role=role,
+            context=context,
+            epilogue=self._runtime.worker_epilogue(),
         )
         self._probe.prompt_composed(
             task_id=task.id,
@@ -1210,10 +947,7 @@ class Orchestrator:
     def _find_position_for_step(
         executor: PipelineExecutor, phase_name: str
     ) -> PipelinePosition | None:
-        """Walk the pipeline for any step whose name matches phase_name.
-
-        Searches depth-first across AgentStep, GateStep, and ActionStep.
-        """
+        """Walk the pipeline for any step whose name matches phase_name."""
 
         def _step_name(step: PipelineStep) -> str | None:
             if isinstance(step, AgentStep):
@@ -1238,6 +972,27 @@ class Orchestrator:
             return None
 
         return _search(executor.pipeline, ())
+
+    def _emit_cycle_completed(
+        self,
+        cycle_num: int,
+        cycle_start: float,
+        to_spawn: list[tuple[str, str, PipelinePosition]],
+        reaped_results: dict[str, WorkerResult],
+    ) -> None:
+        """Emit cycle_completed probe event."""
+        all_tasks = self._state.get_world().tasks
+        self._probe.cycle_completed(
+            cycle=cycle_num,
+            active_workers=len(self._workers),
+            not_started=sum(1 for t in all_tasks.values() if t.status == TaskStatus.NOT_STARTED),
+            in_progress=sum(1 for t in all_tasks.values() if t.status == TaskStatus.IN_PROGRESS),
+            complete=sum(1 for t in all_tasks.values() if t.status == TaskStatus.COMPLETE),
+            failed=sum(1 for t in all_tasks.values() if t.status == TaskStatus.FAILED),
+            spawned_ids=tuple(tid for tid, _, _ in to_spawn),
+            reaped_ids=tuple(reaped_results.keys()),
+            duration_s=time.monotonic() - cycle_start,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1271,13 +1026,6 @@ def _dep_order_ids(tasks: dict[str, Task], candidate_ids: list[str]) -> list[str
     """Return candidate task IDs in topological order: dependencies before dependents.
 
     Uses Kahn's algorithm (BFS topological sort).
-
-    - Only considers dependencies within the candidate set; tasks outside
-      candidates are treated as already merged/done.
-    - Preserves input order for tasks with no dependency relationship
-      (callers pre-sort by task ID for determinism).
-    - Falls back to input order for any cyclic group (cycle safety).
-    - Candidates missing from the tasks dict are included unchanged (graceful).
     """
     candidate_set = set(candidate_ids)
     position: dict[str, int] = {cid: i for i, cid in enumerate(candidate_ids)}
@@ -1295,15 +1043,12 @@ def _dep_order_ids(tasks: dict[str, Task], candidate_ids: list[str]) -> list[str
                 in_degree[cid] += 1
                 dependents[dep].append(cid)
 
-    # Kahn's BFS: start with zero in-degree nodes in input order.
-    # list.pop(0) is O(n) but candidate counts are always tiny.
     queue: list[str] = [cid for cid in candidate_ids if in_degree[cid] == 0]
     result: list[str] = []
 
     while queue:
         node = queue.pop(0)
         result.append(node)
-        # Collect newly-ready dependents and sort by input position for stability
         newly_ready: list[str] = []
         for dep in dependents[node]:
             in_degree[dep] -= 1

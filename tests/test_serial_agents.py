@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from hyperloop.adapters.hook.process_improver import ProcessImproverHook
+from hyperloop.adapters.probe import NullProbe
 from hyperloop.compose import PromptComposer, load_templates_from_dir
 from hyperloop.domain.model import (
     AgentStep,
@@ -74,12 +76,16 @@ def _make_orchestrator(
     composer: PromptComposer | None = None,
     max_task_rounds: int = 50,
 ) -> Orchestrator:
+    hooks: list[object] = []
+    if composer is not None:
+        hooks.append(ProcessImproverHook(runtime, composer, NullProbe()))
     return Orchestrator(
         state=state,
         runtime=runtime,
         process=DEFAULT_PROCESS,
         max_workers=6,
         max_task_rounds=max_task_rounds,
+        hooks=tuple(hooks),
         composer=composer,
     )
 

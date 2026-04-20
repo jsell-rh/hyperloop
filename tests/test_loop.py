@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from hyperloop.adapters.action.pr_merge import PRMergeAction
+from hyperloop.adapters.gate.label import LabelGate
 from hyperloop.compose import PromptComposer, load_templates_from_dir
 from hyperloop.domain.model import (
     ActionStep,
@@ -79,17 +81,20 @@ def _make_orchestrator(
     probe: RecordingProbe | None = None,
     max_rebase_attempts: int = 3,
 ) -> Orchestrator:
+    gate = LabelGate(pr_manager) if pr_manager is not None else None
+    action = PRMergeAction(pr_manager) if pr_manager is not None else None
     return Orchestrator(
         state=state,
         runtime=runtime,
         process=process,
         max_workers=max_workers,
         max_task_rounds=max_task_rounds,
-        pr_manager=pr_manager,
+        max_action_attempts=max_rebase_attempts,
+        gate=gate,
+        action=action,
         composer=composer,
         poll_interval=poll_interval,
         probe=probe,
-        max_rebase_attempts=max_rebase_attempts,
     )
 
 

@@ -388,21 +388,26 @@ def run(
     if cfg.runtime == "ambient" and hasattr(runtime, "ensure_project"):
         runtime.ensure_project()  # type: ignore[attr-defined]
 
-    # Check if the pipeline has a gate step — informs PR description
+    # Build gate + action adapters from PRPort
+    gate = None
+    action = None
     if pr_manager is not None:
-        from hyperloop.domain.model import GateStep
+        from hyperloop.adapters.action.pr_merge import PRMergeAction
+        from hyperloop.adapters.gate.label import LabelGate
 
-        def _has_gate_step(steps: tuple[object, ...]) -> bool:
-            for step in steps:
-                if isinstance(step, GateStep):
-                    return True
-                if hasattr(step, "steps") and _has_gate_step(
-                    step.steps  # type: ignore[attr-defined]
-                ):
-                    return True
-            return False
+        gate = LabelGate(pr_manager)
+        action = PRMergeAction(
+            pr_manager,
+            base_branch=cfg.base_branch,
+            repo_path=str(repo_path),
+        )
 
-        pr_manager._has_gate = _has_gate_step(process.pipeline)
+    # Build hooks
+    hooks: list[object] = []
+    if composer is not None:
+        from hyperloop.adapters.hook.process_improver import ProcessImproverHook
+
+        hooks.append(ProcessImproverHook(runtime, composer, probe))
 
     orchestrator = Orchestrator(
         state=state,
@@ -410,13 +415,13 @@ def run(
         process=process,
         max_workers=cfg.max_workers,
         max_task_rounds=cfg.max_task_rounds,
-        pr_manager=pr_manager,
+        max_action_attempts=cfg.max_rebase_attempts,
+        gate=gate,
+        action=action,
+        hooks=tuple(hooks),
         composer=composer,
-        repo_path=str(repo_path),
         poll_interval=cfg.poll_interval,
         probe=probe,
-        max_rebase_attempts=cfg.max_rebase_attempts,
-        auto_merge=cfg.auto_merge,
     )
 
     # 6. Recover and run
