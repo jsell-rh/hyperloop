@@ -35,7 +35,7 @@ merge:
 
 poll_interval: 60
 max_task_rounds: 100
-max_rebase_attempts: 5
+max_action_attempts: 5
 """
         )
 
@@ -50,7 +50,7 @@ max_rebase_attempts: 5
         assert cfg.delete_branch is False
         assert cfg.poll_interval == 60
         assert cfg.max_task_rounds == 100
-        assert cfg.max_rebase_attempts == 5
+        assert cfg.max_action_attempts == 5
 
 
 class TestLoadConfigDefaults:
@@ -69,7 +69,7 @@ class TestLoadConfigDefaults:
         assert cfg.poll_interval == 30
         assert cfg.max_task_rounds == 50
         assert cfg.max_cycles == 200
-        assert cfg.max_rebase_attempts == 3
+        assert cfg.max_action_attempts == 3
 
     def test_all_defaults_when_file_not_found(self, tmp_path: Path) -> None:
         nonexistent = tmp_path / "nope.yaml"
@@ -142,7 +142,7 @@ runtime:
             """\
 poll_interval: 45
 max_task_rounds: 20
-max_rebase_attempts: 1
+max_action_attempts: 1
 """
         )
 
@@ -150,7 +150,7 @@ max_rebase_attempts: 1
 
         assert cfg.poll_interval == 45
         assert cfg.max_task_rounds == 20
-        assert cfg.max_rebase_attempts == 1
+        assert cfg.max_action_attempts == 1
 
 
 class TestLoadConfigCliOverrides:

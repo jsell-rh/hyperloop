@@ -418,6 +418,18 @@ class Orchestrator:
 
             else:
                 # WaitForGate, PerformAction -- record phase, don't spawn
+                # Ensure PR exists before task reaches gate/action steps
+                if task.pr is None and self._pr is not None:
+                    branch = task.branch or f"{BRANCH_PREFIX}/{task_id}"
+                    pr_url = self._pr.create_draft(
+                        task_id,
+                        branch,
+                        task.title,
+                        task.spec_ref,
+                    )
+                    if pr_url:
+                        self._state.set_task_pr(task_id, pr_url)
+
                 phase_name = _phase_for_action(pipe_action)
                 self._state.transition_task(
                     task_id,
@@ -501,28 +513,6 @@ class Orchestrator:
         if self._gate is None:
             logger.debug("gates: no gate adapter -- skipping gate polling")
             return None
-
-        # Ensure the task has a PR -- create one if missing
-        if task.pr is None and self._pr is not None:
-            branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
-            pr_url = self._pr.create_draft(task.id, branch, task.title, task.spec_ref)
-            if pr_url:
-                self._state.set_task_pr(task.id, pr_url)
-                task = self._state.get_task(task.id)
-            else:
-                return None  # Can't poll gate without a PR
-
-        # Handle CLOSED PRs: recreate before checking gate
-        if task.pr is not None and self._pr is not None:
-            pr_state = self._pr.get_pr_state(task.pr)
-            if pr_state is not None and pr_state.state == "CLOSED":
-                branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
-                new_url = self._pr.create_draft(task.id, branch, task.title, task.spec_ref)
-                if new_url:
-                    self._state.set_task_pr(task.id, new_url)
-                    task = self._state.get_task(task.id)
-                else:
-                    return None
 
         # Notification deduplication: notify once per gate entry
         if task.id not in self._notified_gates:
@@ -640,6 +630,11 @@ class Orchestrator:
 
             if looping_back:
                 self._action_attempts.pop(task.id, None)
+                self._notification.task_errored(
+                    task=task,
+                    attempts=attempts,
+                    detail=result.detail,
+                )
                 detail = f"Action error after {self._max_action_attempts} attempts: {result.detail}"
                 self._state.store_review(
                     task.id,

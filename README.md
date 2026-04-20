@@ -102,7 +102,7 @@ merge:
 poll_interval: 30
 max_task_rounds: 50
 max_cycles: 200
-max_rebase_attempts: 3
+max_action_attempts: 3
 
 observability:
   log_format: console                   # console | json

@@ -605,7 +605,7 @@ def __init__(
     poll_interval: float = 30.0,
     probe: OrchestratorProbe | None = None,    # replaces on_cycle
     serial_runner: SerialRunner | None = None,
-    max_rebase_attempts: int = 3,
+    max_action_attempts: int = 3,
 ) -> None:
     ...
     self._probe = probe or NullProbe()

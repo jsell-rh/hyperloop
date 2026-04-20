@@ -76,7 +76,8 @@ class Config:
     poll_interval: int  # default: 30
     max_task_rounds: int  # default: 50
     max_cycles: int  # default: 200
-    max_rebase_attempts: int  # default: 3
+    max_action_attempts: int  # default: 3
+    notifications_type: str  # "null" | "github-comment", default "null"
     runtime: str  # "local" | "ambient", default "local"
     ambient: AmbientConfig | None  # required when runtime == "ambient"
     observability: ObservabilityConfig = field(
@@ -100,7 +101,8 @@ def _defaults() -> dict[str, object]:
         "poll_interval": 30,
         "max_task_rounds": 50,
         "max_cycles": 200,
-        "max_rebase_attempts": 3,
+        "max_action_attempts": 3,
+        "notifications_type": "null",
         "runtime": "local",
         "log_format": "console",
         "log_level": "info",
@@ -121,7 +123,7 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
         "poll_interval",
         "max_task_rounds",
         "max_cycles",
-        "max_rebase_attempts",
+        "max_action_attempts",
         "max_workers",
     ):
         if key in raw:
@@ -161,6 +163,13 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
             flat["merge_strategy"] = merge["strategy"]
         if "delete_branch" in merge:
             flat["delete_branch"] = merge["delete_branch"]
+
+    # notifications section
+    notifications = raw.get("notifications")
+    if isinstance(notifications, dict):
+        notif_dict = cast("dict[str, object]", notifications)
+        if "type" in notif_dict:
+            flat["notifications_type"] = notif_dict["type"]
 
     # observability section
     obs = raw.get("observability")
@@ -287,7 +296,8 @@ def load_config(
         poll_interval=int(values["poll_interval"]),  # type: ignore[arg-type]
         max_task_rounds=int(values["max_task_rounds"]),  # type: ignore[arg-type]
         max_cycles=int(values["max_cycles"]),  # type: ignore[arg-type]
-        max_rebase_attempts=int(values["max_rebase_attempts"]),  # type: ignore[arg-type]
+        max_action_attempts=int(values["max_action_attempts"]),  # type: ignore[arg-type]
+        notifications_type=str(values["notifications_type"]),
         runtime=str(values["runtime"]),
         ambient=ambient_cfg,
         observability=obs_cfg,

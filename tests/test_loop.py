@@ -79,7 +79,7 @@ def _make_orchestrator(
     composer: PromptComposer | None = None,
     poll_interval: float = 0,
     probe: RecordingProbe | None = None,
-    max_rebase_attempts: int = 3,
+    max_action_attempts: int = 3,
 ) -> Orchestrator:
     gate = LabelGate(pr_manager) if pr_manager is not None else None
     action = PRMergeAction(pr_manager) if pr_manager is not None else None
@@ -89,7 +89,7 @@ def _make_orchestrator(
         process=process,
         max_workers=max_workers,
         max_task_rounds=max_task_rounds,
-        max_action_attempts=max_rebase_attempts,
+        max_action_attempts=max_action_attempts,
         gate=gate,
         action=action,
         pr=pr_manager,
@@ -882,8 +882,8 @@ class TestPRStateResilience:
 
     # -- gate phase: CLOSED PR -----------------------------------------------
 
-    def test_gate_closed_pr_creates_new_pr(self) -> None:
-        """When a PR is closed while at gate, a new PR is created."""
+    def test_gate_closed_pr_stays_at_gate(self) -> None:
+        """When a PR is closed while at gate, gate returns False and task stays."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
@@ -905,10 +905,9 @@ class TestPRStateResilience:
         orch.run_cycle()
 
         task = state.get_task("task-001")
-        # New PR was created
-        assert task.pr is not None
-        assert task.pr != pr_url
-        # Still at gate (waiting for lgtm on new PR)
+        # PR stays the same (CLOSED PR not recreated at gate level)
+        assert task.pr == pr_url
+        # Still at gate (gate returned False for CLOSED PR)
         assert task.phase == Phase("human-pr-approval")
 
     # -- gate phase: MERGED PR -----------------------------------------------
@@ -1324,8 +1323,8 @@ class TestRecoverCycleDetection:
         orch.recover()
 
 
-class TestMaxRebaseAttempts:
-    """max_rebase_attempts: after N consecutive rebase failures, task loops back."""
+class TestMaxActionAttempts:
+    """max_action_attempts: after N consecutive action failures, task loops back."""
 
     MERGE_PROCESS = Process(
         name="merge-process",
@@ -1341,7 +1340,7 @@ class TestMaxRebaseAttempts:
     )
 
     def test_rebase_failure_exceeds_max_attempts_loops_task_back(self) -> None:
-        """After max_rebase_attempts consecutive rebase failures, task loops back."""
+        """After max_action_attempts consecutive rebase failures, task loops back."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
@@ -1366,7 +1365,7 @@ class TestMaxRebaseAttempts:
             runtime,
             process=self.MERGE_PROCESS,
             pr_manager=pr_mgr,
-            max_rebase_attempts=3,
+            max_action_attempts=3,
         )
 
         # First two failures: task stays IN_PROGRESS
@@ -1383,7 +1382,7 @@ class TestMaxRebaseAttempts:
                 # Manually transition back to merge-pr for next attempt
                 state.transition_task("task-001", TaskStatus.IN_PROGRESS, phase=Phase("merge-pr"))
 
-        # Third failure: should exceed max_rebase_attempts -> loop back
+        # Third failure: should exceed max_action_attempts -> loop back
         orch.run_cycle()
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS
@@ -1415,7 +1414,7 @@ class TestMaxRebaseAttempts:
             runtime,
             process=self.MERGE_PROCESS,
             pr_manager=pr_mgr,
-            max_rebase_attempts=3,
+            max_action_attempts=3,
         )
 
         # Merge succeeds

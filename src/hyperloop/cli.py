@@ -70,7 +70,7 @@ def _config_table(cfg: Config) -> Table:
     table.add_row("poll_interval", f"{cfg.poll_interval}s")
     table.add_row("max_task_rounds", str(cfg.max_task_rounds))
     table.add_row("max_cycles", str(cfg.max_cycles))
-    table.add_row("max_rebase_attempts", str(cfg.max_rebase_attempts))
+    table.add_row("max_action_attempts", str(cfg.max_action_attempts))
     table.add_row("runtime", cfg.runtime)
 
     return table
@@ -403,6 +403,12 @@ def run(
             repo_path=str(repo_path),
         )
 
+    # Build notification adapter
+    notification = None
+    if cfg.notifications_type == "github-comment":
+        # GitHubCommentNotification not yet implemented; fall back to null
+        pass
+
     # Build hooks
     hooks: list[CycleHook] = []
     if composer is not None:
@@ -416,11 +422,12 @@ def run(
         process=process,
         max_workers=cfg.max_workers,
         max_task_rounds=cfg.max_task_rounds,
-        max_action_attempts=cfg.max_rebase_attempts,
+        max_action_attempts=cfg.max_action_attempts,
         gate=gate,
         action=action,
         pr=pr_manager,
         hooks=tuple(hooks),
+        notification=notification,
         composer=composer,
         poll_interval=cfg.poll_interval,
         probe=probe,
