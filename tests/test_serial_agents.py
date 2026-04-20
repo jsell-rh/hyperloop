@@ -76,7 +76,7 @@ def _make_orchestrator(
     composer: PromptComposer | None = None,
     max_task_rounds: int = 50,
 ) -> Orchestrator:
-    hooks: list[object] = []
+    hooks: list[ProcessImproverHook] = []
     if composer is not None:
         hooks.append(ProcessImproverHook(runtime, composer, NullProbe()))
     return Orchestrator(

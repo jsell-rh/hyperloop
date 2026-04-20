@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from hyperloop.compose import PromptComposer
     from hyperloop.config import ObservabilityConfig
     from hyperloop.domain.model import Process
+    from hyperloop.ports.hook import CycleHook
     from hyperloop.ports.probe import OrchestratorProbe
     from hyperloop.ports.state import StateStore
 
@@ -403,7 +404,7 @@ def run(
         )
 
     # Build hooks
-    hooks: list[object] = []
+    hooks: list[CycleHook] = []
     if composer is not None:
         from hyperloop.adapters.hook.process_improver import ProcessImproverHook
 
@@ -418,6 +419,7 @@ def run(
         max_action_attempts=cfg.max_rebase_attempts,
         gate=gate,
         action=action,
+        pr=pr_manager,
         hooks=tuple(hooks),
         composer=composer,
         poll_interval=cfg.poll_interval,

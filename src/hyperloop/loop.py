@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from hyperloop.ports.gate import GatePort
     from hyperloop.ports.hook import CycleHook
     from hyperloop.ports.notification import NotificationPort
+    from hyperloop.ports.pr import PRPort
     from hyperloop.ports.probe import OrchestratorProbe
     from hyperloop.ports.runtime import Runtime
     from hyperloop.ports.state import StateStore
@@ -80,6 +81,7 @@ class Orchestrator:
         max_action_attempts: int = 3,
         gate: GatePort | None = None,
         action: ActionPort | None = None,
+        pr: PRPort | None = None,
         hooks: tuple[CycleHook, ...] = (),
         notification: NotificationPort | None = None,
         composer: PromptComposer | None = None,
@@ -94,6 +96,7 @@ class Orchestrator:
         self._max_action_attempts = max_action_attempts
         self._gate = gate
         self._action = action
+        self._pr = pr
         self._hooks = hooks
         self._notification: NotificationPort = notification or NullNotification()
         self._composer = composer
@@ -386,9 +389,9 @@ class Orchestrator:
                     )
                 else:
                     # Advancing forward on PASS -- create draft PR if needed
-                    if task.pr is None and hasattr(self._gate, "_pr"):
+                    if task.pr is None and self._pr is not None:
                         branch = task.branch or f"{BRANCH_PREFIX}/{task_id}"
-                        pr_url = self._gate._pr.create_draft(  # type: ignore[union-attr]
+                        pr_url = self._pr.create_draft(
                             task_id,
                             branch,
                             task.title,
@@ -500,11 +503,9 @@ class Orchestrator:
             return None
 
         # Ensure the task has a PR -- create one if missing
-        if task.pr is None and hasattr(self._gate, "_pr"):
+        if task.pr is None and self._pr is not None:
             branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
-            pr_url = self._gate._pr.create_draft(  # type: ignore[union-attr]
-                task.id, branch, task.title, task.spec_ref
-            )
+            pr_url = self._pr.create_draft(task.id, branch, task.title, task.spec_ref)
             if pr_url:
                 self._state.set_task_pr(task.id, pr_url)
                 task = self._state.get_task(task.id)
@@ -512,13 +513,11 @@ class Orchestrator:
                 return None  # Can't poll gate without a PR
 
         # Handle CLOSED PRs: recreate before checking gate
-        if task.pr is not None and hasattr(self._gate, "_pr"):
-            pr_state = self._gate._pr.get_pr_state(task.pr)  # type: ignore[union-attr]
+        if task.pr is not None and self._pr is not None:
+            pr_state = self._pr.get_pr_state(task.pr)
             if pr_state is not None and pr_state.state == "CLOSED":
                 branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
-                new_url = self._gate._pr.create_draft(  # type: ignore[union-attr]
-                    task.id, branch, task.title, task.spec_ref
-                )
+                new_url = self._pr.create_draft(task.id, branch, task.title, task.spec_ref)
                 if new_url:
                     self._state.set_task_pr(task.id, new_url)
                     task = self._state.get_task(task.id)
@@ -546,8 +545,8 @@ class Orchestrator:
 
         # Check if the gate check returned True because PR was merged
         # (LabelGate returns True for MERGED PRs)
-        if task.pr is not None and hasattr(self._gate, "_pr"):
-            pr_state_check = self._gate._pr.get_pr_state(task.pr)  # type: ignore[union-attr]
+        if task.pr is not None and self._pr is not None:
+            pr_state_check = self._pr.get_pr_state(task.pr)
             if pr_state_check is not None and pr_state_check.state == "MERGED":
                 self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
                 self._probe.merge_attempted(
@@ -1020,48 +1019,6 @@ def _phase_for_pipe_action(
     if isinstance(action, PerformAction):
         return action.action
     return None
-
-
-def _dep_order_ids(tasks: dict[str, Task], candidate_ids: list[str]) -> list[str]:
-    """Return candidate task IDs in topological order: dependencies before dependents.
-
-    Uses Kahn's algorithm (BFS topological sort).
-    """
-    candidate_set = set(candidate_ids)
-    position: dict[str, int] = {cid: i for i, cid in enumerate(candidate_ids)}
-
-    # Build in-degree and adjacency list within the candidate set only
-    in_degree: dict[str, int] = {cid: 0 for cid in candidate_ids}
-    dependents: dict[str, list[str]] = {cid: [] for cid in candidate_ids}
-
-    for cid in candidate_ids:
-        task = tasks.get(cid)
-        if task is None:
-            continue
-        for dep in task.deps:
-            if dep in candidate_set:
-                in_degree[cid] += 1
-                dependents[dep].append(cid)
-
-    queue: list[str] = [cid for cid in candidate_ids if in_degree[cid] == 0]
-    result: list[str] = []
-
-    while queue:
-        node = queue.pop(0)
-        result.append(node)
-        newly_ready: list[str] = []
-        for dep in dependents[node]:
-            in_degree[dep] -= 1
-            if in_degree[dep] == 0:
-                newly_ready.append(dep)
-        newly_ready.sort(key=lambda x: position[x])
-        queue.extend(newly_ready)
-
-    # Append any remaining cyclic nodes in input order (cycle safety)
-    in_result = set(result)
-    result.extend(cid for cid in candidate_ids if cid not in in_result)
-
-    return result
 
 
 def _collect_roles(steps: tuple[PipelineStep, ...]) -> set[str]:
