@@ -19,7 +19,6 @@ class TaskStatus(Enum):
 
     NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"
-    NEEDS_REBASE = "needs_rebase"
     COMPLETE = "complete"
     FAILED = "failed"
 
@@ -29,8 +28,6 @@ class Verdict(Enum):
 
     PASS = "pass"
     FAIL = "fail"
-    TIMEOUT = "timeout"
-    ERROR = "error"
 
 
 # ---------------------------------------------------------------------------
@@ -65,11 +62,7 @@ class WorkerResult:
     """Verdict reported by a finished worker."""
 
     verdict: Verdict
-    findings: int
     detail: str
-    cost_usd: float | None = None
-    num_turns: int | None = None
-    api_duration_ms: float | None = None
 
 
 @dataclass(frozen=True)
@@ -82,16 +75,25 @@ class WorkerHandle:
     session_id: str | None
 
 
+@dataclass(frozen=True)
+class TaskProposal:
+    """Value object produced by the PM agent during intake."""
+
+    title: str
+    spec_ref: str  # "specs/widget.md@abc123"
+    deps: tuple[str, ...]
+
+
 # ---------------------------------------------------------------------------
 # Pipeline primitives
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class RoleStep:
+class AgentStep:
     """Spawn an agent with a given role."""
 
-    role: str
+    agent: str
     on_pass: str | None
     on_fail: str | None
 
@@ -117,7 +119,7 @@ class ActionStep:
     action: str
 
 
-PipelineStep = RoleStep | GateStep | LoopStep | ActionStep
+PipelineStep = AgentStep | GateStep | LoopStep | ActionStep
 """Union of all pipeline primitive types."""
 
 
@@ -135,10 +137,9 @@ class PipelinePosition:
 
 @dataclass(frozen=True)
 class Process:
-    """A named process with intake and per-task pipelines."""
+    """A named process with a per-task pipeline."""
 
     name: str
-    intake: tuple[PipelineStep, ...]
     pipeline: tuple[PipelineStep, ...]
 
 
@@ -195,32 +196,13 @@ class AdvanceTask:
 
 
 @dataclass(frozen=True)
-class RunPM:
-    """Run the PM intake process."""
-
-
-@dataclass(frozen=True)
-class RunProcessImprover:
-    """Run the process improver with accumulated findings."""
-
-    findings: dict[str, int]
-
-
-@dataclass(frozen=True)
-class MergePR:
-    """Squash-merge a task's PR."""
-
-    task_id: str
-
-
-@dataclass(frozen=True)
 class Halt:
     """Stop the orchestrator loop."""
 
     reason: str
 
 
-Action = SpawnWorker | ReapWorker | AdvanceTask | RunPM | RunProcessImprover | MergePR | Halt
+Action = SpawnWorker | ReapWorker | AdvanceTask | Halt
 """Union of all action types emitted by the decide function."""
 
 
