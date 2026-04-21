@@ -194,45 +194,11 @@ interface LayoutEdge {
   isCritical: boolean
 }
 
-interface SpecGroupLabel {
-  specRef: string
-  x: number
-  y: number
-  color: string
-  barHeight: number
-}
-
-// ---------------------------------------------------------------------------
-// Spec group color palette (muted 8-color palette)
-// ---------------------------------------------------------------------------
-const SPEC_COLORS = [
-  '#6366f1', // indigo
-  '#0891b2', // cyan
-  '#059669', // emerald
-  '#d97706', // amber
-  '#dc2626', // red
-  '#7c3aed', // violet
-  '#db2777', // pink
-  '#2563eb', // blue
-]
-
-function hashString(s: string): number {
-  let hash = 0
-  for (let i = 0; i < s.length; i++) {
-    hash = ((hash << 5) - hash + s.charCodeAt(i)) | 0
-  }
-  return Math.abs(hash)
-}
-
-function specColor(specRef: string): string {
-  return SPEC_COLORS[hashString(specRef) % SPEC_COLORS.length]
-}
-
 // ---------------------------------------------------------------------------
 // Node style helpers
 // ---------------------------------------------------------------------------
 function getNodeFill(status: string): string {
-  if (status === 'complete') return isDark.value ? '#111116' : '#f9fafb'
+  if (status === 'complete') return isDark.value ? '#1a1a24' : '#f3f4f6'
   if (status === 'in-progress') return isDark.value ? '#0f172a' : '#ffffff'
   if (status === 'failed') return isDark.value ? '#1c0a0a' : '#fef2f2'
   // not-started
@@ -259,7 +225,7 @@ function getNodeStrokeDash(status: string): string | undefined {
 }
 
 function getNodeOpacity(status: string): number {
-  if (status === 'complete') return isDark.value ? 0.8 : 0.85
+  if (status === 'complete') return isDark.value ? 0.85 : 0.9
   return 1
 }
 
@@ -271,8 +237,8 @@ function getNodeFilter(status: string, isHovered: boolean): string | undefined {
 }
 
 function getTitleFill(status: string): string {
-  if (status === 'complete') return isDark.value ? '#4b5563' : '#9ca3af'
-  if (status === 'in-progress') return isDark.value ? '#f1f5f9' : '#0f172a'
+  if (status === 'complete') return isDark.value ? '#6b7280' : '#6b7280'
+  if (status === 'in-progress') return isDark.value ? '#f8fafc' : '#0f172a'
   if (status === 'failed') return isDark.value ? '#fca5a5' : '#7f1d1d'
   // not-started
   return isDark.value ? '#9ca3af' : '#374151'
@@ -297,7 +263,7 @@ function getEdgeColor(sourceStatus: string): string {
 }
 
 function getEdgeOpacity(sourceStatus: string): number {
-  if (sourceStatus === 'complete') return 0.4
+  if (sourceStatus === 'complete') return 0.5
   if (sourceStatus === 'in-progress') return 0.8
   if (sourceStatus === 'failed') return 0.7
   return 0.5
@@ -430,11 +396,23 @@ function handleNodeFocus(node: LayoutNode): void {
   const container = containerRef.value
   if (container) {
     const rect = container.getBoundingClientRect()
-    const x = panX.value + (node.x + NODE_WIDTH / 2) * scale.value
-    const y = panY.value + node.y * scale.value
+    const tooltipWidth = 250
+    let left = panX.value + (node.x + NODE_WIDTH / 2) * scale.value
+    let top = panY.value + node.y * scale.value - 60
+
+    if (left + tooltipWidth / 2 > rect.width) {
+      left = rect.width - tooltipWidth / 2 - 8
+    }
+    if (left - tooltipWidth / 2 < 0) {
+      left = tooltipWidth / 2 + 8
+    }
+    if (top < 8) {
+      top = panY.value + (node.y + node.height) * scale.value + 20
+    }
+
     tooltipStyle.value = {
-      left: `${clamp(x, 80, rect.width - 80)}px`,
-      top: `${Math.max(0, y - 10)}px`,
+      left: `${left}px`,
+      top: `${top}px`,
     }
   }
 }
@@ -450,9 +428,26 @@ function updateTooltipPosition(event: MouseEvent): void {
   const container = containerRef.value
   if (!container) return
   const rect = container.getBoundingClientRect()
+  const tooltipWidth = 250
+  let left = event.clientX - rect.left
+  let top = event.clientY - rect.top - 60
+
+  // Clamp horizontal to container bounds
+  if (left + tooltipWidth / 2 > rect.width) {
+    left = rect.width - tooltipWidth / 2 - 8
+  }
+  if (left - tooltipWidth / 2 < 0) {
+    left = tooltipWidth / 2 + 8
+  }
+
+  // Flip below cursor if too close to top
+  if (top < 8) {
+    top = event.clientY - rect.top + 20
+  }
+
   tooltipStyle.value = {
-    left: `${event.clientX - rect.left}px`,
-    top: `${event.clientY - rect.top - 60}px`,
+    left: `${left}px`,
+    top: `${top}px`,
   }
 }
 
@@ -508,7 +503,6 @@ const layout = computed(() => {
     return {
       nodes: [] as LayoutNode[],
       edges: [] as LayoutEdge[],
-      specLabels: [] as SpecGroupLabel[],
       width: 0,
       height: 0,
     }
@@ -727,54 +721,6 @@ const layout = computed(() => {
     }
   }
 
-  // ------- Build spec group labels -------
-  const specLabels: SpecGroupLabel[] = []
-  for (let l = 0; l <= maxLayer; l++) {
-    const ids = layerGroups.get(l) || []
-    const seenSpecs = new Set<string>()
-    let groupStartY: number | null = null
-    let groupEndY: number | null = null
-    let currentSpec: string | null = null
-
-    for (const id of ids) {
-      const node = nodeMap.get(id)
-      const spec = node?.spec_ref || ''
-      const pos = positioned.get(id)
-      if (!pos) continue
-
-      if (spec !== currentSpec) {
-        // Emit previous group
-        if (currentSpec !== null && groupStartY !== null && groupEndY !== null) {
-          specLabels.push({
-            specRef: currentSpec,
-            x: pos.x - 10,
-            y: groupStartY,
-            color: specColor(currentSpec),
-            barHeight: groupEndY - groupStartY,
-          })
-        }
-        currentSpec = spec
-        groupStartY = pos.y
-        seenSpecs.add(spec)
-      }
-      groupEndY = pos.y + pos.h
-    }
-    // Emit last group in layer
-    if (currentSpec !== null && groupStartY !== null && groupEndY !== null) {
-      const firstId = ids.find(id => (nodeMap.get(id)?.spec_ref || '') === currentSpec)
-      const pos = firstId ? positioned.get(firstId) : null
-      if (pos) {
-        specLabels.push({
-          specRef: currentSpec,
-          x: pos.x - 10,
-          y: groupStartY,
-          color: specColor(currentSpec),
-          barHeight: groupEndY - groupStartY,
-        })
-      }
-    }
-  }
-
   // ------- Build layout nodes -------
   const layoutNodes: LayoutNode[] = nodes.map(n => {
     const pos = positioned.get(n.id) || { x: PADDING, y: PADDING, h: NODE_HEIGHT }
@@ -875,7 +821,7 @@ const layout = computed(() => {
   const width = PADDING * 2 + (maxLayer + 1) * (NODE_WIDTH + LAYER_GAP) - LAYER_GAP
   const height = maxY + PADDING
 
-  return { nodes: layoutNodes, edges: layoutEdges, specLabels, width, height }
+  return { nodes: layoutNodes, edges: layoutEdges, width, height }
 })
 
 // Refit when data changes
@@ -1005,31 +951,6 @@ onUnmounted(() => {
       </defs>
 
       <g :transform="`translate(${panX}, ${panY}) scale(${scale})`" class="graph-pan-group">
-        <!-- Spec group bars -->
-        <g v-for="(label, i) in layout.specLabels" :key="'spec-bar-' + i">
-          <rect
-            :x="label.x"
-            :y="label.y"
-            width="3"
-            :height="label.barHeight"
-            :rx="1.5"
-            :ry="1.5"
-            :fill="label.color"
-            opacity="0.5"
-          />
-          <text
-            :x="label.x + 6"
-            :y="label.y - 4"
-            font-size="9"
-            :fill="isDark ? '#6b7280' : '#9ca3af'"
-            text-transform="uppercase"
-            letter-spacing="0.05em"
-            style="text-transform: uppercase"
-          >
-            {{ label.specRef }}
-          </text>
-        </g>
-
         <!-- Edges -->
         <path
           v-for="(edge, i) in layout.edges"
@@ -1088,41 +1009,10 @@ onUnmounted(() => {
             :style="(activeNodeId === node.id) ? 'transform: scale(1.03); transform-origin: ' + (node.x + NODE_WIDTH/2) + 'px ' + (node.y + node.height/2) + 'px' : undefined"
           />
 
-          <!-- Status icon (top-left, 12x12) -->
-          <g :transform="`translate(${node.x + 8}, ${node.y + 6})`">
-            <!-- not-started: dashed circle -->
-            <circle
-              v-if="node.status === 'not-started'"
-              cx="6"
-              cy="6"
-              r="5"
-              fill="none"
-              :stroke="isDark ? '#6b7280' : '#9ca3af'"
-              stroke-width="1.5"
-              stroke-dasharray="3 2"
-            />
-            <!-- in-progress: clock icon -->
-            <template v-else-if="node.status === 'in-progress'">
-              <circle cx="6" cy="6" r="5" fill="none" :stroke="isDark ? '#60a5fa' : '#3b82f6'" stroke-width="1.5" />
-              <path d="M6 3.5v2.5l1.5 1.5" fill="none" :stroke="isDark ? '#60a5fa' : '#3b82f6'" stroke-width="1.5" stroke-linecap="round" />
-            </template>
-            <!-- complete: no icon (muted gray IS the status) -->
-            <!-- failed: X icon -->
-            <path
-              v-else-if="node.status === 'failed'"
-              d="M2.5 2.5l7 7M9.5 2.5l-7 7"
-              fill="none"
-              :stroke="isDark ? '#f87171' : '#ef4444'"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </g>
-
           <!-- Title: 14px, font-weight 600, centered -->
           <text
             :x="node.x + NODE_WIDTH / 2"
-            :y="node.y + 22"
+            :y="node.y + 20"
             font-size="14"
             font-weight="600"
             text-anchor="middle"
@@ -1143,18 +1033,27 @@ onUnmounted(() => {
             {{ node.id }}
           </text>
 
-          <!-- Phase: 11px, italic, muted (in-progress only) -->
-          <text
-            v-if="node.status === 'in-progress' && node.phase"
-            :x="node.x + NODE_WIDTH / 2"
-            :y="node.y + 54"
-            font-size="11"
-            font-style="italic"
-            text-anchor="middle"
-            :fill="isDark ? '#6b7280' : '#9ca3af'"
-          >
-            {{ node.phase }}
-          </text>
+          <!-- Phase pill badge (in-progress only) -->
+          <template v-if="node.status === 'in-progress' && node.phase">
+            <rect
+              :x="node.x + NODE_WIDTH / 2 - 40"
+              :y="node.y + 44"
+              width="80"
+              height="16"
+              rx="8"
+              :fill="isDark ? 'rgba(96,165,250,0.12)' : 'rgba(59,130,246,0.1)'"
+              stroke="none"
+            />
+            <text
+              :x="node.x + NODE_WIDTH / 2"
+              :y="node.y + 55"
+              font-size="10"
+              text-anchor="middle"
+              :fill="isDark ? '#60a5fa' : '#3b82f6'"
+            >
+              {{ node.phase }}
+            </text>
+          </template>
         </g>
       </g>
     </svg>
