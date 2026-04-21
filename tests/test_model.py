@@ -169,8 +169,8 @@ class TestPipelineStep:
         assert step.on_fail == "implement"
 
     def test_gate_step(self):
-        step = GateStep(gate="human-pr-approval")
-        assert step.gate == "human-pr-approval"
+        step = GateStep(gate="pr-require-label")
+        assert step.gate == "pr-require-label"
         assert isinstance(step, GateStep)
 
     def test_action_step(self):

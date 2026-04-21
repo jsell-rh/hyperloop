@@ -321,7 +321,7 @@ class TestGateCheckedFiltering:
 
         probe.gate_checked(
             task_id="task-001",
-            gate="human-pr-approval",
+            gate="pr-require-label",
             cleared=True,
             cycle=5,
         )
@@ -334,7 +334,7 @@ class TestGateCheckedFiltering:
 
         probe.gate_checked(
             task_id="task-001",
-            gate="human-pr-approval",
+            gate="pr-require-label",
             cleared=False,
             cycle=5,
         )

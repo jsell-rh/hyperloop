@@ -65,13 +65,13 @@ class TestCheckGate:
         pr = FakePRManager(repo="org/repo")
         url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
         pr.add_label(url, "lgtm")
-        assert pr.check_gate(url, "human-pr-approval") is True
+        assert pr.check_gate(url, "pr-require-label") is True
 
     def test_check_gate_does_not_remove_lgtm(self):
         pr = FakePRManager(repo="org/repo")
         url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
         pr.add_label(url, "lgtm")
-        assert pr.check_gate(url, "human-pr-approval") is True
+        assert pr.check_gate(url, "pr-require-label") is True
         assert "lgtm" in pr.get_labels(url)  # Still there until remove_gate_label
 
     def test_remove_gate_label_removes_lgtm(self):
@@ -84,13 +84,13 @@ class TestCheckGate:
     def test_returns_false_when_no_lgtm(self):
         pr = FakePRManager(repo="org/repo")
         url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        assert pr.check_gate(url, "human-pr-approval") is False
+        assert pr.check_gate(url, "pr-require-label") is False
 
     def test_gate_does_not_remove_other_labels(self):
         pr = FakePRManager(repo="org/repo")
         url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
         pr.add_label(url, "lgtm")
-        pr.check_gate(url, "human-pr-approval")
+        pr.check_gate(url, "pr-require-label")
         labels = pr.get_labels(url)
         assert "task/task-001" in labels
         assert "spec/widget" in labels

@@ -75,7 +75,7 @@ pipeline:
   - loop:
       - agent: implementer
       - agent: verifier
-  - gate: human-pr-approval
+  - gate: pr-require-label
   - action: merge-pr
 ```
 
@@ -141,12 +141,14 @@ pipeline:
   - loop:
       - agent: implementer
       - agent: verifier
-  - gate: human-pr-approval
+  - gate: pr-require-label
   - action: merge-pr
 
 gates:
-  human-pr-approval:
-    type: label                         # label | pr-approval | ci-status | all
+  pr-require-label:
+    type: label                         # label (configurable, default: lgtm)
+  # pr-require-approval:               # alternative gate type
+  #   type: pr-approval                 # checks GitHub PR review approvals
 
 actions:
   merge-pr:

@@ -403,6 +403,9 @@ def _advance_gate(
     # Notification deduplication: notify once per gate entry
     if task.id not in notified_gates:
         notification.gate_blocked(task=task, gate_name=step.gate)
+        # Add needs-approval label when task first enters a gate
+        if task.pr is not None and pr is not None:
+            pr.add_label(task.pr, "hyperloop/needs-approval")
         notified_gates.add(task.id)
 
     cleared = gate.check(task, step.gate)
@@ -416,8 +419,10 @@ def _advance_gate(
     if not cleared:
         return _StepResult(transitions=[])
 
-    # Gate cleared -- remove from notified set and advance
+    # Gate cleared -- remove from notified set and remove needs-approval label
     notified_gates.discard(task.id)
+    if task.pr is not None and pr is not None:
+        pr.remove_label(task.pr, "hyperloop/needs-approval")
 
     # Check if the gate check returned True because PR was merged
     if task.pr is not None and pr is not None:

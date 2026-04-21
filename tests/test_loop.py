@@ -591,7 +591,7 @@ class TestGatePolling:
                     AgentStep(agent="verifier", on_pass=None, on_fail=None),
                 ),
             ),
-            GateStep(gate="human-pr-approval"),
+            GateStep(gate="pr-require-label"),
             ActionStep(action="merge-pr"),
         ),
     )
@@ -610,7 +610,7 @@ class TestGatePolling:
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
-                phase=Phase("human-pr-approval"),
+                phase=Phase("pr-require-label"),
                 branch="hyperloop/task-001",
             )
         )
@@ -625,7 +625,7 @@ class TestGatePolling:
 
         # Gate should have cleared, task should advance past the gate
         task = state.get_task("task-001")
-        assert task.phase != Phase("human-pr-approval")
+        assert task.phase != Phase("pr-require-label")
 
     def test_gate_not_cleared_task_stays(self) -> None:
         """When no lgtm label, the task stays at the gate."""
@@ -639,7 +639,7 @@ class TestGatePolling:
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
-                phase=Phase("human-pr-approval"),
+                phase=Phase("pr-require-label"),
                 branch="hyperloop/task-001",
             )
         )
@@ -649,7 +649,7 @@ class TestGatePolling:
         orch.run_cycle()
 
         task = state.get_task("task-001")
-        assert task.phase == Phase("human-pr-approval")
+        assert task.phase == Phase("pr-require-label")
 
     def test_no_pr_manager_gates_are_noop(self) -> None:
         """Without a PRManager, gate polling is a no-op (backward compat)."""
@@ -660,7 +660,7 @@ class TestGatePolling:
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
-                phase=Phase("human-pr-approval"),
+                phase=Phase("pr-require-label"),
                 branch="hyperloop/task-001",
             )
         )
@@ -669,7 +669,7 @@ class TestGatePolling:
         # Should not crash
         orch.run_cycle()
         task = state.get_task("task-001")
-        assert task.phase == Phase("human-pr-approval")
+        assert task.phase == Phase("pr-require-label")
 
 
 class TestMergeWithPRManager:
@@ -802,7 +802,7 @@ class TestPRStateResilience:
                     AgentStep(agent="verifier", on_pass=None, on_fail=None),
                 ),
             ),
-            GateStep(gate="human-pr-approval"),
+            GateStep(gate="pr-require-label"),
             ActionStep(action="merge-pr"),
         ),
     )
@@ -895,7 +895,7 @@ class TestPRStateResilience:
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
-                phase=Phase("human-pr-approval"),
+                phase=Phase("pr-require-label"),
                 branch="hyperloop/task-001",
             )
         )
@@ -908,7 +908,7 @@ class TestPRStateResilience:
         # PR stays the same (CLOSED PR not recreated at gate level)
         assert task.pr == pr_url
         # Still at gate (gate returned False for CLOSED PR)
-        assert task.phase == Phase("human-pr-approval")
+        assert task.phase == Phase("pr-require-label")
 
     # -- gate phase: MERGED PR -----------------------------------------------
 
@@ -925,7 +925,7 @@ class TestPRStateResilience:
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
-                phase=Phase("human-pr-approval"),
+                phase=Phase("pr-require-label"),
                 branch="hyperloop/task-001",
             )
         )

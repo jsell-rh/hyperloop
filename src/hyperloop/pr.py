@@ -222,6 +222,41 @@ class PRManager:
             text=True,
         )
 
+    def add_label(self, pr_url: str, label: str) -> None:
+        """Add a label to a PR. Creates the label on the repo if needed."""
+        self._ensure_label(label, "C5DEF5")
+        subprocess.run(
+            [
+                "gh",
+                "pr",
+                "edit",
+                pr_url,
+                "--add-label",
+                label,
+                "--repo",
+                self.repo,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+    def remove_label(self, pr_url: str, label: str) -> None:
+        """Remove a label from a PR."""
+        subprocess.run(
+            [
+                "gh",
+                "pr",
+                "edit",
+                pr_url,
+                "--remove-label",
+                label,
+                "--repo",
+                self.repo,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
     def mark_ready(self, pr_url: str) -> None:
         """Mark a draft PR as ready for review. Best-effort — logs on failure."""
         result = subprocess.run(

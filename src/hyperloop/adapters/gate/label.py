@@ -1,4 +1,4 @@
-"""LabelGate -- checks for 'lgtm' label on a task's PR."""
+"""LabelGate -- checks for a configurable label on a task's PR."""
 
 from __future__ import annotations
 
@@ -12,8 +12,9 @@ if TYPE_CHECKING:
 class LabelGate:
     """GatePort adapter that checks for a label on the task's PR."""
 
-    def __init__(self, pr: PRPort) -> None:
+    def __init__(self, pr: PRPort, label: str = "lgtm") -> None:
         self._pr = pr
+        self._label = label
 
     def check(self, task: Task, gate_name: str) -> bool:
         """Return True if the gate is cleared for this task.

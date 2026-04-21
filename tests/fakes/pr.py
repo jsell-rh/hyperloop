@@ -63,8 +63,14 @@ class FakePRManager:
         self._rebase_fails.add(branch)
 
     def add_label(self, pr_url: str, label: str) -> None:
-        """Add a label to a PR (simulates external human action)."""
+        """Add a label to a PR (simulates external human action / port method)."""
         self._prs[pr_url].labels.add(label)
+
+    def remove_label(self, pr_url: str, label: str) -> None:
+        """Remove a label from a PR."""
+        rec = self._prs.get(pr_url)
+        if rec is not None:
+            rec.labels.discard(label)
 
     def get_labels(self, pr_url: str) -> set[str]:
         """Return the current labels on a PR (test helper)."""

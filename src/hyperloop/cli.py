@@ -405,9 +405,10 @@ def run(
 
     # Build notification adapter
     notification = None
-    if cfg.notifications_type == "github-comment":
-        # GitHubCommentNotification not yet implemented; fall back to null
-        pass
+    if cfg.notifications_type == "github-comment" and cfg.repo is not None:
+        from hyperloop.adapters.notification.github_comment import GitHubCommentNotification
+
+        notification = GitHubCommentNotification(repo=cfg.repo)
 
     # Build hooks
     hooks: list[CycleHook] = []

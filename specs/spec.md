@@ -158,11 +158,11 @@ pipeline:
   - loop:
       - agent: implementer
       - agent: verifier
-  - gate: human-pr-approval
+  - gate: pr-require-label
   - action: merge-pr
 
 gates:
-  human-pr-approval:
+  pr-require-label:
     type: label
 
 actions:
@@ -333,16 +333,20 @@ Adapters:
 
 | Adapter | Signal | Mechanism |
 |---|---|---|
-| `LabelGate` | `lgtm` label on PR | Checks PR labels. Default. |
-| `PRApprovalGate` | GitHub PR approved review | Checks review status. |
+| `LabelGate` | Configurable label on PR (default `lgtm`) | Checks PR labels. Default. |
+| `PRApprovalGate` | GitHub PR approved review | Checks review status, auto-requests reviewers. |
 | `CIStatusGate` | All required CI checks pass | Checks status rollup. |
 | `AllGate` | Multiple conditions (AND) | Clears when ALL child gates clear. |
+
+When a task enters a gate, the orchestrator adds a `hyperloop/needs-approval` label to the PR. When the gate clears, the label is removed. This provides visibility into which PRs need human action.
+
+GitHub comment notifications describe the required action when a task enters a gate (e.g. "add the `lgtm` label" or "review and approve this PR").
 
 Gates can be combined — a single gate requiring both label AND CI:
 
 ```yaml
 gates:
-  human-pr-approval:
+  pr-require-label:
     type: all
     require:
       - type: label
@@ -484,11 +488,11 @@ pipeline:
   - loop:
       - agent: implementer
       - agent: verifier
-  - gate: human-pr-approval
+  - gate: pr-require-label
   - action: merge-pr
 
 gates:
-  human-pr-approval:
+  pr-require-label:
     type: label
 
 actions:

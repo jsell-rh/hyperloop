@@ -57,3 +57,11 @@ class PRPort(Protocol):
     def remove_gate_label(self, pr_url: str) -> None:
         """Remove the gate label after successful merge."""
         ...
+
+    def add_label(self, pr_url: str, label: str) -> None:
+        """Add a label to a PR."""
+        ...
+
+    def remove_label(self, pr_url: str, label: str) -> None:
+        """Remove a label from a PR."""
+        ...

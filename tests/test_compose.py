@@ -520,13 +520,13 @@ metadata:
   name: gated
 intake: []
 pipeline:
-  - gate: human-pr-approval
+  - gate: pr-require-label
 """
         process = parse_process(yaml_input)
         assert process is not None
         assert len(process.pipeline) == 1
         assert isinstance(process.pipeline[0], GateStep)
-        assert process.pipeline[0].gate == "human-pr-approval"
+        assert process.pipeline[0].gate == "pr-require-label"
 
     def test_agent_step_with_on_pass_on_fail(self) -> None:
         """parse_process populates on_pass and on_fail when present."""

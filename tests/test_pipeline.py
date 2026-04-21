@@ -183,7 +183,7 @@ class TestNestedLoops:
 
 
 # ---------------------------------------------------------------------------
-# Gate: (implementer, gate(human-pr-approval), merge-pr)
+# Gate: (implementer, gate(pr-require-label), merge-pr)
 # ---------------------------------------------------------------------------
 
 
@@ -192,7 +192,7 @@ class TestGate:
 
     pipeline = (
         role("implementer"),
-        GateStep(gate="human-pr-approval"),
+        GateStep(gate="pr-require-label"),
         ActionStep(action="merge-pr"),
     )
     executor = PipelineExecutor(pipeline)
@@ -200,13 +200,13 @@ class TestGate:
     def test_implementer_pass_advances_to_gate(self):
         """After implementer passes, advance to gate and return WaitForGate."""
         action, new_pos = self.executor.next_action(pos(0), result=PASS)
-        assert action == WaitForGate(gate="human-pr-approval")
+        assert action == WaitForGate(gate="pr-require-label")
         assert new_pos == pos(1)
 
     def test_at_gate_no_result_returns_wait(self):
         """At gate with no result (not yet signaled), return WaitForGate."""
         action, new_pos = self.executor.next_action(pos(1), result=None)
-        assert action == WaitForGate(gate="human-pr-approval")
+        assert action == WaitForGate(gate="pr-require-label")
         assert new_pos == pos(1)
 
     def test_gate_pass_advances_to_merge(self):
