@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { marked } from 'marked'
 import type { AgentDefinition, CheckScript } from '~/types'
 
 const { fetchAgents, fetchChecks } = useApi()
@@ -44,6 +45,13 @@ const composedPreview = computed(() => {
   }
   return parts.join('\n\n---\n\n')
 })
+
+const previewRendered = computed(() => {
+  if (!composedPreview.value) return ''
+  return marked.parse(composedPreview.value) as string
+})
+
+const previewMode = ref<'rendered' | 'raw'>('rendered')
 
 onMounted(load)
 </script>
@@ -198,10 +206,21 @@ onMounted(load)
 
         <!-- Composed Preview -->
         <div class="rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-700 p-4">
-          <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">
-            Composed Preview
-          </h3>
-          <pre class="text-sm font-mono whitespace-pre-wrap text-gray-700 dark:text-gray-300 overflow-x-auto leading-relaxed">{{ composedPreview || '(empty)' }}</pre>
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-sm font-medium text-gray-600 dark:text-gray-400">
+              Composed Preview
+            </h3>
+            <button
+              class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+              @click="previewMode = previewMode === 'rendered' ? 'raw' : 'rendered'"
+            >
+              {{ previewMode === 'rendered' ? 'Raw' : 'Rendered' }}
+            </button>
+          </div>
+          <div v-if="previewMode === 'rendered' && composedPreview">
+            <div class="prose prose-sm dark:prose-invert max-w-none" v-html="previewRendered" />
+          </div>
+          <pre v-else class="text-sm font-mono whitespace-pre-wrap text-gray-700 dark:text-gray-300 overflow-x-auto leading-relaxed">{{ composedPreview || '(empty)' }}</pre>
           <p class="mt-3 text-xs text-gray-400 dark:text-gray-500">
             Spec content and findings are injected per-task at spawn time.
           </p>
