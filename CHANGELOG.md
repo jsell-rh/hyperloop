@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.23.0 (2026-04-21)
+
+### Features
+
+- Sync trunk with remote after persist, before spawning workers
+  ([`30ba3da`](https://github.com/jsell-rh/hyperloop/commit/30ba3da5ae502c0b427ecd83575cde42919514f9))
+
+
 ## v0.22.0 (2026-04-21)
 
 
