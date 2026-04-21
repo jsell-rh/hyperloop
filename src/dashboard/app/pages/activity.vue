@@ -84,7 +84,7 @@ const recentReaped = computed<ReapedWorker[]>(() => {
     <h1 class="text-2xl font-semibold text-gray-900 dark:text-gray-100 mb-6">Activity</h1>
 
     <!-- Error banner -->
-    <div v-if="loadError" class="mb-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-4 py-3 flex items-center gap-2">
+    <div v-if="loadError" class="mb-4 rounded-lg bg-white dark:bg-gray-900 shadow-card p-4 flex items-center gap-3 border-l-2 border-l-red-400">
       <svg class="h-4 w-4 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
       </svg>
@@ -93,7 +93,7 @@ const recentReaped = computed<ReapedWorker[]>(() => {
 
     <!-- Disabled / no events state -->
     <div v-if="data && !data.enabled"
-         class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-8 text-center">
+         class="rounded-lg bg-white dark:bg-gray-900 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none p-8 text-center">
       <p class="text-gray-500 dark:text-gray-400">
         Enable <code class="text-sm bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded">dashboard: { enabled: true }</code>
         in .hyperloop.yaml to see cycle activity.
@@ -104,17 +104,17 @@ const recentReaped = computed<ReapedWorker[]>(() => {
     <template v-if="data && data.enabled">
       <!-- Region 1: Status Strip -->
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+        <div class="rounded-lg bg-white dark:bg-gray-900 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none p-5">
           <div class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Cycle</div>
           <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">#{{ data.current_cycle }}</div>
         </div>
 
-        <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+        <div class="rounded-lg bg-white dark:bg-gray-900 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none p-5">
           <div class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Active Workers</div>
           <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ data.active_workers.length }}</div>
         </div>
 
-        <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+        <div class="rounded-lg bg-white dark:bg-gray-900 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none p-5">
           <div class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Status</div>
           <div class="flex items-center gap-2">
             <span class="w-2 h-2 rounded-full" :class="statusDot"></span>
@@ -124,7 +124,7 @@ const recentReaped = computed<ReapedWorker[]>(() => {
           </div>
         </div>
 
-        <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+        <div class="rounded-lg bg-white dark:bg-gray-900 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none p-5">
           <div class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">Last Update</div>
           <div class="text-lg font-semibold text-gray-900 dark:text-gray-100">{{ lastUpdate }}</div>
         </div>

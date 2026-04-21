@@ -55,7 +55,7 @@ const guidelineEntries = computed(() =>
     </p>
 
     <!-- Error banner -->
-    <div v-if="error" class="mb-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-4 py-3 flex items-center gap-2">
+    <div v-if="error" class="mb-4 rounded-lg bg-white dark:bg-gray-900 shadow-card p-4 flex items-center gap-3 border-l-2 border-l-red-400">
       <svg class="h-4 w-4 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
       </svg>
@@ -63,7 +63,7 @@ const guidelineEntries = computed(() =>
     </div>
 
     <!-- Section 1: Pipeline Flowchart -->
-    <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm mb-6">
+    <div class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none mb-6">
       <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
         Pipeline
       </h2>
@@ -96,7 +96,7 @@ const guidelineEntries = computed(() =>
     </div>
 
     <!-- Section 2: Gates -->
-    <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm mb-6">
+    <div class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none mb-6">
       <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
         Gates
       </h2>
@@ -126,7 +126,7 @@ const guidelineEntries = computed(() =>
     </div>
 
     <!-- Section 3: Actions -->
-    <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm mb-6">
+    <div class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none mb-6">
       <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
         Actions
       </h2>
@@ -156,7 +156,7 @@ const guidelineEntries = computed(() =>
     </div>
 
     <!-- Section 4: Hooks -->
-    <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm mb-6">
+    <div class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none mb-6">
       <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
         Hooks
       </h2>
@@ -186,7 +186,7 @@ const guidelineEntries = computed(() =>
     </div>
 
     <!-- Section 5: Process Learning -->
-    <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm mb-6">
+    <div class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none mb-6">
       <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
         Process Learning
       </h2>
@@ -208,7 +208,7 @@ const guidelineEntries = computed(() =>
     </div>
 
     <!-- Section 6: Source -->
-    <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm">
+    <div class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none">
       <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
         Source
       </h2>

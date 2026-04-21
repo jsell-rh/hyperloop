@@ -117,7 +117,7 @@ onUnmounted(() => {
     <Breadcrumb :items="breadcrumbItems" />
 
     <!-- Error banner -->
-    <div v-if="error" class="mb-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-4 py-3 flex items-center gap-2">
+    <div v-if="error" class="mb-4 rounded-lg bg-white dark:bg-gray-900 shadow-card p-4 flex items-center gap-3 border-l-2 border-l-red-400">
       <svg class="h-4 w-4 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
       </svg>
@@ -158,7 +158,7 @@ onUnmounted(() => {
           <!-- Overview tab -->
           <div v-if="activeTab === 'overview'" key="overview" class="space-y-6">
             <!-- Metadata card -->
-            <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm">
+            <div class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none">
               <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
                 Task Metadata
               </h2>
@@ -219,10 +219,10 @@ onUnmounted(() => {
             <!-- Latest review inline (A3) -->
             <div
               v-if="latestReview"
-              class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm"
+              class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none"
             >
               <div class="flex items-center gap-2 mb-2">
-                <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">
                   Latest Review
                 </h2>
                 <span
@@ -248,7 +248,7 @@ onUnmounted(() => {
             <!-- Pipeline position -->
             <div
               v-if="pipelineSteps && pipelineSteps.length > 0"
-              class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm"
+              class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none"
             >
               <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
                 Pipeline Position
@@ -260,7 +260,7 @@ onUnmounted(() => {
             </div>
 
             <!-- Dependencies -->
-            <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm">
+            <div class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none">
               <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
                 Dependencies
               </h2>

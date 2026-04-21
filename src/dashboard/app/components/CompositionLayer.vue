@@ -44,7 +44,7 @@ const style = computed(() => badgeStyles[props.color] ?? badgeStyles.gray)
 </script>
 
 <template>
-  <div class="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+  <div class="rounded-lg shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none overflow-hidden">
     <!-- Header -->
     <button
       class="w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-900/50 hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors text-left"

@@ -61,7 +61,7 @@ function getSourceStyle(source: string): { bg: string; text: string } {
         <div
           v-for="(section, sectionIndex) in entry.sections"
           :key="sectionIndex"
-          class="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden"
+          class="rounded-lg shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none overflow-hidden"
         >
           <!-- Panel header -->
           <button

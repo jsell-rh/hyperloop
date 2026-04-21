@@ -56,7 +56,7 @@ onUnmounted(() => {
     <Breadcrumb :items="breadcrumbItems" />
 
     <!-- Error banner -->
-    <div v-if="error" class="mb-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-4 py-3 flex items-center gap-2">
+    <div v-if="error" class="mb-4 rounded-lg bg-white dark:bg-gray-900 shadow-card p-4 flex items-center gap-3 border-l-2 border-l-red-400">
       <svg class="h-4 w-4 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
       </svg>
@@ -71,7 +71,7 @@ onUnmounted(() => {
       <div class="mt-6 flex flex-col lg:flex-row gap-6">
         <!-- Main: spec content (wider) -->
         <div class="flex-1 min-w-0">
-          <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-6 shadow-sm">
+          <div class="rounded-lg bg-white dark:bg-gray-900 p-6 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none">
             <div
               class="prose prose-sm dark:prose-invert max-w-none"
               v-html="renderedContent"
@@ -91,7 +91,7 @@ onUnmounted(() => {
                 v-for="task in spec.tasks"
                 :key="task.id"
                 :to="`/tasks/${task.id}`"
-                class="block rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 shadow-sm transition-colors duration-150 hover:bg-gray-50 dark:hover:bg-gray-800/50 hover:border-gray-300 dark:hover:border-gray-600"
+                class="block rounded-lg bg-white dark:bg-gray-900 p-3 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none transition-all duration-200 hover:shadow-card-hover hover:-translate-y-px"
               >
                 <div class="flex items-center justify-between mb-1">
                   <span class="text-xs font-mono text-gray-500 dark:text-gray-400">

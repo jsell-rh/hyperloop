@@ -61,7 +61,7 @@ onMounted(load)
     <h1 class="text-2xl font-semibold text-gray-900 dark:text-gray-100 mb-6">Agents</h1>
 
     <!-- Error banner -->
-    <div v-if="loadError" class="mb-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-4 py-3 flex items-center gap-2">
+    <div v-if="loadError" class="mb-4 rounded-lg bg-white dark:bg-gray-900 shadow-card p-4 flex items-center gap-3 border-l-2 border-l-red-400">
       <svg class="h-4 w-4 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
       </svg>
@@ -145,7 +145,7 @@ onMounted(load)
         </div>
         <div
           v-else
-          class="rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-3"
+          class="rounded-lg shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none px-4 py-3"
         >
           <p class="text-sm text-gray-400 dark:text-gray-500">
             No guidelines configured for this agent.
@@ -163,7 +163,7 @@ onMounted(load)
         />
 
         <!-- Panel 4: Check Scripts -->
-        <div class="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div class="rounded-lg shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none overflow-hidden">
           <button
             class="w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-900/50 hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors text-left"
             @click="checksOpen = !checksOpen"

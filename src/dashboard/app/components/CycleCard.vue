@@ -27,10 +27,10 @@ function formatDuration(d: number): string {
 </script>
 
 <template>
-  <div class="rounded-lg border bg-white dark:bg-gray-900 p-4"
+  <div class="rounded-lg bg-white dark:bg-gray-900 p-4 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none"
        :class="isLatest
-         ? 'border-l-2 border-l-blue-400 border-gray-200 dark:border-gray-700 dark:border-l-blue-400'
-         : 'border-gray-200 dark:border-gray-700'">
+         ? 'border-l-2 border-l-blue-400'
+         : ''">
     <!-- Header -->
     <div class="flex items-center justify-between mb-3">
       <div class="flex items-center gap-2">
