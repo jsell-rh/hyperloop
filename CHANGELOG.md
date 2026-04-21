@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.24.0 (2026-04-21)
+
+### Features
+
+- Gate rework — pr-require-label, pr-require-approval, GitHub comment notifications
+  ([`c7ae615`](https://github.com/jsell-rh/hyperloop/commit/c7ae61565f7ccab8e9365c60f2d359c7a2aec02c))
+
+
 ## v0.23.0 (2026-04-21)
 
 ### Features
