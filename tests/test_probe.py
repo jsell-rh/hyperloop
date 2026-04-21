@@ -7,29 +7,20 @@ captures calls for test assertions.
 
 from __future__ import annotations
 
+import inspect
+
 from hyperloop.adapters.probe import MultiProbe, NullProbe
+from hyperloop.ports.probe import OrchestratorProbe
 from tests.fakes.probe import RecordingProbe
 
-# All 17 probe method names for exhaustive testing
-ALL_METHODS = (
-    "orchestrator_started",
-    "orchestrator_halted",
-    "cycle_started",
-    "cycle_completed",
-    "worker_spawned",
-    "worker_reaped",
-    "task_advanced",
-    "task_looped_back",
-    "task_completed",
-    "task_failed",
-    "gate_checked",
-    "merge_attempted",
-    "rebase_conflict",
-    "intake_ran",
-    "process_improver_ran",
-    "recovery_started",
-    "orphan_found",
-)
+
+def _probe_methods() -> tuple[str, ...]:
+    """Derive all probe method names from the OrchestratorProbe protocol."""
+    return tuple(
+        name
+        for name, _ in inspect.getmembers(OrchestratorProbe, predicate=inspect.isfunction)
+        if not name.startswith("_")
+    )
 
 
 class TestNullProbe:
@@ -38,13 +29,22 @@ class TestNullProbe:
     def test_all_methods_accept_kwargs_without_raising(self) -> None:
         """Every method on NullProbe can be called with arbitrary kwargs."""
         probe = NullProbe()
-        for method_name in ALL_METHODS:
+        for method_name in _probe_methods():
             getattr(probe, method_name)(foo="bar", baz=42)
         # No exception = pass
 
 
 class TestMultiProbe:
     """MultiProbe fans out to children and isolates exceptions."""
+
+    def test_has_every_protocol_method(self) -> None:
+        """MultiProbe must implement every method from OrchestratorProbe."""
+        multi = MultiProbe((NullProbe(),))
+        for method_name in _probe_methods():
+            assert hasattr(multi, method_name), (
+                f"MultiProbe is missing method '{method_name}' from OrchestratorProbe"
+            )
+            getattr(multi, method_name)(test_key="test_value")
 
     def test_fans_out_to_two_recording_probes(self) -> None:
         """Both children receive the call with correct kwargs."""
@@ -131,9 +131,9 @@ class TestRecordingProbe:
     def test_all_17_methods_are_recorded(self) -> None:
         """Every probe method is captured by RecordingProbe."""
         probe = RecordingProbe()
-        for method_name in ALL_METHODS:
+        for method_name in _probe_methods():
             getattr(probe, method_name)(test_key="test_value")
 
-        assert len(probe.calls) == len(ALL_METHODS)
+        assert len(probe.calls) == len(_probe_methods())
         recorded_methods = {c.method for c in probe.calls}
-        assert recorded_methods == set(ALL_METHODS)
+        assert recorded_methods == set(_probe_methods())
