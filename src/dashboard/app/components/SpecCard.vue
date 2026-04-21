@@ -5,9 +5,19 @@ const props = defineProps<{
   spec: SpecSummary
 }>()
 
-const progressPercent = computed(() => {
+const completePercent = computed(() => {
   if (props.spec.tasks_total === 0) return 0
-  return Math.round((props.spec.tasks_complete / props.spec.tasks_total) * 100)
+  return (props.spec.tasks_complete / props.spec.tasks_total) * 100
+})
+
+const failedPercent = computed(() => {
+  if (props.spec.tasks_total === 0) return 0
+  return (props.spec.tasks_failed / props.spec.tasks_total) * 100
+})
+
+const inProgressPercent = computed(() => {
+  if (props.spec.tasks_total === 0) return 0
+  return (props.spec.tasks_in_progress / props.spec.tasks_total) * 100
 })
 
 const specPath = computed(() => {
@@ -18,7 +28,7 @@ const specPath = computed(() => {
 <template>
   <NuxtLink
     :to="specPath"
-    class="block rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5 shadow-sm transition-colors hover:border-gray-300 dark:hover:border-gray-700"
+    class="block rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm transition-colors hover:border-gray-300 dark:hover:border-gray-600"
   >
     <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
       {{ spec.title }}
@@ -27,16 +37,27 @@ const specPath = computed(() => {
       {{ spec.spec_ref }}
     </p>
 
-    <!-- Progress bar -->
+    <!-- Stacked progress bar -->
     <div class="mt-4">
       <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
         <span>Progress</span>
         <span>{{ spec.tasks_complete }}/{{ spec.tasks_total }}</span>
       </div>
-      <div class="h-1.5 w-full rounded-full bg-gray-100 dark:bg-gray-800">
+      <div class="h-1.5 w-full rounded-full bg-gray-100 dark:bg-gray-800 flex overflow-hidden">
         <div
-          class="h-1.5 rounded-full bg-green-500 dark:bg-green-400 transition-all"
-          :style="{ width: `${progressPercent}%` }"
+          v-if="completePercent > 0"
+          class="h-1.5 bg-green-500 dark:bg-green-400 transition-all"
+          :style="{ width: `${completePercent}%` }"
+        />
+        <div
+          v-if="failedPercent > 0"
+          class="h-1.5 bg-red-500 dark:bg-red-400 transition-all"
+          :style="{ width: `${failedPercent}%` }"
+        />
+        <div
+          v-if="inProgressPercent > 0"
+          class="h-1.5 bg-blue-500 dark:bg-blue-400 transition-all"
+          :style="{ width: `${inProgressPercent}%` }"
         />
       </div>
     </div>

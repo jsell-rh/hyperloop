@@ -15,7 +15,7 @@ function formatDuration(seconds: number): string {
 </script>
 
 <template>
-  <div class="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-4">
+  <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
     <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Worker Timeline</h3>
 
     <div v-if="activeWorkers.length === 0 && recentReaped.length === 0"

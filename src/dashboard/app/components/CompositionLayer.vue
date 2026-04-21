@@ -35,7 +35,7 @@ const style = computed(() => badgeStyles[props.color] ?? badgeStyles.gray)
 </script>
 
 <template>
-  <div class="rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden">
+  <div class="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
     <!-- Header -->
     <button
       class="w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-900/50 hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors text-left"
@@ -66,11 +66,13 @@ const style = computed(() => badgeStyles[props.color] ?? badgeStyles.gray)
     </button>
 
     <!-- Body -->
-    <div
-      v-if="isOpen"
-      class="border-t border-gray-200 dark:border-gray-800"
-    >
-      <pre class="text-sm font-mono whitespace-pre-wrap bg-gray-50 dark:bg-gray-950 rounded-b p-4 text-gray-700 dark:text-gray-300 overflow-x-auto">{{ content }}</pre>
-    </div>
+    <Transition name="expand">
+      <div
+        v-if="isOpen"
+        class="border-t border-gray-200 dark:border-gray-800"
+      >
+        <pre class="text-sm font-mono whitespace-pre-wrap bg-gray-50 dark:bg-gray-950 rounded-b p-4 text-gray-700 dark:text-gray-300 overflow-x-auto leading-relaxed">{{ content }}</pre>
+      </div>
+    </Transition>
   </div>
 </template>

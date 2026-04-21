@@ -55,7 +55,7 @@ function getVerdictStyle(verdict: string) {
       </div>
 
       <!-- Content -->
-      <div class="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-3">
+      <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3">
         <div class="flex items-center gap-2 mb-1">
           <span class="text-xs font-medium text-gray-700 dark:text-gray-300">
             Round {{ review.round }}

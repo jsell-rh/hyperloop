@@ -11,7 +11,7 @@ function panelKey(roleIndex: number, sectionIndex: number): string {
   return `${roleIndex}-${sectionIndex}`
 }
 
-function togglePanel(key: string) {
+function togglePanel(key: string): void {
   expandedPanels.value[key] = !expandedPanels.value[key]
 }
 
@@ -42,7 +42,7 @@ const sourceBadgeStyle: Record<string, { bg: string; text: string }> = {
   },
 }
 
-function getSourceStyle(source: string) {
+function getSourceStyle(source: string): { bg: string; text: string } {
   return sourceBadgeStyle[source] ?? sourceBadgeStyle.base
 }
 </script>
@@ -61,7 +61,7 @@ function getSourceStyle(source: string) {
         <div
           v-for="(section, sectionIndex) in entry.sections"
           :key="sectionIndex"
-          class="rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden"
+          class="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden"
         >
           <!-- Panel header -->
           <button
@@ -90,12 +90,14 @@ function getSourceStyle(source: string) {
           </button>
 
           <!-- Panel content -->
-          <div
-            v-if="expandedPanels[panelKey(roleIndex, sectionIndex)]"
-            class="px-3 py-2 border-t border-gray-200 dark:border-gray-800"
-          >
-            <pre class="text-xs text-gray-700 dark:text-gray-300 font-mono whitespace-pre-wrap overflow-x-auto">{{ section.content }}</pre>
-          </div>
+          <Transition name="expand">
+            <div
+              v-if="expandedPanels[panelKey(roleIndex, sectionIndex)]"
+              class="px-3 py-2 border-t border-gray-200 dark:border-gray-800"
+            >
+              <pre class="text-xs text-gray-700 dark:text-gray-300 font-mono whitespace-pre-wrap overflow-x-auto leading-relaxed">{{ section.content }}</pre>
+            </div>
+          </Transition>
         </div>
       </div>
     </div>

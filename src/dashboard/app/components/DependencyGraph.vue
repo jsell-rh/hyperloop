@@ -27,17 +27,23 @@ const edgeStatusColors: Record<string, { light: string; dark: string }> = {
   'failed':     { light: '#ef4444', dark: '#f87171' },
 }
 
-// Detect dark mode
-const isDark = computed(() => {
-  if (import.meta.client) {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches
-  }
-  return false
+// Detect dark mode via class on document element
+const isDark = ref(false)
+
+onMounted(() => {
+  const el = document.documentElement
+  isDark.value = el.classList.contains('dark')
+  const observer = new MutationObserver(() => {
+    isDark.value = el.classList.contains('dark')
+  })
+  observer.observe(el, { attributes: true, attributeFilter: ['class'] })
+  onUnmounted(() => observer.disconnect())
 })
 
 interface LayoutNode {
   id: string
   title: string
+  fullTitle: string
   status: string
   phase: string | null
   x: number
@@ -50,9 +56,85 @@ interface LayoutEdge {
   fromY: number
   toX: number
   toY: number
+  fromId: string
+  toId: string
   status: string
   isCritical: boolean
 }
+
+// Hover state
+const hoveredNodeId = ref<string | null>(null)
+
+// Build ancestor/descendant sets for hover highlight
+const ancestorMap = computed(() => {
+  const { nodes, edges } = props.graph
+  const map = new Map<string, Set<string>>()
+  for (const n of nodes) map.set(n.id, new Set())
+
+  // Build reverse adjacency (parent -> children)
+  const parents = new Map<string, string[]>()
+  for (const n of nodes) parents.set(n.id, [])
+  for (const e of edges) {
+    parents.get(e.to_id)?.push(e.from_id)
+  }
+
+  function getAncestors(id: string, visited: Set<string>): Set<string> {
+    if (visited.has(id)) return new Set()
+    visited.add(id)
+    const result = new Set<string>()
+    for (const p of (parents.get(id) || [])) {
+      result.add(p)
+      for (const a of getAncestors(p, visited)) result.add(a)
+    }
+    return result
+  }
+
+  for (const n of nodes) {
+    map.set(n.id, getAncestors(n.id, new Set()))
+  }
+  return map
+})
+
+const descendantMap = computed(() => {
+  const { nodes, edges } = props.graph
+  const map = new Map<string, Set<string>>()
+  for (const n of nodes) map.set(n.id, new Set())
+
+  const children = new Map<string, string[]>()
+  for (const n of nodes) children.set(n.id, [])
+  for (const e of edges) {
+    children.get(e.from_id)?.push(e.to_id)
+  }
+
+  function getDescendants(id: string, visited: Set<string>): Set<string> {
+    if (visited.has(id)) return new Set()
+    visited.add(id)
+    const result = new Set<string>()
+    for (const c of (children.get(id) || [])) {
+      result.add(c)
+      for (const d of getDescendants(c, visited)) result.add(d)
+    }
+    return result
+  }
+
+  for (const n of nodes) {
+    map.set(n.id, getDescendants(n.id, new Set()))
+  }
+  return map
+})
+
+function isRelated(nodeId: string): boolean {
+  if (!hoveredNodeId.value) return true
+  if (nodeId === hoveredNodeId.value) return true
+  const ancestors = ancestorMap.value.get(hoveredNodeId.value)
+  const descendants = descendantMap.value.get(hoveredNodeId.value)
+  return (ancestors?.has(nodeId) ?? false) || (descendants?.has(nodeId) ?? false)
+}
+
+// Tooltip
+const tooltipNode = ref<LayoutNode | null>(null)
+const tooltipX = ref(0)
+const tooltipY = ref(0)
 
 const layout = computed(() => {
   const { nodes, edges, critical_path } = props.graph
@@ -145,6 +227,7 @@ const layout = computed(() => {
     return {
       id: n.id,
       title: n.title.length > 28 ? n.title.slice(0, 28) + '...' : n.title,
+      fullTitle: n.title,
       status: n.status,
       phase: n.phase,
       x: pos.x,
@@ -173,6 +256,8 @@ const layout = computed(() => {
         fromY: from.y + NODE_HEIGHT / 2,
         toX: to.x,
         toY: to.y + NODE_HEIGHT / 2,
+        fromId: e.from_id,
+        toId: e.to_id,
         status: nodeStatusMap.get(e.from_id) || 'not-started',
         isCritical: criticalEdges.has(`${e.from_id}->${e.to_id}`),
       }
@@ -184,7 +269,7 @@ const layout = computed(() => {
   return { nodes: layoutNodes, edges: layoutEdges, width, height }
 })
 
-const handleNodeClick = (nodeId: string) => {
+const handleNodeClick = (nodeId: string): void => {
   navigateTo(`/tasks/${nodeId}`)
 }
 
@@ -202,6 +287,23 @@ const getEdgeColor = (status: string): string => {
   const colors = edgeStatusColors[status] || edgeStatusColors['not-started']
   return isDark.value ? colors.dark : colors.light
 }
+
+function handleNodeEnter(node: LayoutNode): void {
+  hoveredNodeId.value = node.id
+  tooltipNode.value = node
+  tooltipX.value = node.x + NODE_WIDTH / 2
+  tooltipY.value = node.y - 10
+}
+
+function handleNodeLeave(): void {
+  hoveredNodeId.value = null
+  tooltipNode.value = null
+}
+
+function isEdgeRelated(edge: LayoutEdge): boolean {
+  if (!hoveredNodeId.value) return true
+  return isRelated(edge.fromId) && isRelated(edge.toId)
+}
 </script>
 
 <template>
@@ -209,7 +311,7 @@ const getEdgeColor = (status: string): string => {
     No tasks to display in the dependency graph.
   </div>
 
-  <div v-else class="overflow-auto max-h-[500px]">
+  <div v-else class="overflow-auto max-h-[500px] relative">
     <svg
       :width="layout.width"
       :height="layout.height"
@@ -252,6 +354,8 @@ const getEdgeColor = (status: string): string => {
         :stroke="getEdgeColor(edge.status)"
         :stroke-width="edge.isCritical ? 2.5 : 1"
         :marker-end="edge.isCritical ? 'url(#arrowhead-critical)' : 'url(#arrowhead)'"
+        :opacity="isEdgeRelated(edge) ? 1 : 0.2"
+        class="transition-opacity duration-150"
       />
 
       <!-- Nodes -->
@@ -259,7 +363,11 @@ const getEdgeColor = (status: string): string => {
         v-for="node in layout.nodes"
         :key="node.id"
         class="cursor-pointer"
+        :opacity="isRelated(node.id) ? 1 : 0.2"
+        style="transition: opacity 150ms ease"
         @click="handleNodeClick(node.id)"
+        @mouseenter="handleNodeEnter(node)"
+        @mouseleave="handleNodeLeave"
       >
         <rect
           :x="node.x"
@@ -270,8 +378,9 @@ const getEdgeColor = (status: string): string => {
           :ry="8"
           :fill="getNodeFill(node.status)"
           :stroke="getNodeStroke(node.status)"
-          :stroke-width="node.isCritical ? 3 : 2"
+          :stroke-width="hoveredNodeId === node.id ? 3 : (node.isCritical ? 3 : 2)"
           :filter="node.isCritical ? 'url(#shadow)' : undefined"
+          class="graph-node-rect"
         />
         <!-- Task ID -->
         <text
@@ -303,6 +412,45 @@ const getEdgeColor = (status: string): string => {
           {{ node.phase }}
         </text>
       </g>
+
+      <!-- Tooltip -->
+      <g v-if="tooltipNode">
+        <rect
+          :x="tooltipX - 80"
+          :y="tooltipY - 38"
+          width="160"
+          height="32"
+          rx="6"
+          :fill="isDark ? '#374151' : '#1f2937'"
+          opacity="0.95"
+        />
+        <text
+          :x="tooltipX"
+          :y="tooltipY - 26"
+          font-size="11"
+          fill="white"
+          text-anchor="middle"
+          font-family="ui-sans-serif, system-ui, sans-serif"
+        >
+          {{ tooltipNode.fullTitle.length > 24 ? tooltipNode.fullTitle.slice(0, 24) + '...' : tooltipNode.fullTitle }}
+        </text>
+        <text
+          :x="tooltipX"
+          :y="tooltipY - 13"
+          font-size="10"
+          fill="#9ca3af"
+          text-anchor="middle"
+          font-family="ui-sans-serif, system-ui, sans-serif"
+        >
+          {{ tooltipNode.status }}{{ tooltipNode.phase ? ' / ' + tooltipNode.phase : '' }}
+        </text>
+      </g>
     </svg>
   </div>
 </template>
+
+<style scoped>
+.graph-node-rect {
+  transition: filter 150ms ease, stroke-width 150ms ease;
+}
+</style>
