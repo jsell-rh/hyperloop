@@ -120,45 +120,66 @@ def get_task(task_id: str) -> TaskDetail:
 
 
 def _load_agent_templates(repo_path: Path) -> dict[str, dict[str, str]]:
-    """Load agent templates from YAML files.
+    """Load agent templates via kustomize build, falling back to raw YAML files.
 
-    Tries the kustomize overlay directory first, then falls back to the
-    base directory.  Returns a dict mapping role name to prompt/guidelines.
+    Tries kustomize build first (resolves remote refs), then falls back to
+    reading local YAML files directly.
     """
-    candidates = [
-        repo_path / ".hyperloop" / "agents",
-        repo_path / "base",
-    ]
+    import subprocess
 
     templates: dict[str, dict[str, str]] = {}
-    for base_dir in candidates:
-        if not base_dir.is_dir():
+
+    # Try kustomize build (resolves remote base refs)
+    overlay_dir = repo_path / ".hyperloop" / "agents"
+    if overlay_dir.is_dir():
+        result = subprocess.run(
+            ["kustomize", "build", str(overlay_dir)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            for doc in yaml.safe_load_all(result.stdout):
+                if not isinstance(doc, dict) or doc.get("kind") != "Agent":
+                    continue
+                metadata = doc.get("metadata", {})
+                name = metadata.get("name", "") if isinstance(metadata, dict) else ""
+                if not name:
+                    name = str(doc.get("name", ""))
+                if not name:
+                    continue
+                templates[name] = {
+                    "prompt": str(doc.get("prompt", "")),
+                    "guidelines": str(doc.get("guidelines", "")).strip(),
+                }
+            if templates:
+                return templates
+
+    # Fallback: read raw YAML files from base/
+    base_dir = repo_path / "base"
+    if not base_dir.is_dir():
+        return templates
+
+    for yaml_file in base_dir.glob("*.yaml"):
+        if yaml_file.name == "kustomization.yaml":
             continue
-        for yaml_file in base_dir.glob("*.yaml"):
-            if yaml_file.name == "kustomization.yaml":
-                continue
-            try:
-                with open(yaml_file) as f:
-                    doc = yaml.safe_load(f)
-            except (yaml.YAMLError, OSError):
-                continue
-            if not isinstance(doc, dict):
-                continue
-            if doc.get("kind") != "Agent":
-                continue
-            metadata = doc.get("metadata", {})
-            name = metadata.get("name", "") if isinstance(metadata, dict) else ""
-            if not name:
-                name = str(doc.get("name", ""))
-            if not name:
-                continue
-            prompt_text = str(doc.get("prompt", ""))
-            guidelines_text = str(doc.get("guidelines", "")).strip()
-            # Only set if not already found (overlay takes priority)
-            if name not in templates:
-                templates[name] = {"prompt": prompt_text, "guidelines": guidelines_text}
-        if templates:
-            break  # Use the first directory that has templates
+        try:
+            with open(yaml_file) as f:
+                doc = yaml.safe_load(f)
+        except (yaml.YAMLError, OSError):
+            continue
+        if not isinstance(doc, dict) or doc.get("kind") != "Agent":
+            continue
+        metadata = doc.get("metadata", {})
+        name = metadata.get("name", "") if isinstance(metadata, dict) else ""
+        if not name:
+            name = str(doc.get("name", ""))
+        if not name:
+            continue
+        templates[name] = {
+            "prompt": str(doc.get("prompt", "")),
+            "guidelines": str(doc.get("guidelines", "")).strip(),
+        }
     return templates
 
 
