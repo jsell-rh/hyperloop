@@ -1,13 +1,20 @@
 # hyperloop
 
-Walks tasks through composable process pipelines using AI agents. You write specs, it creates tasks, implements them, verifies the work, and merges the results.
+A reconciler that keeps code in sync with specs using AI agents. Specs are desired state. Code is actual state. Hyperloop continuously closes the gap.
+
+```
+Spec (desired) <-> Code (actual) = Gap
+Gap -> Work -> PR -> Gate -> Merge -> Gap closed
+```
+
+You don't manage tasks -- you manage specs. Tasks are an internal implementation detail, like Kubernetes pods. Want to add a feature? Update the spec. Want to cancel it? Remove it from the spec.
 
 ## Prerequisites
 
 - Python 3.12+
-- [kustomize](https://kubectl.docs.kubernetes.io/installation/kustomize/) (`kustomize` on PATH)
+- [kustomize](https://kubectl.docs.kubernetes.io/installation/kustomize/) on PATH
 - `git`
-- `gh` CLI (optional, for GitHub PR operations)
+- `gh` CLI (for GitHub PR operations)
 - An Anthropic API key, or Vertex AI / Bedrock credentials
 
 ## Install
@@ -39,11 +46,38 @@ hyperloop run
 hyperloop run --repo owner/repo
 ```
 
-## How It Works
+## Reconciliation Cycle
 
-Agents run via the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview.md) — in-process, with full tool access (file I/O, git, shell). Each parallel worker gets its own git worktree for branch isolation. Serial agents (PM intake, process-improver) run on trunk.
+Each cycle has four phases:
 
-The SDK handles tool execution, context management, and clean exit. No subprocess polling or result-file conventions.
+1. **COLLECT** -- reap finished workers, run cycle hooks (e.g. process-improver)
+2. **INTAKE** -- detect spec gaps and failed tasks, invoke PM agent to propose new work
+3. **ADVANCE** -- advance existing tasks through pipeline steps (gates, actions)
+4. **SPAWN** -- decide which tasks need workers, compose prompts, spawn agents
+
+The orchestrator halts when no gaps remain. Use `hyperloop watch` for continuous operation.
+
+## Pipeline Primitives
+
+Work moves through a pipeline defined in `process.yaml`. Four primitives:
+
+| Primitive | What it does |
+|---|---|
+| `agent: X` | Spawn a worker agent with X's prompt template |
+| `gate: X` | Block until an external signal (e.g. PR label, CI status) |
+| `action: X` | Execute an operation (e.g. merge PR) |
+| `loop:` | Wrap steps -- on fail restart from top, on pass continue |
+
+Example pipeline:
+
+```yaml
+pipeline:
+  - loop:
+      - agent: implementer
+      - agent: verifier
+  - gate: human-pr-approval
+  - action: merge-pr
+```
 
 ## Project Structure
 
@@ -56,87 +90,96 @@ my-project/
 │   ├── agents/
 │   │   ├── kustomization.yaml          # composition point (base + process component)
 │   │   └── process/
-│   │       └── kustomization.yaml      # empty Component (process-improver writes here)
+│   │       ├── kustomization.yaml      # process-improver writes here
+│   │       └── process.yaml            # pipeline + gate/action/hook config
 │   ├── state/
 │   │   ├── tasks/                      # task metadata (YAML frontmatter)
 │   │   └── reviews/                    # per-round review files
 │   └── checks/                         # executable check scripts
 └── specs/
-    └── *.spec.md                       # product specs (your domain)
+    └── *.md                            # product specs (your domain)
 ```
 
-`specs/` is yours — product specs only. `.hyperloop/` is orchestrator-managed.
+`specs/` is yours -- product specs only. `.hyperloop/` is orchestrator-managed.
 
 ## Prompt Composition
 
-Three layers, all resolved via a single `kustomize build`:
+Three layers, resolved via `kustomize build`:
 
 | Layer | Source | What it provides |
 |---|---|---|
 | Base | hyperloop repo `base/` | Core agent prompts |
-| Project overlay | gitops repo or in-repo patches | Project-specific `guidelines`, persona |
+| Project overlay | gitops repo or in-repo patches | Project-specific `guidelines` |
 | Process overlay | `.hyperloop/agents/process/` | Learned rules from process-improver |
 
-Agent resources have a `guidelines` field — additive by convention. At compose time: `prompt + guidelines + spec + findings`.
+At compose time the orchestrator injects: `prompt + guidelines + spec content + findings from prior rounds`.
 
 ## Configuration
 
 ```yaml
 # .hyperloop.yaml
 
-overlay: .hyperloop/agents/             # path to kustomization dir
-base_ref: github.com/org/hyperloop//base?ref=v1  # remote base for `hyperloop init`
+overlay: .hyperloop/agents/
+base_branch: main
+runtime: local                          # local | ambient
 
-target:
-  repo: owner/repo                      # GitHub repo (omit for local-only)
-  base_branch: main
-
-runtime:
-  max_workers: 6
-
-merge:
-  auto_merge: true
-  strategy: squash
-  delete_branch: true
-
+max_workers: 6
 poll_interval: 30
 max_task_rounds: 50
-max_cycles: 200
 max_action_attempts: 3
 
-observability:
-  log_format: console                   # console | json
-  log_level: info
-
-  matrix:                               # optional
-    homeserver: https://matrix.example.com
-    registration_token_env: MATRIX_REG_TOKEN
-    verbose: false
+notifications:
+  type: github-comment                  # github-comment | null (default: null)
 ```
 
 ## Custom Processes
 
-Override the default pipeline (implement → verify → merge):
+Override the default pipeline in `process.yaml`:
 
 ```yaml
-# process-patch.yaml
-kind: Process
-name: default
 pipeline:
   - loop:
-      - role: implementer
-      - role: verifier
+      - agent: implementer
+      - agent: verifier
   - gate: human-pr-approval
   - action: merge-pr
+
+gates:
+  human-pr-approval:
+    type: label                         # label | pr-approval | ci-status | all
+
+actions:
+  merge-pr:
+    type: pr-merge
+
+hooks:
+  after_reap:
+    - type: process-improver
 ```
 
-Four primitives: `role` (spawn agent), `gate` (wait for signal), `loop` (retry on failure), `action` (terminal op). Loops nest.
+## Architecture
+
+Hexagonal (ports and adapters). The domain is pure logic with no I/O. Ports define interfaces, adapters implement them. Seven concerns are separated:
+
+| Port | Purpose |
+|---|---|
+| `SpecSource` | Where to read desired state |
+| `StateStore` | Where task/worker state lives |
+| `Runtime` | Where agent sessions execute |
+| `GatePort` | How gates are evaluated |
+| `ActionPort` | How pipeline actions execute |
+| `NotificationPort` | How humans are told to act |
+| `OrchestratorProbe` | Domain observability |
+
+The default adapter set is git-native (git state store, git spec source, local worktrees for agent isolation), but the architecture is adapter-agnostic.
+
+See `specs/spec.md` for the full specification.
 
 ## Development
 
 ```bash
 uv sync --all-extras
 uv run pytest
-uv run ruff check . && ruff format --check .
+uv run ruff check . && uv run ruff format --check .
 uv run pyright
 ```
