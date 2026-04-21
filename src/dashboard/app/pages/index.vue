@@ -200,6 +200,21 @@ onUnmounted(() => {
           <span v-if="!graphExpanded" class="text-xs text-gray-400 dark:text-gray-500 ml-2">
             {{ activeCount }} active, {{ blockedCount }} blocked
           </span>
+          <!-- Inline legend -->
+          <div v-if="graphExpanded" class="flex items-center gap-4 text-[11px] text-gray-400 ml-auto">
+            <span class="flex items-center gap-1">
+              <span class="h-2 w-2 rounded-full bg-blue-500" /> In progress
+            </span>
+            <span class="flex items-center gap-1">
+              <span class="h-2 w-2 rounded-full bg-gray-300 dark:bg-gray-600" /> Complete
+            </span>
+            <span class="flex items-center gap-1">
+              <span class="h-2 w-2 rounded-full border border-dashed border-gray-400" /> Not started
+            </span>
+            <span class="flex items-center gap-1">
+              <span class="h-2 w-2 rounded-full bg-red-100 border border-red-400" /> Failed
+            </span>
+          </div>
         </div>
         <svg
           class="h-5 w-5 text-gray-400 dark:text-gray-500 transition-transform duration-200"
@@ -214,7 +229,7 @@ onUnmounted(() => {
       </button>
       <Transition name="expand">
         <div v-if="graphExpanded" class="px-5 pb-5">
-          <DependencyGraph :graph="graph" :pipeline-steps="pipelineSteps ?? []" />
+          <DependencyGraph :graph="graph" />
         </div>
       </Transition>
     </div>

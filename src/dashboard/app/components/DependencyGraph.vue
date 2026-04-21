@@ -1,19 +1,25 @@
 <script setup lang="ts">
-import type { GraphData, PipelineStepInfo } from '~/types'
+import type { GraphData } from '~/types'
 
 const props = defineProps<{
   graph: GraphData
-  pipelineSteps?: PipelineStepInfo[]
 }>()
 
+// ---------------------------------------------------------------------------
 // Layout constants
-const NODE_WIDTH = 200
-const NODE_HEIGHT = 72
-const LAYER_GAP = 60
-const NODE_GAP = 20
-const PADDING = 20
+// ---------------------------------------------------------------------------
+const NODE_WIDTH = 230
+const NODE_HEIGHT = 56
+const NODE_HEIGHT_WITH_PHASE = 68
+const LAYER_GAP = 70
+const NODE_GAP = 16
+const SPEC_GROUP_GAP = 32
+const PADDING = 24
+const EDGE_SPREAD_PX = 6
 
+// ---------------------------------------------------------------------------
 // Refs
+// ---------------------------------------------------------------------------
 const containerRef = ref<HTMLDivElement | null>(null)
 
 // Zoom and pan state
@@ -31,7 +37,15 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
-// B2: Cursor-targeted zoom
+// ---------------------------------------------------------------------------
+// Dark mode detection
+// ---------------------------------------------------------------------------
+const isDark = ref(false)
+let darkModeObserver: MutationObserver | undefined
+
+// ---------------------------------------------------------------------------
+// Zoom / pan handlers
+// ---------------------------------------------------------------------------
 function onWheel(e: WheelEvent): void {
   e.preventDefault()
   const container = containerRef.value
@@ -63,7 +77,7 @@ function onMouseUp(): void {
   isPanning.value = false
 }
 
-// B9: Touch support
+// Touch support
 function onTouchStart(e: TouchEvent): void {
   if (e.touches.length === 1) {
     isTouchPanning = true
@@ -89,7 +103,6 @@ function onTouchMove(e: TouchEvent): void {
       x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
       y: (e.touches[0].clientY + e.touches[1].clientY) / 2,
     }
-
     if (lastTouchDist > 0) {
       const container = containerRef.value
       if (!container) return
@@ -103,21 +116,18 @@ function onTouchMove(e: TouchEvent): void {
       panX.value = cx - graphX * scale.value
       panY.value = cy - graphY * scale.value
     }
-
     lastTouchDist = dist
   }
 }
 
 function onTouchEnd(e: TouchEvent): void {
-  if (e.touches.length < 2) {
-    lastTouchDist = 0
-  }
-  if (e.touches.length === 0) {
-    isTouchPanning = false
-  }
+  if (e.touches.length < 2) lastTouchDist = 0
+  if (e.touches.length === 0) isTouchPanning = false
 }
 
-// B1: Fit-to-view
+// ---------------------------------------------------------------------------
+// Fit-to-view
+// ---------------------------------------------------------------------------
 function fitToView(): void {
   const container = containerRef.value
   if (!container || layout.value.width === 0) return
@@ -143,59 +153,11 @@ function zoomOut(): void {
   scale.value = clamp(scale.value * 0.8, 0.3, 3)
 }
 
-// Status colors
-const statusColors: Record<string, { fill: string; stroke: string; fillDark: string; strokeDark: string }> = {
-  'not-started': { fill: '#f3f4f6', stroke: '#9ca3af', fillDark: '#1f2937', strokeDark: '#6b7280' },
-  'in-progress': { fill: '#eff6ff', stroke: '#3b82f6', fillDark: '#1e3a5f', strokeDark: '#60a5fa' },
-  'complete':    { fill: '#f0fdf4', stroke: '#22c55e', fillDark: '#14532d', strokeDark: '#4ade80' },
-  'failed':     { fill: '#fef2f2', stroke: '#ef4444', fillDark: '#450a0a', strokeDark: '#f87171' },
-}
-
-// Detect dark mode via class on document element
-const isDark = ref(false)
-
-let darkModeObserver: MutationObserver | undefined
-
-onMounted(() => {
-  // Dark mode detection
-  const el = document.documentElement
-  isDark.value = el.classList.contains('dark')
-  darkModeObserver = new MutationObserver(() => {
-    isDark.value = el.classList.contains('dark')
-  })
-  darkModeObserver.observe(el, { attributes: true, attributeFilter: ['class'] })
-
-  // Fit to view on mount
-  nextTick(() => fitToView())
-
-  // Register touch handlers with passive: false
-  const container = containerRef.value
-  if (container) {
-    container.addEventListener('touchmove', onTouchMove, { passive: false })
-  }
-
-  // Legend: first-visit expansion
-  const legendStored = localStorage.getItem('hyperloop-graph-legend')
-  if (legendStored === null) {
-    legendExpanded.value = true
-    localStorage.setItem('hyperloop-graph-legend', 'collapsed')
-  } else {
-    legendExpanded.value = legendStored === 'expanded'
-  }
-})
-
-onUnmounted(() => {
-  darkModeObserver?.disconnect()
-  const container = containerRef.value
-  if (container) {
-    container.removeEventListener('touchmove', onTouchMove)
-  }
-})
-
-// B6: Word-boundary aware truncation
-function truncateTitle(title: string, maxChars: number = 30): string {
+// ---------------------------------------------------------------------------
+// Word-boundary aware truncation (38 chars per spec)
+// ---------------------------------------------------------------------------
+function truncateTitle(title: string, maxChars: number = 38): string {
   if (title.length <= maxChars) return title
-  // Try to break at a word boundary
   const truncated = title.slice(0, maxChars)
   const lastSpace = truncated.lastIndexOf(' ')
   if (lastSpace > maxChars * 0.6) {
@@ -204,14 +166,19 @@ function truncateTitle(title: string, maxChars: number = 30): string {
   return truncated + '...'
 }
 
+// ---------------------------------------------------------------------------
+// Layout types
+// ---------------------------------------------------------------------------
 interface LayoutNode {
   id: string
   title: string
   fullTitle: string
   status: string
   phase: string | null
+  specRef: string
   x: number
   y: number
+  height: number
   isCritical: boolean
   layer: number
 }
@@ -227,36 +194,133 @@ interface LayoutEdge {
   isCritical: boolean
 }
 
-// Mini pipeline: determine step state for a given node phase
-type MiniStepState = 'completed' | 'active' | 'pending'
-
-function getMiniStepState(stepIndex: number, nodePhase: string | null): MiniStepState {
-  if (!props.pipelineSteps || props.pipelineSteps.length === 0 || !nodePhase) return 'pending'
-  const activeIndex = props.pipelineSteps.findIndex(s => s.name === nodePhase)
-  if (activeIndex === -1) return 'pending'
-  if (stepIndex < activeIndex) return 'completed'
-  if (stepIndex === activeIndex) return 'active'
-  return 'pending'
+interface SpecGroupLabel {
+  specRef: string
+  x: number
+  y: number
+  color: string
+  barHeight: number
 }
 
-function getMiniDotFill(state: MiniStepState): string {
-  if (state === 'completed') return isDark.value ? '#4ade80' : '#22c55e'
-  if (state === 'active') return isDark.value ? '#60a5fa' : '#3b82f6'
-  return 'none'
+// ---------------------------------------------------------------------------
+// Spec group color palette (muted 8-color palette)
+// ---------------------------------------------------------------------------
+const SPEC_COLORS = [
+  '#6366f1', // indigo
+  '#0891b2', // cyan
+  '#059669', // emerald
+  '#d97706', // amber
+  '#dc2626', // red
+  '#7c3aed', // violet
+  '#db2777', // pink
+  '#2563eb', // blue
+]
+
+function hashString(s: string): number {
+  let hash = 0
+  for (let i = 0; i < s.length; i++) {
+    hash = ((hash << 5) - hash + s.charCodeAt(i)) | 0
+  }
+  return Math.abs(hash)
 }
 
-function getMiniDotStroke(state: MiniStepState): string {
-  if (state === 'completed') return isDark.value ? '#4ade80' : '#22c55e'
-  if (state === 'active') return isDark.value ? '#60a5fa' : '#3b82f6'
-  return isDark.value ? '#4b5563' : '#d1d5db'
+function specColor(specRef: string): string {
+  return SPEC_COLORS[hashString(specRef) % SPEC_COLORS.length]
 }
 
+// ---------------------------------------------------------------------------
+// Node style helpers
+// ---------------------------------------------------------------------------
+function getNodeFill(status: string): string {
+  if (status === 'complete') return isDark.value ? '#111116' : '#f9fafb'
+  if (status === 'in-progress') return isDark.value ? '#0f172a' : '#ffffff'
+  if (status === 'failed') return isDark.value ? '#1c0a0a' : '#fef2f2'
+  // not-started
+  return isDark.value ? '#111116' : '#ffffff'
+}
+
+function getNodeStroke(status: string): string {
+  if (status === 'complete') return isDark.value ? '#2d2d35' : '#d1d5db'
+  if (status === 'in-progress') return isDark.value ? '#60a5fa' : '#3b82f6'
+  if (status === 'failed') return isDark.value ? '#f87171' : '#ef4444'
+  // not-started
+  return isDark.value ? '#374151' : '#d1d5db'
+}
+
+function getNodeStrokeWidth(status: string): number {
+  if (status === 'in-progress' || status === 'failed') return 2.5
+  if (status === 'not-started') return 1.5
+  return 1 // complete
+}
+
+function getNodeStrokeDash(status: string): string | undefined {
+  if (status === 'not-started') return '4 3'
+  return undefined
+}
+
+function getNodeOpacity(status: string): number {
+  if (status === 'complete') return isDark.value ? 0.8 : 0.85
+  return 1
+}
+
+function getNodeFilter(status: string, isHovered: boolean): string | undefined {
+  if (isHovered) return 'url(#hover-glow)'
+  if (status === 'in-progress') return 'url(#in-progress-glow)'
+  if (status === 'failed') return 'url(#failed-glow)'
+  return undefined
+}
+
+function getTitleFill(status: string): string {
+  if (status === 'complete') return isDark.value ? '#4b5563' : '#9ca3af'
+  if (status === 'in-progress') return isDark.value ? '#f1f5f9' : '#0f172a'
+  if (status === 'failed') return isDark.value ? '#fca5a5' : '#7f1d1d'
+  // not-started
+  return isDark.value ? '#9ca3af' : '#374151'
+}
+
+function getIdFill(status: string): string {
+  if (status === 'complete') return isDark.value ? '#374151' : '#d1d5db'
+  if (status === 'in-progress') return isDark.value ? '#60a5fa' : '#3b82f6'
+  if (status === 'failed') return isDark.value ? '#f87171' : '#ef4444'
+  // not-started
+  return isDark.value ? '#6b7280' : '#9ca3af'
+}
+
+// ---------------------------------------------------------------------------
+// Edge style helpers
+// ---------------------------------------------------------------------------
+function getEdgeColor(sourceStatus: string): string {
+  if (sourceStatus === 'complete') return isDark.value ? '#374151' : '#d1d5db'
+  if (sourceStatus === 'in-progress') return isDark.value ? '#60a5fa' : '#3b82f6'
+  if (sourceStatus === 'failed') return isDark.value ? '#f87171' : '#ef4444'
+  return isDark.value ? '#4b5563' : '#9ca3af'
+}
+
+function getEdgeOpacity(sourceStatus: string): number {
+  if (sourceStatus === 'complete') return 0.4
+  if (sourceStatus === 'in-progress') return 0.8
+  if (sourceStatus === 'failed') return 0.7
+  return 0.5
+}
+
+function getEdgeDashArray(sourceStatus: string, isCritical: boolean): string | undefined {
+  if (isCritical) return '6 3'
+  if (sourceStatus === 'failed') return '6 3'
+  return undefined
+}
+
+function getEdgeStrokeWidth(isCritical: boolean): number {
+  return isCritical ? 2 : 1.5
+}
+
+// ---------------------------------------------------------------------------
 // Hover state
+// ---------------------------------------------------------------------------
 const hoveredNodeId = ref<string | null>(null)
 const focusedNodeId = ref<string | null>(null)
 const activeNodeId = computed(() => hoveredNodeId.value ?? focusedNodeId.value)
 
-// Build ancestor/descendant sets for hover highlight
+// Ancestor/descendant maps for hover highlighting
 const ancestorMap = computed(() => {
   const { nodes, edges } = props.graph
   const map = new Map<string, Set<string>>()
@@ -321,181 +385,29 @@ function isRelated(nodeId: string): boolean {
   return (ancestors?.has(nodeId) ?? false) || (descendants?.has(nodeId) ?? false)
 }
 
-// HTML tooltip (B6)
+function getNodeDimOpacity(nodeId: string, status: string): number {
+  if (!activeNodeId.value) return getNodeOpacity(status)
+  if (isRelated(nodeId)) return getNodeOpacity(status)
+  if (status === 'complete') return 0.08
+  return 0.15
+}
+
+function isEdgeRelated(edge: LayoutEdge): boolean {
+  if (!activeNodeId.value) return true
+  return isRelated(edge.fromId) && isRelated(edge.toId)
+}
+
+function getEdgeDimOpacity(edge: LayoutEdge): number {
+  if (!activeNodeId.value) return getEdgeOpacity(edge.sourceStatus)
+  if (isEdgeRelated(edge)) return getEdgeOpacity(edge.sourceStatus)
+  return 0.05
+}
+
+// ---------------------------------------------------------------------------
+// Tooltip
+// ---------------------------------------------------------------------------
 const tooltipNode = ref<LayoutNode | null>(null)
 const tooltipStyle = ref({ top: '0px', left: '0px' })
-
-const layout = computed(() => {
-  const { nodes, edges, critical_path } = props.graph
-  if (!nodes || nodes.length === 0) {
-    return { nodes: [] as LayoutNode[], edges: [] as LayoutEdge[], width: 0, height: 0 }
-  }
-
-  const criticalSet = new Set(critical_path || [])
-
-  // Build adjacency for topological sort
-  const nodeMap = new Map(nodes.map(n => [n.id, n]))
-  const inDeps = new Map<string, string[]>()
-  const outDeps = new Map<string, string[]>()
-
-  for (const node of nodes) {
-    inDeps.set(node.id, [])
-    outDeps.set(node.id, [])
-  }
-  for (const edge of edges) {
-    if (nodeMap.has(edge.from_id) && nodeMap.has(edge.to_id)) {
-      inDeps.get(edge.to_id)!.push(edge.from_id)
-      outDeps.get(edge.from_id)!.push(edge.to_id)
-    }
-  }
-
-  // Assign layers: tasks with no deps are layer 0
-  const layers = new Map<string, number>()
-  const queue: string[] = []
-
-  for (const node of nodes) {
-    const deps = inDeps.get(node.id) || []
-    if (deps.length === 0) {
-      layers.set(node.id, 0)
-      queue.push(node.id)
-    }
-  }
-
-  // BFS to assign layers
-  while (queue.length > 0) {
-    const current = queue.shift()!
-    const currentLayer = layers.get(current)!
-    for (const child of (outDeps.get(current) || [])) {
-      const existingLayer = layers.get(child)
-      const newLayer = currentLayer + 1
-      if (existingLayer === undefined || newLayer > existingLayer) {
-        layers.set(child, newLayer)
-      }
-      const childDeps = inDeps.get(child) || []
-      if (childDeps.every(d => layers.has(d))) {
-        if (!queue.includes(child)) {
-          queue.push(child)
-        }
-      }
-    }
-  }
-
-  // Handle any remaining unassigned nodes (cycles or orphans)
-  for (const node of nodes) {
-    if (!layers.has(node.id)) {
-      layers.set(node.id, 0)
-    }
-  }
-
-  // Group by layer
-  const layerGroups = new Map<number, string[]>()
-  for (const [id, layer] of layers) {
-    if (!layerGroups.has(layer)) layerGroups.set(layer, [])
-    layerGroups.get(layer)!.push(id)
-  }
-
-  // B5: Sort nodes within each layer by id alphabetically for stable layout
-  for (const [, ids] of layerGroups) {
-    ids.sort((a, b) => a.localeCompare(b))
-  }
-
-  const maxLayer = Math.max(...layerGroups.keys(), 0)
-
-  // Position nodes
-  const positioned = new Map<string, { x: number; y: number }>()
-  let maxY = 0
-
-  for (let l = 0; l <= maxLayer; l++) {
-    const ids = layerGroups.get(l) || []
-    const x = PADDING + l * (NODE_WIDTH + LAYER_GAP)
-    for (let i = 0; i < ids.length; i++) {
-      const y = PADDING + i * (NODE_HEIGHT + NODE_GAP)
-      positioned.set(ids[i], { x, y })
-      maxY = Math.max(maxY, y + NODE_HEIGHT)
-    }
-  }
-
-  const layoutNodes: LayoutNode[] = nodes.map(n => {
-    const pos = positioned.get(n.id) || { x: PADDING, y: PADDING }
-    return {
-      id: n.id,
-      title: truncateTitle(n.title),
-      fullTitle: n.title,
-      status: n.status,
-      phase: n.phase,
-      x: pos.x,
-      y: pos.y,
-      isCritical: criticalSet.has(n.id),
-      layer: layers.get(n.id) ?? 0,
-    }
-  })
-
-  // Build critical path edge set
-  const criticalEdges = new Set<string>()
-  const cpList = critical_path || []
-  for (let i = 0; i < cpList.length - 1; i++) {
-    criticalEdges.add(`${cpList[i]}->${cpList[i + 1]}`)
-  }
-
-  // Build status lookup for edge source nodes
-  const nodeStatusMap = new Map(nodes.map(n => [n.id, n.status]))
-
-  const layoutEdges: LayoutEdge[] = edges
-    .filter(e => positioned.has(e.from_id) && positioned.has(e.to_id))
-    .map(e => {
-      const from = positioned.get(e.from_id)!
-      const to = positioned.get(e.to_id)!
-      return {
-        fromX: from.x + NODE_WIDTH,
-        fromY: from.y + NODE_HEIGHT / 2,
-        toX: to.x,
-        toY: to.y + NODE_HEIGHT / 2,
-        fromId: e.from_id,
-        toId: e.to_id,
-        sourceStatus: nodeStatusMap.get(e.from_id) || 'not-started',
-        isCritical: criticalEdges.has(`${e.from_id}->${e.to_id}`),
-      }
-    })
-
-  const width = PADDING * 2 + (maxLayer + 1) * (NODE_WIDTH + LAYER_GAP) - LAYER_GAP
-  const height = maxY + PADDING
-
-  return { nodes: layoutNodes, edges: layoutEdges, width, height }
-})
-
-// Refit when data changes
-watch(() => props.graph, () => {
-  nextTick(() => fitToView())
-})
-
-const handleNodeClick = (nodeId: string): void => {
-  navigateTo(`/tasks/${nodeId}`)
-}
-
-const getNodeFill = (status: string): string => {
-  const colors = statusColors[status] || statusColors['not-started']
-  return isDark.value ? colors.fillDark : colors.fill
-}
-
-const getNodeStroke = (status: string): string => {
-  const colors = statusColors[status] || statusColors['not-started']
-  return isDark.value ? colors.strokeDark : colors.stroke
-}
-
-// B4: Edge color = dependency satisfaction (green=complete, red=failed, gray=otherwise)
-const getEdgeColor = (sourceStatus: string): string => {
-  if (sourceStatus === 'complete') return isDark.value ? '#4ade80' : '#22c55e'
-  if (sourceStatus === 'failed') return isDark.value ? '#f87171' : '#ef4444'
-  return isDark.value ? '#6b7280' : '#9ca3af'
-}
-
-// B4: Edge dash pattern for color-independent status differentiation (B8)
-const getEdgeDashArray = (sourceStatus: string, isCritical: boolean): string | undefined => {
-  if (isCritical) return undefined // critical edges are solid with animation
-  if (sourceStatus === 'failed') return '6 3'
-  if (sourceStatus === 'not-started') return '3 3'
-  return undefined
-}
 
 function handleNodeEnter(node: LayoutNode, event: MouseEvent): void {
   hoveredNodeId.value = node.id
@@ -515,7 +427,6 @@ function handleNodeLeave(): void {
 function handleNodeFocus(node: LayoutNode): void {
   focusedNodeId.value = node.id
   tooltipNode.value = node
-  // Position tooltip at node center for focus
   const container = containerRef.value
   if (container) {
     const rect = container.getBoundingClientRect()
@@ -545,57 +456,464 @@ function updateTooltipPosition(event: MouseEvent): void {
   }
 }
 
-function isEdgeRelated(edge: LayoutEdge): boolean {
-  if (!activeNodeId.value) return true
-  return isRelated(edge.fromId) && isRelated(edge.toId)
+// ---------------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------------
+const handleNodeClick = (nodeId: string): void => {
+  navigateTo(`/tasks/${nodeId}`)
 }
 
-// B3: Bezier curve path
-function getEdgePath(edge: LayoutEdge): string {
-  const { fromX, fromY, toX, toY } = edge
-  const cx1 = fromX + (toX - fromX) * 0.4
-  const cx2 = toX - (toX - fromX) * 0.4
-  return `M ${fromX} ${fromY} C ${cx1} ${fromY}, ${cx2} ${toY}, ${toX} ${toY}`
-}
-
-// Mini pipeline dot positions
-function getPipelineDotX(stepIndex: number, totalSteps: number, nodeX: number): number {
-  const dotSpacing = 8
-  const totalWidth = (totalSteps - 1) * dotSpacing
-  const startX = nodeX + NODE_WIDTH / 2 - totalWidth / 2
-  return startX + stepIndex * dotSpacing
-}
-
-// B7: Legend
-const legendExpanded = ref(false)
-
-watch(legendExpanded, (val) => {
-  localStorage.setItem('hyperloop-graph-legend', val ? 'expanded' : 'collapsed')
-})
-
-// B10: Entrance animation stagger delay
-function getNodeAnimDelay(node: LayoutNode): string {
-  return `${node.layer * 30}ms`
-}
-
-// B8: Node aria-label
-function getNodeAriaLabel(node: LayoutNode): string {
-  const phase = node.phase ? `, phase: ${node.phase}` : ''
-  return `${node.fullTitle} (${node.id}), status: ${node.status}${phase}`
-}
-
-// B1: viewBox
-const viewBox = computed(() => {
-  return `0 0 ${layout.value.width} ${layout.value.height}`
-})
-
-// B8: Keyboard navigation for nodes
 function handleNodeKeydown(e: KeyboardEvent, nodeId: string): void {
   if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault()
     handleNodeClick(nodeId)
   }
 }
+
+// ---------------------------------------------------------------------------
+// Accessibility
+// ---------------------------------------------------------------------------
+function getNodeAriaLabel(node: LayoutNode): string {
+  const phase = node.phase ? `, phase: ${node.phase}` : ''
+  return `${node.fullTitle} (${node.id}), status: ${node.status}${phase}`
+}
+
+// ---------------------------------------------------------------------------
+// Animation
+// ---------------------------------------------------------------------------
+function getNodeAnimDelay(node: LayoutNode): string {
+  return `${node.layer * 30}ms`
+}
+
+// ---------------------------------------------------------------------------
+// Adaptive Bezier curve path
+// ---------------------------------------------------------------------------
+function getEdgePath(edge: LayoutEdge): string {
+  const { fromX, fromY, toX, toY } = edge
+  const dx = toX - fromX
+  const dy = Math.abs(toY - fromY)
+  const verticalRatio = dx > 0 ? Math.min(dy / dx, 1) : 0
+  const cpOffset = 0.4 + 0.15 * verticalRatio
+  const cx1 = fromX + dx * cpOffset
+  const cx2 = toX - dx * cpOffset
+  return `M ${fromX} ${fromY} C ${cx1} ${fromY}, ${cx2} ${toY}, ${toX} ${toY}`
+}
+
+// ---------------------------------------------------------------------------
+// Layout computation
+// ---------------------------------------------------------------------------
+const layout = computed(() => {
+  const { nodes, edges, critical_path } = props.graph
+  if (!nodes || nodes.length === 0) {
+    return {
+      nodes: [] as LayoutNode[],
+      edges: [] as LayoutEdge[],
+      specLabels: [] as SpecGroupLabel[],
+      width: 0,
+      height: 0,
+    }
+  }
+
+  const criticalSet = new Set(critical_path || [])
+
+  // Build adjacency
+  const nodeMap = new Map(nodes.map(n => [n.id, n]))
+  const inDeps = new Map<string, string[]>()
+  const outDeps = new Map<string, string[]>()
+
+  for (const node of nodes) {
+    inDeps.set(node.id, [])
+    outDeps.set(node.id, [])
+  }
+  for (const edge of edges) {
+    if (nodeMap.has(edge.from_id) && nodeMap.has(edge.to_id)) {
+      inDeps.get(edge.to_id)!.push(edge.from_id)
+      outDeps.get(edge.from_id)!.push(edge.to_id)
+    }
+  }
+
+  // ------- Layer assignment (BFS) -------
+  const layers = new Map<string, number>()
+  const queue: string[] = []
+
+  for (const node of nodes) {
+    const deps = inDeps.get(node.id) || []
+    if (deps.length === 0) {
+      layers.set(node.id, 0)
+      queue.push(node.id)
+    }
+  }
+
+  while (queue.length > 0) {
+    const current = queue.shift()!
+    const currentLayer = layers.get(current)!
+    for (const child of (outDeps.get(current) || [])) {
+      const existingLayer = layers.get(child)
+      const newLayer = currentLayer + 1
+      if (existingLayer === undefined || newLayer > existingLayer) {
+        layers.set(child, newLayer)
+      }
+      const childDeps = inDeps.get(child) || []
+      if (childDeps.every(d => layers.has(d))) {
+        if (!queue.includes(child)) {
+          queue.push(child)
+        }
+      }
+    }
+  }
+
+  // Handle unassigned nodes (cycles/orphans)
+  for (const node of nodes) {
+    if (!layers.has(node.id)) {
+      layers.set(node.id, 0)
+    }
+  }
+
+  // Group by layer
+  const layerGroups = new Map<number, string[]>()
+  for (const [id, layer] of layers) {
+    if (!layerGroups.has(layer)) layerGroups.set(layer, [])
+    layerGroups.get(layer)!.push(id)
+  }
+
+  const maxLayer = Math.max(...layerGroups.keys(), 0)
+
+  // ------- Barycenter ordering with spec group constraints -------
+  // Initial: group by spec_ref, sort groups alphabetically within each layer
+  for (const [, ids] of layerGroups) {
+    // Group by spec_ref
+    const specGroups = new Map<string, string[]>()
+    for (const id of ids) {
+      const spec = nodeMap.get(id)?.spec_ref || ''
+      if (!specGroups.has(spec)) specGroups.set(spec, [])
+      specGroups.get(spec)!.push(id)
+    }
+    // Sort within each group alphabetically
+    for (const [, group] of specGroups) {
+      group.sort((a, b) => a.localeCompare(b))
+    }
+    // Sort groups alphabetically initially
+    const sortedGroups = [...specGroups.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    ids.length = 0
+    for (const [, group] of sortedGroups) {
+      ids.push(...group)
+    }
+  }
+
+  // Assign temporary positions for barycenter calc
+  const tempPos = new Map<string, number>()
+  function assignTempPositions(): void {
+    for (const [, ids] of layerGroups) {
+      for (let i = 0; i < ids.length; i++) {
+        tempPos.set(ids[i], i)
+      }
+    }
+  }
+  assignTempPositions()
+
+  // Barycenter sweep (4 iterations forward+backward)
+  for (let iter = 0; iter < 4; iter++) {
+    // Forward sweep: layers 1..max
+    for (let l = 1; l <= maxLayer; l++) {
+      const ids = layerGroups.get(l)
+      if (!ids) continue
+      reorderLayerByBarycenter(ids, l, -1)
+      assignTempPositions()
+    }
+    // Backward sweep: layers max-1..0
+    for (let l = maxLayer - 1; l >= 0; l--) {
+      const ids = layerGroups.get(l)
+      if (!ids) continue
+      reorderLayerByBarycenter(ids, l, 1)
+      assignTempPositions()
+    }
+  }
+
+  function reorderLayerByBarycenter(ids: string[], _layer: number, direction: number): void {
+    // direction: -1 = use previous layer neighbors, +1 = use next layer neighbors
+    const neighborLayer = _layer + direction
+
+    // Group by spec_ref
+    const specGroups = new Map<string, string[]>()
+    for (const id of ids) {
+      const spec = nodeMap.get(id)?.spec_ref || ''
+      if (!specGroups.has(spec)) specGroups.set(spec, [])
+      specGroups.get(spec)!.push(id)
+    }
+
+    // Compute barycenter for each spec group
+    const groupBarycenter = new Map<string, number>()
+    for (const [spec, group] of specGroups) {
+      let sum = 0
+      let count = 0
+      for (const id of group) {
+        const neighbors = direction === -1
+          ? (inDeps.get(id) || [])
+          : (outDeps.get(id) || [])
+        for (const n of neighbors) {
+          if (layers.get(n) === neighborLayer) {
+            sum += tempPos.get(n) ?? 0
+            count++
+          }
+        }
+      }
+      groupBarycenter.set(spec, count > 0 ? sum / count : Infinity)
+    }
+
+    // Sort groups by barycenter
+    const sortedGroups = [...specGroups.entries()].sort((a, b) => {
+      const ba = groupBarycenter.get(a[0]) ?? Infinity
+      const bb = groupBarycenter.get(b[0]) ?? Infinity
+      if (ba !== bb) return ba - bb
+      return a[0].localeCompare(b[0])
+    })
+
+    // Also reorder nodes within each group by individual barycenter
+    for (const [, group] of sortedGroups) {
+      group.sort((a, b) => {
+        const neighborsA = direction === -1 ? (inDeps.get(a) || []) : (outDeps.get(a) || [])
+        const neighborsB = direction === -1 ? (inDeps.get(b) || []) : (outDeps.get(b) || [])
+        const bcA = avgPos(neighborsA, neighborLayer)
+        const bcB = avgPos(neighborsB, neighborLayer)
+        if (bcA !== bcB) return bcA - bcB
+        return a.localeCompare(b)
+      })
+    }
+
+    // Flatten back
+    ids.length = 0
+    for (const [, group] of sortedGroups) {
+      ids.push(...group)
+    }
+  }
+
+  function avgPos(neighbors: string[], targetLayer: number): number {
+    let sum = 0
+    let count = 0
+    for (const n of neighbors) {
+      if (layers.get(n) === targetLayer) {
+        sum += tempPos.get(n) ?? 0
+        count++
+      }
+    }
+    return count > 0 ? sum / count : Infinity
+  }
+
+  // ------- Position nodes with spec group gaps -------
+  const positioned = new Map<string, { x: number; y: number; h: number }>()
+  let maxY = 0
+
+  for (let l = 0; l <= maxLayer; l++) {
+    const ids = layerGroups.get(l) || []
+    const x = PADDING + l * (NODE_WIDTH + LAYER_GAP)
+    let y = PADDING
+    let prevSpec: string | null = null
+
+    for (const id of ids) {
+      const node = nodeMap.get(id)
+      const spec = node?.spec_ref || ''
+      const hasPhase = node?.status === 'in-progress' && node?.phase
+      const h = hasPhase ? NODE_HEIGHT_WITH_PHASE : NODE_HEIGHT
+
+      // Add spec group gap + label space
+      if (prevSpec !== null && spec !== prevSpec) {
+        y += SPEC_GROUP_GAP
+      }
+
+      positioned.set(id, { x, y, h })
+      y += h + NODE_GAP
+      maxY = Math.max(maxY, y)
+      prevSpec = spec
+    }
+  }
+
+  // ------- Build spec group labels -------
+  const specLabels: SpecGroupLabel[] = []
+  for (let l = 0; l <= maxLayer; l++) {
+    const ids = layerGroups.get(l) || []
+    const seenSpecs = new Set<string>()
+    let groupStartY: number | null = null
+    let groupEndY: number | null = null
+    let currentSpec: string | null = null
+
+    for (const id of ids) {
+      const node = nodeMap.get(id)
+      const spec = node?.spec_ref || ''
+      const pos = positioned.get(id)
+      if (!pos) continue
+
+      if (spec !== currentSpec) {
+        // Emit previous group
+        if (currentSpec !== null && groupStartY !== null && groupEndY !== null) {
+          specLabels.push({
+            specRef: currentSpec,
+            x: pos.x - 10,
+            y: groupStartY,
+            color: specColor(currentSpec),
+            barHeight: groupEndY - groupStartY,
+          })
+        }
+        currentSpec = spec
+        groupStartY = pos.y
+        seenSpecs.add(spec)
+      }
+      groupEndY = pos.y + pos.h
+    }
+    // Emit last group in layer
+    if (currentSpec !== null && groupStartY !== null && groupEndY !== null) {
+      const firstId = ids.find(id => (nodeMap.get(id)?.spec_ref || '') === currentSpec)
+      const pos = firstId ? positioned.get(firstId) : null
+      if (pos) {
+        specLabels.push({
+          specRef: currentSpec,
+          x: pos.x - 10,
+          y: groupStartY,
+          color: specColor(currentSpec),
+          barHeight: groupEndY - groupStartY,
+        })
+      }
+    }
+  }
+
+  // ------- Build layout nodes -------
+  const layoutNodes: LayoutNode[] = nodes.map(n => {
+    const pos = positioned.get(n.id) || { x: PADDING, y: PADDING, h: NODE_HEIGHT }
+    return {
+      id: n.id,
+      title: truncateTitle(n.title),
+      fullTitle: n.title,
+      status: n.status,
+      phase: n.phase,
+      specRef: n.spec_ref,
+      x: pos.x,
+      y: pos.y,
+      height: pos.h,
+      isCritical: criticalSet.has(n.id),
+      layer: layers.get(n.id) ?? 0,
+    }
+  })
+
+  // ------- Build critical path edge set -------
+  const criticalEdges = new Set<string>()
+  const cpList = critical_path || []
+  for (let i = 0; i < cpList.length - 1; i++) {
+    criticalEdges.add(`${cpList[i]}->${cpList[i + 1]}`)
+  }
+
+  // ------- Edge convergence spreading -------
+  const nodeStatusMap = new Map(nodes.map(n => [n.id, n.status]))
+
+  // Count incoming and outgoing edges per node
+  const incomingEdges = new Map<string, { fromId: string; fromX: number; fromY: number }[]>()
+  const outgoingEdges = new Map<string, { toId: string; toX: number; toY: number }[]>()
+
+  for (const e of edges) {
+    if (!positioned.has(e.from_id) || !positioned.has(e.to_id)) continue
+    const from = positioned.get(e.from_id)!
+    const to = positioned.get(e.to_id)!
+
+    if (!incomingEdges.has(e.to_id)) incomingEdges.set(e.to_id, [])
+    incomingEdges.get(e.to_id)!.push({
+      fromId: e.from_id,
+      fromX: from.x + NODE_WIDTH,
+      fromY: from.y + from.h / 2,
+    })
+
+    if (!outgoingEdges.has(e.from_id)) outgoingEdges.set(e.from_id, [])
+    outgoingEdges.get(e.from_id)!.push({
+      toId: e.to_id,
+      toX: to.x,
+      toY: to.y + to.h / 2,
+    })
+  }
+
+  // Sort incoming edges by source y for consistent spread ordering
+  for (const [, inc] of incomingEdges) {
+    inc.sort((a, b) => a.fromY - b.fromY)
+  }
+  for (const [, out] of outgoingEdges) {
+    out.sort((a, b) => a.toY - b.toY)
+  }
+
+  const layoutEdges: LayoutEdge[] = edges
+    .filter(e => positioned.has(e.from_id) && positioned.has(e.to_id))
+    .map(e => {
+      const from = positioned.get(e.from_id)!
+      const to = positioned.get(e.to_id)!
+
+      let fromY = from.y + from.h / 2
+      let toY = to.y + to.h / 2
+
+      // Spread outgoing edges from source
+      const outList = outgoingEdges.get(e.from_id) || []
+      if (outList.length > 1) {
+        const idx = outList.findIndex(o => o.toId === e.to_id)
+        const offset = (idx - (outList.length - 1) / 2) * EDGE_SPREAD_PX
+        fromY += offset
+      }
+
+      // Spread incoming edges at target
+      const inList = incomingEdges.get(e.to_id) || []
+      if (inList.length > 1) {
+        const idx = inList.findIndex(o => o.fromId === e.from_id)
+        const offset = (idx - (inList.length - 1) / 2) * EDGE_SPREAD_PX
+        toY += offset
+      }
+
+      return {
+        fromX: from.x + NODE_WIDTH,
+        fromY,
+        toX: to.x,
+        toY,
+        fromId: e.from_id,
+        toId: e.to_id,
+        sourceStatus: nodeStatusMap.get(e.from_id) || 'not-started',
+        isCritical: criticalEdges.has(`${e.from_id}->${e.to_id}`),
+      }
+    })
+
+  const width = PADDING * 2 + (maxLayer + 1) * (NODE_WIDTH + LAYER_GAP) - LAYER_GAP
+  const height = maxY + PADDING
+
+  return { nodes: layoutNodes, edges: layoutEdges, specLabels, width, height }
+})
+
+// Refit when data changes
+watch(() => props.graph, () => {
+  nextTick(() => fitToView())
+})
+
+// viewBox
+const viewBox = computed(() => {
+  return `0 0 ${layout.value.width} ${layout.value.height}`
+})
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+onMounted(() => {
+  const el = document.documentElement
+  isDark.value = el.classList.contains('dark')
+  darkModeObserver = new MutationObserver(() => {
+    isDark.value = el.classList.contains('dark')
+  })
+  darkModeObserver.observe(el, { attributes: true, attributeFilter: ['class'] })
+
+  nextTick(() => fitToView())
+
+  const container = containerRef.value
+  if (container) {
+    container.addEventListener('touchmove', onTouchMove, { passive: false })
+  }
+})
+
+onUnmounted(() => {
+  darkModeObserver?.disconnect()
+  const container = containerRef.value
+  if (container) {
+    container.removeEventListener('touchmove', onTouchMove)
+  }
+})
 </script>
 
 <template>
@@ -616,7 +934,6 @@ function handleNodeKeydown(e: KeyboardEvent, nodeId: string): void {
     @touchstart="onTouchStart"
     @touchend="onTouchEnd"
   >
-    <!-- B1: viewBox-based SVG -->
     <svg
       :viewBox="viewBox"
       :width="layout.width"
@@ -626,67 +943,109 @@ function handleNodeKeydown(e: KeyboardEvent, nodeId: string): void {
       :aria-label="`Dependency graph showing ${layout.nodes.length} tasks and their relationships`"
     >
       <title>Task Dependency Graph</title>
-      <desc>A directed graph showing task dependencies. Nodes represent tasks colored by status. Edges show dependency relationships with color indicating whether the dependency is satisfied.</desc>
+      <desc>A directed graph showing task dependencies. Nodes represent tasks styled by status. Edges show dependency relationships.</desc>
 
       <defs>
+        <!-- Arrowheads: 6x5px, color-matched -->
         <marker
-          id="arrowhead"
-          markerWidth="8"
-          markerHeight="6"
-          refX="8"
-          refY="3"
+          id="arrowhead-gray"
+          markerWidth="6"
+          markerHeight="5"
+          refX="6"
+          refY="2.5"
           orient="auto"
         >
-          <polygon points="0 0, 8 3, 0 6" fill="#9ca3af" />
+          <polygon points="0 0, 6 2.5, 0 5" :fill="isDark ? '#374151' : '#d1d5db'" />
         </marker>
         <marker
-          id="arrowhead-green"
-          markerWidth="8"
-          markerHeight="6"
-          refX="8"
-          refY="3"
+          id="arrowhead-blue"
+          markerWidth="6"
+          markerHeight="5"
+          refX="6"
+          refY="2.5"
           orient="auto"
         >
-          <polygon points="0 0, 8 3, 0 6" :fill="isDark ? '#4ade80' : '#22c55e'" />
+          <polygon points="0 0, 6 2.5, 0 5" :fill="isDark ? '#60a5fa' : '#3b82f6'" />
         </marker>
         <marker
           id="arrowhead-red"
-          markerWidth="8"
-          markerHeight="6"
-          refX="8"
-          refY="3"
+          markerWidth="6"
+          markerHeight="5"
+          refX="6"
+          refY="2.5"
           orient="auto"
         >
-          <polygon points="0 0, 8 3, 0 6" :fill="isDark ? '#f87171' : '#ef4444'" />
+          <polygon points="0 0, 6 2.5, 0 5" :fill="isDark ? '#f87171' : '#ef4444'" />
         </marker>
-        <filter id="shadow">
-          <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.15" />
-        </filter>
+        <marker
+          id="arrowhead-muted"
+          markerWidth="6"
+          markerHeight="5"
+          refX="6"
+          refY="2.5"
+          orient="auto"
+        >
+          <polygon points="0 0, 6 2.5, 0 5" :fill="isDark ? '#4b5563' : '#9ca3af'" />
+        </marker>
+
+        <!-- Filters -->
         <filter id="hover-glow">
           <feDropShadow dx="0" dy="0" stdDeviation="4" :flood-color="isDark ? '#60a5fa' : '#3b82f6'" flood-opacity="0.3" />
         </filter>
-        <!-- Active dot glow -->
-        <filter id="active-glow">
-          <feGaussianBlur stdDeviation="1.5" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
+        <filter id="in-progress-glow">
+          <feDropShadow
+            dx="0" dy="0" stdDeviation="4"
+            :flood-color="isDark ? 'rgba(96,165,250,0.2)' : 'rgba(59,130,246,0.15)'"
+            :flood-opacity="isDark ? 0.2 : 0.15"
+          />
+        </filter>
+        <filter id="failed-glow">
+          <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="rgba(239,68,68,0.12)" flood-opacity="0.12" />
         </filter>
       </defs>
 
       <g :transform="`translate(${panX}, ${panY}) scale(${scale})`" class="graph-pan-group">
-        <!-- B3: Bezier curve edges -->
+        <!-- Spec group bars -->
+        <g v-for="(label, i) in layout.specLabels" :key="'spec-bar-' + i">
+          <rect
+            :x="label.x"
+            :y="label.y"
+            width="3"
+            :height="label.barHeight"
+            :rx="1.5"
+            :ry="1.5"
+            :fill="label.color"
+            opacity="0.5"
+          />
+          <text
+            :x="label.x + 6"
+            :y="label.y - 4"
+            font-size="9"
+            :fill="isDark ? '#6b7280' : '#9ca3af'"
+            text-transform="uppercase"
+            letter-spacing="0.05em"
+            style="text-transform: uppercase"
+          >
+            {{ label.specRef }}
+          </text>
+        </g>
+
+        <!-- Edges -->
         <path
           v-for="(edge, i) in layout.edges"
           :key="'edge-' + i"
           :d="getEdgePath(edge)"
           fill="none"
           :stroke="getEdgeColor(edge.sourceStatus)"
-          :stroke-width="edge.isCritical ? 2.5 : 1.5"
-          :stroke-dasharray="edge.isCritical ? '8 4' : getEdgeDashArray(edge.sourceStatus, edge.isCritical)"
-          :marker-end="edge.sourceStatus === 'complete' ? 'url(#arrowhead-green)' : (edge.sourceStatus === 'failed' ? 'url(#arrowhead-red)' : 'url(#arrowhead)')"
-          :opacity="isEdgeRelated(edge) ? 1 : 0.2"
+          :stroke-width="getEdgeStrokeWidth(edge.isCritical)"
+          :stroke-dasharray="getEdgeDashArray(edge.sourceStatus, edge.isCritical)"
+          :marker-end="
+            edge.sourceStatus === 'complete' ? 'url(#arrowhead-gray)' :
+            edge.sourceStatus === 'in-progress' ? 'url(#arrowhead-blue)' :
+            edge.sourceStatus === 'failed' ? 'url(#arrowhead-red)' :
+            'url(#arrowhead-muted)'
+          "
+          :opacity="getEdgeDimOpacity(edge)"
           :class="[
             'transition-opacity duration-150',
             edge.isCritical ? 'critical-edge' : ''
@@ -700,7 +1059,7 @@ function handleNodeKeydown(e: KeyboardEvent, nodeId: string): void {
           :key="node.id"
           class="graph-node"
           :style="{ animationDelay: getNodeAnimDelay(node) }"
-          :opacity="isRelated(node.id) ? 1 : 0.2"
+          :opacity="getNodeDimOpacity(node.id, node.status)"
           tabindex="0"
           role="link"
           :aria-label="getNodeAriaLabel(node)"
@@ -716,19 +1075,20 @@ function handleNodeKeydown(e: KeyboardEvent, nodeId: string): void {
             :x="node.x"
             :y="node.y"
             :width="NODE_WIDTH"
-            :height="NODE_HEIGHT"
+            :height="node.height"
             :rx="8"
             :ry="8"
             :fill="getNodeFill(node.status)"
             :stroke="getNodeStroke(node.status)"
-            :stroke-width="(activeNodeId === node.id) ? 3 : (node.isCritical ? 3 : 2)"
-            :filter="(activeNodeId === node.id) ? 'url(#hover-glow)' : (node.isCritical ? 'url(#shadow)' : undefined)"
+            :stroke-width="activeNodeId === node.id ? 3 : getNodeStrokeWidth(node.status)"
+            :stroke-dasharray="getNodeStrokeDash(node.status)"
+            :filter="getNodeFilter(node.status, activeNodeId === node.id)"
             class="graph-node-rect"
             :class="{ 'animate-badge-pulse': node.status === 'in-progress' }"
-            :style="(activeNodeId === node.id) ? 'transform: scale(1.03); transform-origin: ' + (node.x + NODE_WIDTH/2) + 'px ' + (node.y + NODE_HEIGHT/2) + 'px' : undefined"
+            :style="(activeNodeId === node.id) ? 'transform: scale(1.03); transform-origin: ' + (node.x + NODE_WIDTH/2) + 'px ' + (node.y + node.height/2) + 'px' : undefined"
           />
 
-          <!-- B6: Status icon (12x12) in top-left -->
+          <!-- Status icon (top-left, 12x12) -->
           <g :transform="`translate(${node.x + 8}, ${node.y + 6})`">
             <!-- not-started: dashed circle -->
             <circle
@@ -741,22 +1101,13 @@ function handleNodeKeydown(e: KeyboardEvent, nodeId: string): void {
               stroke-width="1.5"
               stroke-dasharray="3 2"
             />
-            <!-- in-progress: circle + clock hand -->
+            <!-- in-progress: clock icon -->
             <template v-else-if="node.status === 'in-progress'">
               <circle cx="6" cy="6" r="5" fill="none" :stroke="isDark ? '#60a5fa' : '#3b82f6'" stroke-width="1.5" />
-              <path :d="'M6 3.5v2.5l1.5 1.5'" fill="none" :stroke="isDark ? '#60a5fa' : '#3b82f6'" stroke-width="1.5" stroke-linecap="round" />
+              <path d="M6 3.5v2.5l1.5 1.5" fill="none" :stroke="isDark ? '#60a5fa' : '#3b82f6'" stroke-width="1.5" stroke-linecap="round" />
             </template>
-            <!-- complete: checkmark -->
-            <path
-              v-else-if="node.status === 'complete'"
-              d="M2.5 6.5l2.5 2.5L9.5 3.5"
-              fill="none"
-              :stroke="isDark ? '#4ade80' : '#22c55e'"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-            <!-- failed: X -->
+            <!-- complete: no icon (muted gray IS the status) -->
+            <!-- failed: X icon -->
             <path
               v-else-if="node.status === 'failed'"
               d="M2.5 2.5l7 7M9.5 2.5l-7 7"
@@ -768,48 +1119,37 @@ function handleNodeKeydown(e: KeyboardEvent, nodeId: string): void {
             />
           </g>
 
-          <!-- B6: Title on top (13px, medium weight) -->
+          <!-- Title: 14px, font-weight 600, centered -->
           <text
             :x="node.x + NODE_WIDTH / 2"
             :y="node.y + 22"
-            font-size="13"
-            font-weight="500"
+            font-size="14"
+            font-weight="600"
             text-anchor="middle"
-            :fill="isDark ? '#e5e7eb' : '#111827'"
+            :fill="getTitleFill(node.status)"
           >
             {{ node.title }}
           </text>
-          <!-- B6: ID below (10px, muted monospace) -->
+
+          <!-- ID: 10px, monospace, muted, centered -->
           <text
             :x="node.x + NODE_WIDTH / 2"
             :y="node.y + 38"
             font-size="10"
             font-family="ui-monospace, monospace"
             text-anchor="middle"
-            :fill="isDark ? '#9ca3af' : '#6b7280'"
+            :fill="getIdFill(node.status)"
           >
             {{ node.id }}
           </text>
-          <!-- Mini pipeline dots -->
-          <template v-if="pipelineSteps && pipelineSteps.length > 0 && node.phase">
-            <circle
-              v-for="(step, si) in pipelineSteps"
-              :key="'pip-' + node.id + '-' + si"
-              :cx="getPipelineDotX(si, pipelineSteps.length, node.x)"
-              :cy="node.y + 55"
-              r="3"
-              :fill="getMiniDotFill(getMiniStepState(si, node.phase))"
-              :stroke="getMiniDotStroke(getMiniStepState(si, node.phase))"
-              stroke-width="1.5"
-              :filter="getMiniStepState(si, node.phase) === 'active' ? 'url(#active-glow)' : undefined"
-            />
-          </template>
-          <!-- Phase text fallback -->
+
+          <!-- Phase: 11px, italic, muted (in-progress only) -->
           <text
-            v-else-if="node.phase"
+            v-if="node.status === 'in-progress' && node.phase"
             :x="node.x + NODE_WIDTH / 2"
-            :y="node.y + 58"
-            font-size="10"
+            :y="node.y + 54"
+            font-size="11"
+            font-style="italic"
             text-anchor="middle"
             :fill="isDark ? '#6b7280' : '#9ca3af'"
           >
@@ -819,7 +1159,7 @@ function handleNodeKeydown(e: KeyboardEvent, nodeId: string): void {
       </g>
     </svg>
 
-    <!-- B6: HTML tooltip positioned above SVG -->
+    <!-- Tooltip -->
     <div
       v-if="tooltipNode"
       class="absolute z-20 pointer-events-none px-3 py-2 rounded-md text-xs shadow-lg max-w-xs"
@@ -832,77 +1172,43 @@ function handleNodeKeydown(e: KeyboardEvent, nodeId: string): void {
       </p>
     </div>
 
-    <!-- B7: Legend -->
-    <div class="absolute top-3 left-3 z-10">
+    <!-- Zoom controls: glassmorphism icon buttons, stacked vertically -->
+    <div class="absolute bottom-3 right-3 flex flex-col gap-1">
       <button
-        class="h-7 w-7 flex items-center justify-center rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 text-sm font-bold hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors shadow-sm"
-        aria-label="Toggle graph legend"
-        @click="legendExpanded = !legendExpanded"
-      >
-        ?
-      </button>
-      <Transition name="expand">
-        <div
-          v-if="legendExpanded"
-          class="mt-1 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-2.5 shadow-sm text-[10px] space-y-1.5 min-w-[140px]"
-        >
-          <p class="font-medium text-gray-700 dark:text-gray-300 text-[11px]">Legend</p>
-          <div class="flex items-center gap-1.5">
-            <span class="h-2.5 w-2.5 rounded-full bg-gray-300 dark:bg-gray-600 inline-block" />
-            <span class="text-gray-600 dark:text-gray-400">Not Started</span>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <span class="h-2.5 w-2.5 rounded-full bg-blue-500 dark:bg-blue-400 inline-block" />
-            <span class="text-gray-600 dark:text-gray-400">In Progress</span>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <span class="h-2.5 w-2.5 rounded-full bg-green-500 dark:bg-green-400 inline-block" />
-            <span class="text-gray-600 dark:text-gray-400">Complete</span>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <span class="h-2.5 w-2.5 rounded-full bg-red-500 dark:bg-red-400 inline-block" />
-            <span class="text-gray-600 dark:text-gray-400">Failed</span>
-          </div>
-          <hr class="border-gray-200 dark:border-gray-700" />
-          <div class="flex items-center gap-1.5">
-            <span class="inline-block w-5 h-0 border-t border-gray-400 dark:border-gray-500" />
-            <span class="text-gray-600 dark:text-gray-400">Dependency</span>
-          </div>
-          <div class="flex items-center gap-1.5">
-            <span class="inline-block w-5 h-0 border-t-2 border-blue-500 dark:border-blue-400" />
-            <span class="text-gray-600 dark:text-gray-400">Critical path</span>
-          </div>
-        </div>
-      </Transition>
-    </div>
-
-    <!-- B8: Zoom controls with aria-label, h-9 w-9 -->
-    <div class="absolute bottom-3 right-3 flex gap-1">
-      <button
-        class="h-9 w-9 flex items-center justify-center rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150 shadow-sm"
+        class="h-8 w-8 flex items-center justify-center rounded-lg bg-white/85 dark:bg-[#111116]/85 backdrop-blur-sm shadow-sm text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-[#111116] transition-colors duration-150"
         aria-label="Zoom in"
         @click="zoomIn"
       >
-        +
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="7" y1="2" x2="7" y2="12" />
+          <line x1="2" y1="7" x2="12" y2="7" />
+        </svg>
       </button>
       <button
-        class="h-9 w-9 flex items-center justify-center rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150 shadow-sm"
+        class="h-8 w-8 flex items-center justify-center rounded-lg bg-white/85 dark:bg-[#111116]/85 backdrop-blur-sm shadow-sm text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-[#111116] transition-colors duration-150"
         aria-label="Zoom out"
         @click="zoomOut"
       >
-        -
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="2" y1="7" x2="12" y2="7" />
+        </svg>
       </button>
       <button
-        class="h-9 px-2 flex items-center justify-center rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 text-xs hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150 shadow-sm"
+        class="h-8 w-8 flex items-center justify-center rounded-lg bg-white/85 dark:bg-[#111116]/85 backdrop-blur-sm shadow-sm text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-[#111116] transition-colors duration-150"
         aria-label="Fit graph to view"
         @click="resetView"
       >
-        Reset
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="1,5 1,1 5,1" />
+          <polyline points="9,1 13,1 13,5" />
+          <polyline points="13,9 13,13 9,13" />
+          <polyline points="5,13 1,13 1,9" />
+        </svg>
       </button>
     </div>
   </div>
 
-  <!-- B8: Visually-hidden data table for screen readers -->
+  <!-- Visually-hidden data table for screen readers -->
   <table v-if="layout.nodes.length > 0" class="sr-only" aria-label="Task dependency data">
     <caption>Task dependency graph data with status and relationships</caption>
     <thead>
@@ -932,7 +1238,7 @@ function handleNodeKeydown(e: KeyboardEvent, nodeId: string): void {
   transition: transform 0ms;
 }
 
-/* B10: Node entrance animation */
+/* Node entrance animation */
 .graph-node {
   animation: node-enter 300ms ease both;
   cursor: pointer;
@@ -943,12 +1249,12 @@ function handleNodeKeydown(e: KeyboardEvent, nodeId: string): void {
   filter: url(#hover-glow);
 }
 
-/* B10: Critical path flow animation */
+/* Critical path marching ants */
 .critical-edge {
   animation: edge-flow 1s linear infinite;
 }
 
-/* B8: Screen-reader only utility (in case not provided by Tailwind) */
+/* Screen-reader only utility */
 .sr-only {
   position: absolute;
   width: 1px;
