@@ -117,6 +117,8 @@ class Orchestrator:
         self._notified_gates: set[str] = set()
         # Halt reason set during collect phase
         self._halt_reason: str | None = None
+        # Track whether any task has failed since the last intake run
+        self._has_failures_since_intake: bool = False
 
     def validate_templates(self) -> None:
         """Validate that every role in the pipeline has a resolved template.
@@ -244,6 +246,10 @@ class Orchestrator:
 
         # ==== PHASE 1: COLLECT ====
         reaped_results = self._collect(cycle_num, executor)
+
+        # Track failures for intake re-trigger
+        if any(r.verdict == Verdict.FAIL for r in reaped_results.values()):
+            self._has_failures_since_intake = True
 
         # Run hooks after reap
         if reaped_results:
@@ -824,17 +830,22 @@ class Orchestrator:
         return "\n\n".join(sections)
 
     def _run_intake(self) -> None:
-        """Run PM intake if there are unprocessed specs."""
+        """Run PM intake if there are unprocessed specs or task failures."""
         if self._composer is None:
             logger.debug("intake: no composer -- skipping")
             return
 
         unprocessed = self._unprocessed_specs()
-        if not unprocessed:
-            logger.debug("intake: no unprocessed specs -- skipping")
+        has_failures = self._has_failures_since_intake
+        if not unprocessed and not has_failures:
+            logger.debug("intake: no unprocessed specs or failures -- skipping")
             return
 
-        logger.info("intake: %d unprocessed spec(s), running PM", len(unprocessed))
+        logger.info(
+            "intake: running PM (unprocessed=%d, failures=%s)",
+            len(unprocessed),
+            has_failures,
+        )
 
         context = IntakeContext(unprocessed_specs=tuple(unprocessed))
         prompt = self._composer.compose(role="pm", context=context)
@@ -854,6 +865,9 @@ class Orchestrator:
             cycle=self._current_cycle,
             duration_s=time.monotonic() - intake_start,
         )
+
+        # Reset failure flag after intake runs
+        self._has_failures_since_intake = False
 
     # -----------------------------------------------------------------------
     # World building

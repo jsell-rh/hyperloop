@@ -284,6 +284,69 @@ class TestPMIntake:
         assert "specs/auth.md" in prompt
         assert "specs/widget.md" not in prompt  # already covered
 
+    def test_intake_retriggers_on_task_failure(self) -> None:
+        """Intake fires when a task fails, even if all specs are covered."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.set_file("specs/widget.md", "Widget spec content")
+        state.add_task(_task(spec_ref="specs/widget.md"))
+
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+        orch = _make_orchestrator(state, runtime, composer=composer, max_task_rounds=50)
+
+        # Cycle 1: spawn implementer (no intake -- all specs covered)
+        orch.run_cycle()
+        pm_runs_before = [r for r in runtime.serial_runs if r.role == "pm"]
+        assert len(pm_runs_before) == 0
+
+        # Implementer passes -> verifier
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", PASS_RESULT)
+        orch.run_cycle()
+
+        # Verifier fails -> should set failure flag
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", FAIL_RESULT)
+        orch.run_cycle()
+
+        # Intake should have run because of the failure
+        pm_runs_after = [r for r in runtime.serial_runs if r.role == "pm"]
+        assert len(pm_runs_after) == 1
+
+    def test_intake_failure_flag_resets_after_intake(self) -> None:
+        """The failure flag is reset after intake runs, preventing duplicate runs."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.set_file("specs/widget.md", "Widget spec content")
+        state.add_task(_task(spec_ref="specs/widget.md"))
+
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+        orch = _make_orchestrator(state, runtime, composer=composer, max_task_rounds=50)
+
+        # Cycle 1: spawn implementer
+        orch.run_cycle()
+
+        # Implementer passes -> verifier
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", PASS_RESULT)
+        orch.run_cycle()
+
+        # Verifier fails -> triggers intake
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", FAIL_RESULT)
+        orch.run_cycle()
+
+        pm_runs_after_fail = [r for r in runtime.serial_runs if r.role == "pm"]
+        assert len(pm_runs_after_fail) == 1
+
+        # Reset runtime so the re-spawned implementer is still "running"
+        runtime.set_poll_status("task-001", "running")
+
+        # Next cycle: no new failures, no unprocessed specs -> intake should NOT run again
+        orch.run_cycle()
+        pm_runs_next = [r for r in runtime.serial_runs if r.role == "pm"]
+        assert len(pm_runs_next) == 1  # still 1, not 2
+
 
 # ---------------------------------------------------------------------------
 # Process-improver wiring
