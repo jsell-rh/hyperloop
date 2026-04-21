@@ -400,6 +400,123 @@ For `--repo owner/repo` mode: the backend clones the repo to a temp directory an
 - For remote observation (`--repo`): the backend runs `git pull` periodically (on each `get_world()` call or on a background timer) to stay current
 - No WebSocket needed — polling matches the orchestrator's own cycle cadence
 
+## Prompt Provenance
+
+The dashboard can display the fully-composed prompt for any task/round, with each section annotated by its source layer. This lets a human see exactly what an agent was told and where each instruction came from.
+
+### Data Model
+
+```python
+@dataclass(frozen=True)
+class PromptSection:
+    source: str      # "base", "project-overlay", "process-overlay", "spec", "findings", "runtime"
+    label: str       # "prompt", "guidelines", "spec", "findings", "epilogue"
+    content: str
+
+@dataclass(frozen=True)
+class ComposedPrompt:
+    sections: tuple[PromptSection, ...]
+    text: str        # the flattened string passed to the runtime
+```
+
+### Source Attribution
+
+| Section | Source | How determined |
+|---|---|---|
+| `prompt` | `base` or `project-overlay` | From `AgentTemplate`. If the template came from a kustomize patch (overlay), source is `project-overlay`. If from the base resource, source is `base`. |
+| `guidelines` | `process-overlay` or `project-overlay` | The `guidelines` field on `AgentTemplate`. Empty in base. If non-empty, it was patched by an overlay. Process-improver writes to the process overlay; project teams write to the project overlay. The `AgentTemplate.annotations` can carry a `source` hint. |
+| `spec` | `spec` | Content from `SpecSource.read(spec_ref)`. Source is always `spec`. |
+| `findings` | `findings` | From `StateStore.get_findings(task_id)`. Prior round review content. |
+| `epilogue` | `runtime` | Runtime-specific instructions (e.g., "push your branch when done"). |
+
+### Compose Changes
+
+`PromptComposer.compose()` currently returns `str`. It should return `ComposedPrompt` — a structured object with the section list and the flattened text. The flattened `text` field is what gets passed to the runtime (backwards compatible). The sections are stored for observability.
+
+The `prompt_composed` probe event should include the sections (or the orchestrator should store them for dashboard retrieval).
+
+### Storage
+
+The orchestrator stores the composed prompt sections for each spawn in `StateStore`. Suggested path: `.hyperloop/state/prompts/task-{id}-round-{n}-{role}.json`. This is write-once, read-many — the dashboard reads it, the orchestrator writes it after each spawn.
+
+### API Endpoint
+
+`GET /api/tasks/{task_id}/prompts`
+
+Returns all composed prompts for a task across rounds/roles:
+
+```json
+[
+  {
+    "round": 0,
+    "role": "implementer",
+    "sections": [
+      {
+        "source": "base",
+        "label": "prompt",
+        "content": "You are a worker agent implementing a task..."
+      },
+      {
+        "source": "process-overlay",
+        "label": "guidelines",
+        "content": "- Do not delete files your task did not create.\n- Run checks before submitting."
+      },
+      {
+        "source": "spec",
+        "label": "spec",
+        "content": "# Persistent Storage\n\nThe system shall..."
+      },
+      {
+        "source": "findings",
+        "label": "findings",
+        "content": ""
+      }
+    ]
+  },
+  {
+    "round": 1,
+    "role": "implementer",
+    "sections": [
+      {
+        "source": "base",
+        "label": "prompt",
+        "content": "You are a worker agent implementing a task..."
+      },
+      {
+        "source": "process-overlay",
+        "label": "guidelines",
+        "content": "- Do not delete files your task did not create.\n- Run checks before submitting.\n- Always run the full test suite before writing your verdict."
+      },
+      {
+        "source": "spec",
+        "label": "spec",
+        "content": "# Persistent Storage\n\nThe system shall..."
+      },
+      {
+        "source": "findings",
+        "label": "findings",
+        "content": "Tests fail: missing null check in widget.py line 42..."
+      }
+    ]
+  }
+]
+```
+
+### Frontend
+
+The task detail page includes a "Prompt" tab. Each prompt entry (per round/role) is rendered as collapsible panels — one panel per section. The panel header shows the source label as a colored badge:
+
+| Source | Color |
+|---|---|
+| `base` | Gray |
+| `project-overlay` | Purple |
+| `process-overlay` | Amber |
+| `spec` | Blue |
+| `findings` | Orange |
+| `runtime` | Slate |
+
+Content is rendered as monospace text (not markdown — it's a prompt, not documentation).
+
 ## Design Principles
 
 - **Clean, enterprise.** No visual clutter, no decorative elements. Information density without noise.
