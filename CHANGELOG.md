@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.20.3 (2026-04-17)
+
+### Bug Fixes
+
+- Check push return code after rebase, fallback to --force
+  ([`4deecfe`](https://github.com/jsell-rh/hyperloop/commit/4deecfe2f63eaa69860bb0d8424bde67a4561de1))
+
+
 ## v0.20.2 (2026-04-17)
 
 
