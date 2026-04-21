@@ -116,8 +116,10 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
     """
     flat: dict[str, object] = {}
 
-    # Top-level scalars
+    # Top-level scalars (spec flat format)
     for key in (
+        "repo",
+        "base_branch",
         "overlay",
         "base_ref",
         "poll_interval",
@@ -125,25 +127,16 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
         "max_cycles",
         "max_action_attempts",
         "max_workers",
+        "runtime",
     ):
-        if key in raw:
+        if key in raw and not isinstance(raw[key], dict):
             flat[key] = raw[key]
 
-    # target section
-    target = raw.get("target")
-    if isinstance(target, dict):
-        if "repo" in target:
-            flat["repo"] = target["repo"]
-        if "base_branch" in target:
-            flat["base_branch"] = target["base_branch"]
-
-    # runtime — string (new format) or dict (old format)
+    # Legacy nested runtime section (max_workers was nested pre-spec)
     runtime = raw.get("runtime")
-    if isinstance(runtime, str):
-        flat["runtime"] = runtime
-    elif isinstance(runtime, dict):
+    if isinstance(runtime, dict):
         runtime_dict = cast("dict[str, object]", runtime)
-        if "max_workers" in runtime_dict:
+        if "max_workers" in runtime_dict and "max_workers" not in flat:
             flat["max_workers"] = runtime_dict["max_workers"]
 
     # ambient section

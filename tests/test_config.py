@@ -20,13 +20,10 @@ class TestLoadConfigFromFile:
         config_file.write_text(
             """\
 overlay: .hyperloop/agents/
-
-target:
-  repo: acme/widgets
-  base_branch: develop
-runtime:
-  default: local
-  max_workers: 4
+repo: acme/widgets
+base_branch: develop
+runtime: local
+max_workers: 4
 
 merge:
   auto_merge: false
@@ -87,8 +84,7 @@ class TestLoadConfigPartial:
         config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
-target:
-  base_branch: develop
+base_branch: develop
 """
         )
 
@@ -160,8 +156,7 @@ class TestLoadConfigCliOverrides:
         config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
-target:
-  repo: acme/widgets
+repo: acme/widgets
 """
         )
 
@@ -192,8 +187,7 @@ runtime:
         config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
-target:
-  repo: acme/widgets
+repo: acme/widgets
 """
         )
 

@@ -147,9 +147,35 @@ class Orchestrator:
             )
             raise ValueError(msg)
 
+    def validate_ports(self) -> None:
+        """Validate that pipeline steps have matching port adapters.
+
+        Raises ValueError if the pipeline has gate/action steps but no
+        gate/action adapter is configured.
+        """
+        gates = _collect_steps_of_type(self._process.pipeline, GateStep)
+        actions = _collect_steps_of_type(self._process.pipeline, ActionStep)
+
+        if gates and self._gate is None:
+            names = sorted({s.gate for s in gates})
+            msg = (
+                f"Pipeline has gate steps {names} but no gate adapter is configured. "
+                "Set --repo to enable PR-based gates, or remove gate steps from the pipeline."
+            )
+            raise ValueError(msg)
+
+        if actions and self._action is None:
+            names = sorted({s.action for s in actions})
+            msg = (
+                f"Pipeline has action steps {names} but no action adapter is configured. "
+                "Set --repo to enable PR-based actions, or remove action steps from the pipeline."
+            )
+            raise ValueError(msg)
+
     def run_loop(self, max_cycles: int = 200) -> str:
         """Run the orchestrator loop until halt or max_cycles. Returns halt reason."""
         self.validate_templates()
+        self.validate_ports()
         world = self._state.get_world()
         self._probe.orchestrator_started(
             task_count=len(world.tasks),
@@ -1074,3 +1100,14 @@ def _collect_roles(steps: tuple[PipelineStep, ...]) -> set[str]:
         elif isinstance(step, LoopStep):
             roles.update(_collect_roles(step.steps))
     return roles
+
+
+def _collect_steps_of_type(steps: tuple[PipelineStep, ...], step_type: type) -> list[PipelineStep]:
+    """Recursively collect all steps of a given type from a pipeline."""
+    result: list[PipelineStep] = []
+    for step in steps:
+        if isinstance(step, step_type):
+            result.append(step)
+        elif isinstance(step, LoopStep):
+            result.extend(_collect_steps_of_type(step.steps, step_type))
+    return result

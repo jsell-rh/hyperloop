@@ -49,9 +49,8 @@ class TestDryRun:
         config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text(
             """\
-target:
-  repo: acme/widgets
-  base_branch: main
+repo: acme/widgets
+base_branch: main
 """
         )
 
@@ -63,7 +62,7 @@ target:
 
     def test_dry_run_with_cli_overrides(self, tmp_path: Path) -> None:
         config_file = tmp_path / ".hyperloop.yaml"
-        config_file.write_text("target:\n  repo: acme/widgets\n")
+        config_file.write_text("repo: acme/widgets\n")
 
         result = runner.invoke(
             app,
