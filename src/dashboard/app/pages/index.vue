@@ -229,7 +229,7 @@ onUnmounted(() => {
       </button>
       <Transition name="expand">
         <div v-if="graphExpanded" class="px-5 pb-5">
-          <DependencyGraph :graph="graph" />
+          <DependencyGraph :graph="graph" :pipeline-steps="pipelineSteps ?? undefined" />
         </div>
       </Transition>
     </div>

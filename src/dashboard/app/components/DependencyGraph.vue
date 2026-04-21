@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import type { GraphData } from '~/types'
 
+interface PipelineStepInfo {
+  name: string
+  type: string
+}
+
 const props = defineProps<{
   graph: GraphData
+  pipelineSteps?: PipelineStepInfo[]
 }>()
 
 // ---------------------------------------------------------------------------
@@ -252,6 +258,15 @@ function getIdFill(status: string): string {
   return isDark.value ? '#6b7280' : '#9ca3af'
 }
 
+function getMiniBarFill(stepName: string, currentPhase: string | null, stepIndex: number): string {
+  if (!currentPhase || !props.pipelineSteps) return isDark.value ? '#2d2d35' : '#e5e7eb'
+  const activeIndex = props.pipelineSteps.findIndex(s => s.name === currentPhase)
+  if (activeIndex === -1) return isDark.value ? '#2d2d35' : '#e5e7eb'
+  if (stepIndex < activeIndex) return isDark.value ? '#166534' : '#86efac' // completed: green
+  if (stepIndex === activeIndex) return isDark.value ? '#60a5fa' : '#3b82f6' // active: blue
+  return isDark.value ? '#2d2d35' : '#e5e7eb' // pending: gray
+}
+
 // ---------------------------------------------------------------------------
 // Edge style helpers
 // ---------------------------------------------------------------------------
@@ -428,18 +443,18 @@ function updateTooltipPosition(event: MouseEvent): void {
   const container = containerRef.value
   if (!container) return
   const rect = container.getBoundingClientRect()
-  const tooltipWidth = 250
-  let left = event.clientX - rect.left
-  let top = event.clientY - rect.top - 60
+  const tooltipWidth = 240
+  let left = event.clientX - rect.left - tooltipWidth / 2
+  let top = event.clientY - rect.top - 70
 
-  // Clamp horizontal to container bounds
-  if (left + tooltipWidth / 2 > rect.width) {
-    left = rect.width - tooltipWidth / 2 - 8
+  // Clamp: don't let tooltip go off right edge
+  if (left + tooltipWidth > rect.width - 8) {
+    left = rect.width - tooltipWidth - 8
   }
-  if (left - tooltipWidth / 2 < 0) {
-    left = tooltipWidth / 2 + 8
+  // Clamp: don't let it go off left edge
+  if (left < 8) {
+    left = 8
   }
-
   // Flip below cursor if too close to top
   if (top < 8) {
     top = event.clientY - rect.top + 20
@@ -1033,27 +1048,46 @@ onUnmounted(() => {
             {{ node.id }}
           </text>
 
-          <!-- Phase pill badge (in-progress only) -->
-          <template v-if="node.status === 'in-progress' && node.phase">
-            <rect
-              :x="node.x + NODE_WIDTH / 2 - 40"
-              :y="node.y + 44"
-              width="80"
-              height="16"
-              rx="8"
-              :fill="isDark ? 'rgba(96,165,250,0.12)' : 'rgba(59,130,246,0.1)'"
-              stroke="none"
-            />
-            <text
-              :x="node.x + NODE_WIDTH / 2"
-              :y="node.y + 55"
-              font-size="10"
-              text-anchor="middle"
-              :fill="isDark ? '#60a5fa' : '#3b82f6'"
-            >
-              {{ node.phase }}
-            </text>
+          <!-- Mini pipeline bar (in-progress nodes with pipeline steps) -->
+          <template v-if="node.status === 'in-progress' && pipelineSteps && pipelineSteps.length > 0">
+            <g :transform="`translate(${node.x + 12}, ${node.y + 46})`">
+              <template v-for="(step, si) in pipelineSteps" :key="'step-' + si">
+                <!-- Step segment -->
+                <rect
+                  :x="si * ((NODE_WIDTH - 24) / pipelineSteps.length)"
+                  y="0"
+                  :width="(NODE_WIDTH - 24) / pipelineSteps.length - 2"
+                  height="4"
+                  :rx="2"
+                  :fill="getMiniBarFill(step.name, node.phase, si)"
+                />
+                <!-- Step label (only for active step) -->
+                <text
+                  v-if="step.name === node.phase"
+                  :x="si * ((NODE_WIDTH - 24) / pipelineSteps.length) + ((NODE_WIDTH - 24) / pipelineSteps.length - 2) / 2"
+                  y="14"
+                  font-size="8"
+                  text-anchor="middle"
+                  :fill="isDark ? '#60a5fa' : '#3b82f6'"
+                  font-weight="600"
+                >
+                  {{ step.name }}
+                </text>
+              </template>
+            </g>
           </template>
+          <!-- Fallback: simple phase text if no pipeline steps provided -->
+          <text
+            v-else-if="node.status === 'in-progress' && node.phase"
+            :x="node.x + NODE_WIDTH / 2"
+            :y="node.y + 55"
+            font-size="10"
+            font-style="italic"
+            text-anchor="middle"
+            :fill="isDark ? '#60a5fa' : '#3b82f6'"
+          >
+            {{ node.phase }}
+          </text>
         </g>
       </g>
     </svg>
@@ -1061,13 +1095,13 @@ onUnmounted(() => {
     <!-- Tooltip -->
     <div
       v-if="tooltipNode"
-      class="absolute z-20 pointer-events-none px-3 py-2 rounded-md text-xs shadow-lg max-w-xs"
-      :class="isDark ? 'bg-gray-700 text-gray-100' : 'bg-gray-900 text-white'"
-      :style="{ left: tooltipStyle.left, top: tooltipStyle.top, transform: 'translateX(-50%)' }"
+      class="absolute z-20 pointer-events-none px-3 py-2 rounded-lg text-xs shadow-lg"
+      :class="isDark ? 'bg-gray-800 text-gray-100' : 'bg-gray-900 text-white'"
+      :style="{ left: tooltipStyle.left, top: tooltipStyle.top, width: '240px' }"
     >
-      <p class="font-medium">{{ tooltipNode.fullTitle }}</p>
+      <p class="font-medium leading-snug">{{ tooltipNode.fullTitle }}</p>
       <p class="text-gray-400 mt-0.5">
-        {{ tooltipNode.status }}{{ tooltipNode.phase ? ' / ' + tooltipNode.phase : '' }}
+        {{ tooltipNode.id }} &middot; {{ tooltipNode.status }}{{ tooltipNode.phase ? ' / ' + tooltipNode.phase : '' }}
       </p>
     </div>
 

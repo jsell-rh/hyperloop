@@ -348,7 +348,7 @@ wheels = [
 
 [[package]]
 name = "hyperloop"
-version = "0.25.0"
+version = "0.25.1"
 source = { editable = "." }
 dependencies = [
     { name = "claude-agent-sdk" },
