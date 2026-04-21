@@ -379,6 +379,7 @@ def run(
         pr_manager = PRManager(
             repo=cfg.repo,
             delete_branch=cfg.delete_branch,
+            probe=probe,
         )
         pr_manager.ensure_gate_labels()
 

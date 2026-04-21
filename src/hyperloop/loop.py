@@ -265,6 +265,7 @@ class Orchestrator:
         )
         self._state.persist("orchestrator: cycle update")
         self._state.sync()
+        self._probe.state_synced()
         self._execute_spawns(plans, cycle_num)
         self._emit_cycle_completed(cycle_num, cycle_start, plans, collected.reaped)
         return self._check_convergence()
@@ -320,6 +321,7 @@ class Orchestrator:
             prompt = self._compose_prompt(task, plan.role, cycle=cycle_num)
             try:
                 self._runtime.push_branch(branch)
+                self._probe.branch_pushed(branch=branch)
                 handle = self._runtime.spawn(plan.task_id, plan.role, prompt=prompt, branch=branch)
             except Exception:
                 self._handle_spawn_failure(plan, task, branch, cycle_num)

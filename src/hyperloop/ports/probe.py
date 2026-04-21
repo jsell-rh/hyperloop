@@ -303,3 +303,43 @@ class OrchestratorProbe(Protocol):
     ) -> None:
         """Full composed prompt for a worker, for debugging/observability."""
         ...
+
+    def pr_created(
+        self,
+        *,
+        task_id: str,
+        pr_url: str,
+        branch: str,
+    ) -> None:
+        """A draft PR was created for a task."""
+        ...
+
+    def pr_label_changed(
+        self,
+        *,
+        pr_url: str,
+        label: str,
+        added: bool,
+    ) -> None:
+        """A label was added to or removed from a PR."""
+        ...
+
+    def pr_marked_ready(
+        self,
+        *,
+        pr_url: str,
+    ) -> None:
+        """A PR was marked as ready for review."""
+        ...
+
+    def branch_pushed(
+        self,
+        *,
+        branch: str,
+    ) -> None:
+        """A branch was pushed to the remote."""
+        ...
+
+    def state_synced(self) -> None:
+        """State was synced with remote (pull + push)."""
+        ...

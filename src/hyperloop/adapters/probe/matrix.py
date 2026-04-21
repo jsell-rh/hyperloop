@@ -300,4 +300,21 @@ class MatrixProbe:
         pass
 
     def prompt_composed(self, **kw: object) -> None:
-        pass  # Too verbose for Matrix
+        pass
+
+    def pr_created(self, **kw: object) -> None:
+        pr_url = kw.get("pr_url", "")
+        task_id = kw.get("task_id", "")
+        self._send(f"PR created for {task_id}: {pr_url}")
+
+    def pr_label_changed(self, **kw: object) -> None:
+        pass
+
+    def pr_marked_ready(self, **kw: object) -> None:
+        pass
+
+    def branch_pushed(self, **kw: object) -> None:
+        pass
+
+    def state_synced(self, **kw: object) -> None:
+        pass

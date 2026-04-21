@@ -95,3 +95,18 @@ class RecordingProbe:
 
     def prompt_composed(self, **kw: object) -> None:
         self._record("prompt_composed", **kw)
+
+    def pr_created(self, **kw: object) -> None:
+        self._record("pr_created", **kw)
+
+    def pr_label_changed(self, **kw: object) -> None:
+        self._record("pr_label_changed", **kw)
+
+    def pr_marked_ready(self, **kw: object) -> None:
+        self._record("pr_marked_ready", **kw)
+
+    def branch_pushed(self, **kw: object) -> None:
+        self._record("branch_pushed", **kw)
+
+    def state_synced(self, **kw: object) -> None:
+        self._record("state_synced", **kw)

@@ -79,6 +79,21 @@ class NullProbe:
     def prompt_composed(self, **_: object) -> None:
         pass
 
+    def pr_created(self, **_: object) -> None:
+        pass
+
+    def pr_label_changed(self, **_: object) -> None:
+        pass
+
+    def pr_marked_ready(self, **_: object) -> None:
+        pass
+
+    def branch_pushed(self, **_: object) -> None:
+        pass
+
+    def state_synced(self, **_: object) -> None:
+        pass
+
 
 class MultiProbe:
     """Fans out all probe calls to N child probes.

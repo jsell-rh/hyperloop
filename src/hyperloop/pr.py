@@ -9,12 +9,12 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-
-import structlog
+from typing import TYPE_CHECKING
 
 from hyperloop.ports.pr import PRState
 
-logger: structlog.stdlib.BoundLogger = structlog.get_logger()
+if TYPE_CHECKING:
+    from hyperloop.ports.probe import OrchestratorProbe
 
 
 class PRManager:
@@ -26,12 +26,14 @@ class PRManager:
         merge_strategy: str = "squash",
         delete_branch: bool = True,
         has_gate: bool = False,
+        probe: OrchestratorProbe | None = None,
     ) -> None:
         self.repo = repo
         self.merge_strategy = merge_strategy
         self.delete_branch = delete_branch
         self._has_gate = has_gate
         self._ensured_labels: set[str] = set()
+        self._probe: OrchestratorProbe | None = probe
 
     def _ensure_label(self, name: str, color: str = "C5DEF5") -> None:
         """Create a label on the repo if it doesn't exist. Idempotent."""
@@ -110,7 +112,6 @@ class PRManager:
             state = str(data.get("state", ""))
             pr_url = str(data.get("url", ""))
             if pr_url and state == "OPEN":
-                logger.info("PR already exists for %s: %s", branch, pr_url)
                 return pr_url
 
         # Push the branch first (gh pr create needs it on the remote)
@@ -140,7 +141,6 @@ class PRManager:
             text=True,
         )
         if result.returncode != 0:
-            logger.warning("Failed to create draft PR for %s: %s", task_id, result.stderr.strip())
             return ""
 
         pr_url = result.stdout.strip()
@@ -153,7 +153,7 @@ class PRManager:
         self._ensure_label(task_label, "C5DEF5")
         self._ensure_label(spec_label, "D4C5F9")
 
-        label_result = subprocess.run(
+        subprocess.run(
             [
                 "gh",
                 "pr",
@@ -167,10 +167,8 @@ class PRManager:
             capture_output=True,
             text=True,
         )
-        if label_result.returncode != 0:
-            logger.warning("Failed to add labels to PR %s: %s", pr_url, label_result.stderr.strip())
-
-        logger.info("Created draft PR %s for task %s", pr_url, task_id)
+        if self._probe is not None:
+            self._probe.pr_created(task_id=task_id, pr_url=pr_url, branch=branch)
         return pr_url
 
     def check_gate(self, pr_url: str, gate: str) -> bool:
@@ -199,11 +197,7 @@ class PRManager:
         data = json.loads(result.stdout)
         label_names = {label["name"] for label in data.get("labels", [])}
 
-        if "lgtm" in label_names:
-            logger.info("Gate '%s' cleared for PR %s (lgtm label found)", gate, pr_url)
-            return True
-
-        return False
+        return "lgtm" in label_names
 
     def remove_gate_label(self, pr_url: str) -> None:
         """Remove the lgtm label after successful merge."""
@@ -226,36 +220,22 @@ class PRManager:
         """Add a label to a PR. Creates the label on the repo if needed."""
         self._ensure_label(label, "C5DEF5")
         subprocess.run(
-            [
-                "gh",
-                "pr",
-                "edit",
-                pr_url,
-                "--add-label",
-                label,
-                "--repo",
-                self.repo,
-            ],
+            ["gh", "pr", "edit", pr_url, "--add-label", label, "--repo", self.repo],
             capture_output=True,
             text=True,
         )
+        if self._probe is not None:
+            self._probe.pr_label_changed(pr_url=pr_url, label=label, added=True)
 
     def remove_label(self, pr_url: str, label: str) -> None:
         """Remove a label from a PR."""
         subprocess.run(
-            [
-                "gh",
-                "pr",
-                "edit",
-                pr_url,
-                "--remove-label",
-                label,
-                "--repo",
-                self.repo,
-            ],
+            ["gh", "pr", "edit", pr_url, "--remove-label", label, "--repo", self.repo],
             capture_output=True,
             text=True,
         )
+        if self._probe is not None:
+            self._probe.pr_label_changed(pr_url=pr_url, label=label, added=False)
 
     def mark_ready(self, pr_url: str) -> None:
         """Mark a draft PR as ready for review. Best-effort — logs on failure."""
@@ -272,9 +252,9 @@ class PRManager:
             text=True,
         )
         if result.returncode != 0:
-            logger.warning("Failed to mark PR %s as ready: %s", pr_url, result.stderr.strip())
             return
-        logger.info("Marked PR %s as ready for review", pr_url)
+        if self._probe is not None:
+            self._probe.pr_marked_ready(pr_url=pr_url)
 
     def wait_mergeable(self, pr_url: str, timeout_s: float = 30.0) -> bool:
         """Poll until the PR is mergeable. Returns False on timeout/conflict.
@@ -315,7 +295,6 @@ class PRManager:
             # UNKNOWN — GitHub is still calculating, poll again
             time.sleep(interval)
 
-        logger.warning("PR %s still UNKNOWN after %.0fs, proceeding anyway", pr_url, timeout_s)
         return True  # Optimistic: let merge() handle the actual failure
 
     def merge(self, pr_url: str, task_id: str, spec_ref: str) -> bool:
@@ -346,12 +325,7 @@ class PRManager:
             text=True,
         )
 
-        if result.returncode != 0:
-            logger.warning("Merge failed for PR %s: %s", pr_url, result.stderr.strip())
-            return False
-
-        logger.info("Merged PR %s for task %s", pr_url, task_id)
-        return True
+        return result.returncode == 0
 
     def rebase_branch(self, branch: str, base_branch: str) -> bool:
         """Rebase a branch onto base. Returns True if clean, False if conflicts.
@@ -370,7 +344,6 @@ class PRManager:
                 text=True,
             )
             if wt.returncode != 0:
-                logger.warning("Failed to create worktree for %s: %s", branch, wt.stderr.strip())
                 return False
 
             try:
@@ -393,7 +366,6 @@ class PRManager:
                         capture_output=True,
                         text=True,
                     )
-                    logger.warning("Rebase conflict on branch %s onto %s", branch, base_branch)
                     return False
 
                 # Push the rebased branch
@@ -410,14 +382,10 @@ class PRManager:
                         text=True,
                     )
                     if push.returncode != 0:
-                        logger.warning(
-                            "Push failed after rebase of %s: %s",
-                            branch,
-                            push.stderr.strip(),
-                        )
                         return False
 
-                logger.info("Rebased branch %s onto %s", branch, base_branch)
+                if self._probe is not None:
+                    self._probe.branch_pushed(branch=branch)
                 return True
             finally:
                 # Clean up the worktree

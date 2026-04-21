@@ -402,3 +402,18 @@ class OtelProbe:
 
     def prompt_composed(self, **_kw: object) -> None:
         pass
+
+    def pr_created(self, **_kw: object) -> None:
+        pass
+
+    def pr_label_changed(self, **_kw: object) -> None:
+        pass
+
+    def pr_marked_ready(self, **_kw: object) -> None:
+        pass
+
+    def branch_pushed(self, **_kw: object) -> None:
+        pass
+
+    def state_synced(self, **_kw: object) -> None:
+        pass
