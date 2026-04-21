@@ -1,8 +1,7 @@
-"""Orchestrator loop -- wires decide, pipeline, state store, and runtime.
+"""Orchestrator loop -- thin coordinator that delegates to cycle phases.
 
 Runs a 4-phase cycle: COLLECT, INTAKE, ADVANCE, SPAWN.
-Uses pluggable ports (GatePort, ActionPort, CycleHook, NotificationPort)
-for all external interactions.
+Each phase returns a result dataclass; the Orchestrator applies mutations.
 """
 
 from __future__ import annotations
@@ -14,39 +13,34 @@ import structlog
 
 from hyperloop.adapters.notification.null import NullNotification
 from hyperloop.adapters.probe import NullProbe
-from hyperloop.domain.decide import decide
+from hyperloop.cycle import (
+    BRANCH_PREFIX,
+    advance,
+    collect,
+    collect_roles,
+    collect_steps_of_type,
+    plan_spawns,
+    run_intake,
+)
+from hyperloop.cycle.helpers import build_world
+from hyperloop.cycle.intake import _unprocessed_specs
 from hyperloop.domain.deps import detect_cycles
 from hyperloop.domain.model import (
     ActionStep,
-    AgentStep,
     GateStep,
-    Halt,
-    IntakeContext,
-    LoopStep,
-    Phase,
     PipelinePosition,
-    ReapWorker,
-    SpawnWorker,
     TaskContext,
     TaskStatus,
     Verdict,
     WorkerHandle,
-    WorkerState,
-    World,
 )
-from hyperloop.domain.pipeline import (
-    PerformAction,
-    PipelineComplete,
-    PipelineExecutor,
-    PipelineFailed,
-    SpawnAgent,
-    WaitForGate,
-)
-from hyperloop.ports.action import ActionOutcome
+from hyperloop.domain.pipeline import PipelineExecutor
 
 if TYPE_CHECKING:
     from hyperloop.compose import PromptComposer
-    from hyperloop.domain.model import PipelineStep, Process, Task, WorkerResult
+    from hyperloop.cycle.intake import IntakeResult
+    from hyperloop.cycle.spawn import SpawnPlan
+    from hyperloop.domain.model import Process, Task, WorkerResult
     from hyperloop.ports.action import ActionPort
     from hyperloop.ports.gate import GatePort
     from hyperloop.ports.hook import CycleHook
@@ -59,18 +53,9 @@ if TYPE_CHECKING:
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger()
 
-BRANCH_PREFIX = "hyperloop"
-
 
 class Orchestrator:
-    """Main orchestrator loop -- 4-phase cycle with pluggable ports.
-
-    Each cycle follows four phases:
-      1. COLLECT -- reap finished workers, run hooks
-      2. INTAKE -- detect spec gaps, create work
-      3. ADVANCE -- advance tasks through pipeline (gates, actions, results)
-      4. SPAWN -- decide, spawn workers
-    """
+    """Thin coordinator: delegates to cycle phases, applies their results."""
 
     def __init__(
         self,
@@ -104,40 +89,22 @@ class Orchestrator:
         self._notification: NotificationPort = notification or NullNotification()
         self._composer = composer
         self._poll_interval = poll_interval
-        self._probe = probe or NullProbe()
+        self._probe: OrchestratorProbe = probe or NullProbe()
 
-        # Active worker tracking: task_id -> (handle, pipeline_position, spawn_time)
         self._workers: dict[str, tuple[WorkerHandle, PipelinePosition, float]] = {}
-        # Action attempt count per task
         self._action_attempts: dict[str, int] = {}
-        # Current cycle number -- set at the start of each run_cycle
         self._current_cycle: int = 0
-        # Spawn backoff: global consecutive failures + per-task retry counts
         self._spawn_failures: int = 0
         self._spawn_skip_until: int = 0
         self._spawn_task_failures: dict[str, int] = {}
-        # Notification deduplication: task_ids that have been notified for gate_blocked
         self._notified_gates: set[str] = set()
-        # Halt reason set during advance phase
-        self._halt_reason: str | None = None
-        # Reaped worker metadata: populated by _collect, consumed by _advance
-        self._reaped_workers: dict[str, tuple[WorkerHandle, PipelinePosition, float]] = {}
-        # Track whether any task has failed since the last intake run
         self._has_failures_since_intake: bool = False
 
     def validate_templates(self) -> None:
-        """Validate that every role in the pipeline has a resolved template.
-
-        Call at startup before ``run_loop`` to catch configuration errors
-        early instead of crashing mid-run when a task reaches an unknown role.
-
-        Raises:
-            ValueError: If any pipeline role has no resolved template.
-        """
+        """Validate that every role in the pipeline has a resolved template."""
         if self._composer is None:
             return
-
-        roles = _collect_roles(self._process.pipeline)
+        roles = collect_roles(self._process.pipeline)
         missing = [r for r in roles if r not in self._composer._templates]
         if missing:
             msg = (
@@ -148,32 +115,24 @@ class Orchestrator:
             raise ValueError(msg)
 
     def validate_ports(self) -> None:
-        """Validate that pipeline steps have matching port adapters.
-
-        Raises ValueError if the pipeline has gate/action steps but no
-        gate/action adapter is configured.
-        """
-        gates = _collect_steps_of_type(self._process.pipeline, GateStep)
-        actions = _collect_steps_of_type(self._process.pipeline, ActionStep)
-
+        """Validate that pipeline steps have matching port adapters."""
+        gates = collect_steps_of_type(self._process.pipeline, GateStep)
+        actions = collect_steps_of_type(self._process.pipeline, ActionStep)
         if gates and self._gate is None:
-            names = sorted({s.gate for s in gates})
-            msg = (
+            names = sorted({s.gate for s in gates})  # type: ignore[union-attr]
+            raise ValueError(
                 f"Pipeline has gate steps {names} but no gate adapter is configured. "
                 "Set --repo to enable PR-based gates, or remove gate steps from the pipeline."
             )
-            raise ValueError(msg)
-
         if actions and self._action is None:
-            names = sorted({s.action for s in actions})
-            msg = (
+            names = sorted({s.action for s in actions})  # type: ignore[union-attr]
+            raise ValueError(
                 f"Pipeline has action steps {names} but no action adapter is configured. "
                 "Set --repo to enable PR-based actions, or remove action steps from the pipeline."
             )
-            raise ValueError(msg)
 
     def run_loop(self, max_cycles: int = 200) -> str:
-        """Run the orchestrator loop until halt or max_cycles. Returns halt reason."""
+        """Run the orchestrator loop until halt or max_cycles."""
         self.validate_templates()
         self.validate_ports()
         world = self._state.get_world()
@@ -193,78 +152,45 @@ class Orchestrator:
         self._emit_halted(reason, max_cycles)
         return reason
 
-    def _emit_halted(self, reason: str, total_cycles: int) -> None:
-        """Emit orchestrator_halted probe event."""
-        world = self._state.get_world()
-        self._probe.orchestrator_halted(
-            reason=reason,
-            total_cycles=total_cycles,
-            completed_tasks=sum(1 for t in world.tasks.values() if t.status == TaskStatus.COMPLETE),
-            failed_tasks=sum(1 for t in world.tasks.values() if t.status == TaskStatus.FAILED),
-        )
-
     def recover(self) -> None:
-        """Recover from a crash by reconciling persisted state with runtime.
-
-        Reads all tasks from the state store. For IN_PROGRESS tasks with no
-        active worker: checks for orphaned workers via the runtime and cancels
-        them, then adds the task to internal tracking for re-spawn.
-        """
+        """Recover from a crash by reconciling persisted state with runtime."""
         world = self._state.get_world()
-
         cycles = detect_cycles(world.tasks)
         if cycles:
             formatted = "; ".join(" -> ".join(c) for c in cycles)
             raise RuntimeError(f"Dependency cycle(s) detected in task graph: {formatted}")
-
         self._probe.recovery_started(
             in_progress_tasks=sum(
                 1 for t in world.tasks.values() if t.status == TaskStatus.IN_PROGRESS
             ),
         )
-
         for task in world.tasks.values():
-            if task.status != TaskStatus.IN_PROGRESS:
+            if task.status != TaskStatus.IN_PROGRESS or task.id in self._workers:
                 continue
-            if task.id in self._workers:
-                continue
-
             branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
-
-            # Check for orphaned workers left from a previous session
             orphan = self._runtime.find_orphan(task.id, branch)
             if orphan is not None:
                 self._runtime.cancel(orphan)
                 self._probe.orphan_found(task_id=task.id, branch=branch)
-
-            # We don't add to _workers here -- instead leave it workerless
-            # so decide() will emit a SpawnWorker for it next cycle.
-            logger.info(
-                "recover: task %s is IN_PROGRESS at phase %s, will re-spawn",
-                task.id,
-                task.phase,
-            )
+            logger.info("recover: task %s at phase %s, will re-spawn", task.id, task.phase)
 
     def run_cycle(self, cycle_num: int = 0) -> str | None:
-        """Run one 4-phase cycle.
-
-        Returns a halt reason string if the loop should stop, or None to continue.
-        """
+        """Run one 4-phase cycle. Returns halt reason or None."""
         self._current_cycle = cycle_num
         cycle_start = time.monotonic()
         executor = PipelineExecutor(self._process.pipeline)
 
-        # Cache world snapshot once per cycle -- augmented with worker state
-        world = self._build_world()
-
-        # ---- 0. Early exit on zero tasks ----------------------------------------
+        # Early exit on zero tasks
+        world = build_world(self._workers, self._state, self._runtime)
         if not world.tasks and not self._workers:
-            # Try intake first -- it may create tasks from new specs
-            self._run_intake()
-            world = self._build_world()
+            self._apply_intake(
+                run_intake(
+                    self._state, self._runtime, self._composer, self._has_failures_since_intake
+                )
+            )
+            world = build_world(self._workers, self._state, self._runtime)
             if not world.tasks and not self._workers:
-                reason = "no tasks found -- nothing to do"
-                return reason
+                return "no tasks found -- nothing to do"
 
         self._probe.cycle_started(
             cycle=cycle_num,
@@ -275,692 +201,179 @@ class Orchestrator:
             failed=sum(1 for t in world.tasks.values() if t.status == TaskStatus.FAILED),
         )
 
-        # ==== PHASE 1: COLLECT ====
-        reaped_results = self._collect(cycle_num)
-
-        # Track failures for intake re-trigger
-        if any(r.verdict == Verdict.FAIL for r in reaped_results.values()):
-            self._has_failures_since_intake = True
-
-        # Run hooks after reap
-        if reaped_results:
-            for hook in self._hooks:
-                hook.after_reap(results=reaped_results, cycle=cycle_num)
-
-        # ==== PHASE 2: INTAKE ====
-        self._run_intake()
-
-        # ==== PHASE 3: ADVANCE ====
-        halt_reason = self._advance(cycle_num, executor, reaped_results)
-        if halt_reason is not None:
-            self._state.persist("orchestrator: halt")
-            return halt_reason
-
-        # ==== PHASE 4: SPAWN ====
-        to_spawn = self._spawn(cycle_num, executor)
-
-        # ---- Persist + sync ------
-        self._state.persist("orchestrator: cycle update")
-        self._state.sync()
-
-        # ---- Execute spawns ------
-        self._execute_spawns(to_spawn, cycle_num)
-
-        # ---- Check convergence ----
-        self._emit_cycle_completed(cycle_num, cycle_start, to_spawn, reaped_results)
-        return self._check_convergence()
-
-    # -----------------------------------------------------------------------
-    # PHASE 1: COLLECT -- reap finished workers
-    # -----------------------------------------------------------------------
-
-    def _collect(
-        self,
-        cycle_num: int,
-    ) -> dict[str, WorkerResult]:
-        """Reap finished workers. Returns dict of task_id -> WorkerResult.
-
-        Stores reaped worker metadata in ``_reaped_workers`` for processing
-        by ``_advance``.  Does NOT process results through the pipeline.
-        """
-        world = self._build_world()
-        actions = decide(world, self._max_workers, self._max_task_rounds)
-
-        reaped_results: dict[str, WorkerResult] = {}
-        self._reaped_workers: dict[str, tuple[WorkerHandle, PipelinePosition, float]] = {}
-
-        for act in actions:
-            if isinstance(act, ReapWorker):
-                task_id = act.task_id
-                if task_id in self._workers:
-                    handle, pos, spawn_time = self._workers[task_id]
-                    result = self._runtime.reap(handle)
-                    reaped_results[task_id] = result
-                    self._reaped_workers[task_id] = (handle, pos, spawn_time)
-                    # Remove from active workers
-                    del self._workers[task_id]
-
-        return reaped_results
-
-    def _check_halt_from_results(self) -> str | None:
-        """Check if any task was marked FAILED during advance -> halt."""
-        if self._halt_reason is not None:
-            reason = self._halt_reason
-            self._halt_reason = None
-            return reason
-        return None
-
-    # -----------------------------------------------------------------------
-    # PHASE 3: ADVANCE -- process results, gates, and actions
-    # -----------------------------------------------------------------------
-
-    def _advance(
-        self,
-        cycle_num: int,
-        executor: PipelineExecutor,
-        reaped_results: dict[str, WorkerResult],
-    ) -> str | None:
-        """Advance tasks: process reaped results, then gates/actions.
-
-        Returns halt reason or None.
-        """
-        # -- Step 1: Process reaped results through the pipeline ----------------
-        self._process_reaped_results(cycle_num, executor, reaped_results)
-
-        halt = self._check_halt_from_results()
-        if halt is not None:
-            return halt
-
-        # -- Step 2: Advance tasks at gate and action steps ---------------------
-        all_tasks = self._state.get_world().tasks
-
-        for task in all_tasks.values():
-            if task.status != TaskStatus.IN_PROGRESS:
-                continue
-            if task.phase is None:
-                continue
-            if task.id in self._workers:
-                continue  # Worker running, don't advance
-
-            pos = self._find_position_for_step(executor, str(task.phase))
-            if pos is None:
-                continue
-
-            step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
-
-            # -- Gate step --
-            if isinstance(step, GateStep):
-                halt = self._advance_gate(task, step, pos, executor, cycle_num)
-                if halt is not None:
-                    return halt
-
-            # -- Action step --
-            elif isinstance(step, ActionStep):
-                halt = self._advance_action(task, step, pos, executor, cycle_num)
-                if halt is not None:
-                    return halt
-
-        return None
-
-    def _process_reaped_results(
-        self,
-        cycle_num: int,
-        executor: PipelineExecutor,
-        reaped_results: dict[str, WorkerResult],
-    ) -> None:
-        """Feed reaped results to the pipeline executor and update task state."""
-        for task_id, result in reaped_results.items():
-            worker_info = self._reaped_workers.get(task_id)
-            if worker_info is None:
-                continue
-            _handle, position, spawn_time = worker_info
-            task = self._state.get_task(task_id)
-
-            self._probe.worker_reaped(
-                task_id=task_id,
-                role=_handle.role,
-                verdict=result.verdict.value,
-                round=task.round,
-                cycle=cycle_num,
-                spec_ref=task.spec_ref,
-                detail=result.detail,
-                duration_s=time.monotonic() - spawn_time,
-            )
-
-            pipe_action, _new_pos = executor.next_action(position, result)
-
-            if isinstance(pipe_action, PipelineComplete):
-                self._state.transition_task(task_id, TaskStatus.COMPLETE, phase=None)
-                self._probe.task_completed(
-                    task_id=task_id,
-                    spec_ref=task.spec_ref,
-                    total_rounds=task.round,
-                    total_cycles=cycle_num,
-                    cycle=cycle_num,
-                )
-
-            elif isinstance(pipe_action, PipelineFailed):
-                self._state.transition_task(task_id, TaskStatus.FAILED, phase=None)
-                self._state.store_review(
-                    task_id,
-                    round=task.round,
-                    role=_handle.role,
-                    verdict=result.verdict.value,
-                    detail=result.detail,
-                )
-                self._halt_reason = f"task {task_id} pipeline failed: {pipe_action.reason}"
-                self._probe.task_failed(
-                    task_id=task_id,
-                    spec_ref=task.spec_ref,
-                    reason=pipe_action.reason,
-                    round=task.round,
-                    cycle=cycle_num,
-                )
-
-            elif isinstance(pipe_action, SpawnAgent):
-                if result.verdict == Verdict.FAIL:
-                    new_round = task.round + 1
-                    if new_round >= self._max_task_rounds:
-                        self._state.transition_task(
-                            task_id,
-                            TaskStatus.FAILED,
-                            phase=None,
-                            round=new_round,
-                        )
-                        self._halt_reason = (
-                            f"task {task_id} exceeded max_task_rounds ({self._max_task_rounds})"
-                        )
-                        self._probe.task_failed(
-                            task_id=task_id,
-                            spec_ref=task.spec_ref,
-                            reason=f"exceeded max_task_rounds ({self._max_task_rounds})",
-                            round=new_round,
-                            cycle=cycle_num,
-                        )
-                        continue
-                    self._state.store_review(
-                        task_id,
-                        round=task.round,
-                        role=_handle.role,
-                        verdict=result.verdict.value,
-                        detail=result.detail,
-                    )
-                    self._state.transition_task(
-                        task_id,
-                        TaskStatus.IN_PROGRESS,
-                        phase=Phase(pipe_action.agent),
-                        round=new_round,
-                    )
-                    self._probe.task_looped_back(
-                        task_id=task_id,
-                        spec_ref=task.spec_ref,
-                        round=new_round,
-                        cycle=cycle_num,
-                        findings_preview=result.detail[:200],
-                    )
-                else:
-                    # Advancing forward on PASS -- create draft PR if needed
-                    if task.pr is None and self._pr is not None:
-                        branch = task.branch or f"{BRANCH_PREFIX}/{task_id}"
-                        pr_url = self._pr.create_draft(
-                            task_id,
-                            branch,
-                            task.title,
-                            task.spec_ref,
-                        )
-                        if pr_url:
-                            self._state.set_task_pr(task_id, pr_url)
-
-                    self._state.transition_task(
-                        task_id,
-                        TaskStatus.IN_PROGRESS,
-                        phase=Phase(pipe_action.agent),
-                    )
-                    self._probe.task_advanced(
-                        task_id=task_id,
-                        spec_ref=task.spec_ref,
-                        from_phase=str(task.phase) if task.phase else None,
-                        to_phase=pipe_action.agent,
-                        from_status=task.status.value,
-                        to_status=TaskStatus.IN_PROGRESS.value,
-                        round=task.round,
-                        cycle=cycle_num,
-                    )
-
-            else:
-                # WaitForGate, PerformAction -- record phase, don't spawn
-                # Ensure PR exists before task reaches gate/action steps
-                if task.pr is None and self._pr is not None:
-                    branch = task.branch or f"{BRANCH_PREFIX}/{task_id}"
-                    pr_url = self._pr.create_draft(
-                        task_id,
-                        branch,
-                        task.title,
-                        task.spec_ref,
-                    )
-                    if pr_url:
-                        self._state.set_task_pr(task_id, pr_url)
-
-                phase_name = _phase_for_action(pipe_action)
-                self._state.transition_task(
-                    task_id,
-                    TaskStatus.IN_PROGRESS,
-                    phase=Phase(phase_name) if phase_name else None,
-                )
-                self._probe.task_advanced(
-                    task_id=task_id,
-                    spec_ref=task.spec_ref,
-                    from_phase=str(task.phase) if task.phase else None,
-                    to_phase=phase_name,
-                    from_status=task.status.value,
-                    to_status=TaskStatus.IN_PROGRESS.value,
-                    round=task.round,
-                    cycle=cycle_num,
-                )
-
-    def _advance_gate(
-        self,
-        task: Task,
-        step: GateStep,
-        pos: PipelinePosition,
-        executor: PipelineExecutor,
-        cycle_num: int,
-    ) -> str | None:
-        """Handle a task at a gate step. Returns halt reason or None."""
-        if self._gate is None:
-            logger.debug("gates: no gate adapter -- skipping gate polling")
-            return None
-
-        # Notification deduplication: notify once per gate entry
-        if task.id not in self._notified_gates:
-            self._notification.gate_blocked(task=task, gate_name=step.gate)
-            self._notified_gates.add(task.id)
-
-        cleared = self._gate.check(task, step.gate)
-        self._probe.gate_checked(
-            task_id=task.id,
-            gate=step.gate,
-            cleared=cleared,
+        # COLLECT
+        collected = collect(
+            workers=self._workers,
+            state=self._state,
+            runtime=self._runtime,
+            probe=self._probe,
+            max_workers=self._max_workers,
+            max_task_rounds=self._max_task_rounds,
             cycle=cycle_num,
         )
+        self._workers = collected.remaining_workers
+        if any(r.verdict == Verdict.FAIL for r in collected.reaped.values()):
+            self._has_failures_since_intake = True
+        if collected.reaped:
+            for hook in self._hooks:
+                hook.after_reap(results=collected.reaped, cycle=cycle_num)
 
-        if not cleared:
-            return None
-
-        # Gate cleared -- remove from notified set and advance
-        self._notified_gates.discard(task.id)
-
-        # Check if the gate check returned True because PR was merged
-        # (LabelGate returns True for MERGED PRs)
-        if task.pr is not None and self._pr is not None:
-            pr_state_check = self._pr.get_pr_state(task.pr)
-            if pr_state_check is not None and pr_state_check.state == "MERGED":
-                self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
-                self._probe.merge_attempted(
-                    task_id=task.id,
-                    branch=task.branch or f"{BRANCH_PREFIX}/{task.id}",
-                    spec_ref=task.spec_ref,
-                    outcome="merged_externally",
-                    attempt=0,
-                    cycle=cycle_num,
-                )
-                return None
-
-        advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
-        if advanced is not None:
-            next_action, _new_pos = advanced
-            phase_name = _phase_for_pipe_action(next_action)
-            self._state.transition_task(
-                task.id,
-                TaskStatus.IN_PROGRESS,
-                phase=Phase(phase_name) if phase_name else None,
-            )
-        else:
-            self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
-
-        return None
-
-    def _advance_action(
-        self,
-        task: Task,
-        step: ActionStep,
-        pos: PipelinePosition,
-        executor: PipelineExecutor,
-        cycle_num: int,
-    ) -> str | None:
-        """Handle a task at an action step. Returns halt reason or None."""
-        if self._action is None:
-            logger.debug(
-                "actions: no action adapter -- skipping action %s",
-                step.action,
-            )
-            return None
-
-        result = self._action.execute(task, step.action)
-
-        if result.outcome == ActionOutcome.SUCCESS:
-            # Update PR URL if the action recreated it
-            if result.pr_url is not None:
-                self._state.set_task_pr(task.id, result.pr_url)
-            self._action_attempts.pop(task.id, None)
-            self._probe.merge_attempted(
-                task_id=task.id,
-                branch=task.branch or f"{BRANCH_PREFIX}/{task.id}",
-                spec_ref=task.spec_ref,
-                outcome="merged",
-                attempt=0,
-                cycle=cycle_num,
-            )
-
-            # Advance past action or complete
-            advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
-            if advanced is not None:
-                next_act, _new_pos = advanced
-                phase_name = _phase_for_pipe_action(next_act)
-                self._state.transition_task(
-                    task.id,
-                    TaskStatus.IN_PROGRESS,
-                    phase=Phase(phase_name) if phase_name else None,
-                )
-            else:
-                self._state.transition_task(task.id, TaskStatus.COMPLETE, phase=None)
-
-        elif result.outcome == ActionOutcome.RETRY:
-            # Update PR URL if the action recreated it
-            if result.pr_url is not None:
-                self._state.set_task_pr(task.id, result.pr_url)
-            # Stay at current step, try again next cycle
-
-        elif result.outcome == ActionOutcome.ERROR:
-            attempts = self._action_attempts.get(task.id, 0) + 1
-            self._action_attempts[task.id] = attempts
-
-            looping_back = attempts >= self._max_action_attempts
-            self._probe.rebase_conflict(
-                task_id=task.id,
-                branch=task.branch or f"{BRANCH_PREFIX}/{task.id}",
-                attempt=attempts,
-                max_attempts=self._max_action_attempts,
-                looping_back=looping_back,
-                cycle=cycle_num,
-            )
-
-            if looping_back:
-                self._action_attempts.pop(task.id, None)
-                self._notification.task_errored(
-                    task=task,
-                    attempts=attempts,
-                    detail=result.detail,
-                )
-                detail = f"Action error after {self._max_action_attempts} attempts: {result.detail}"
-                self._state.store_review(
-                    task.id,
-                    round=task.round,
-                    role="orchestrator",
-                    verdict="fail",
-                    detail=detail,
-                )
-                self._state.transition_task(
-                    task.id,
-                    TaskStatus.IN_PROGRESS,
-                    phase=Phase("implementer"),
-                    round=task.round + 1,
-                )
-            else:
-                # Stay at merge-pr, retry next cycle
-                self._state.transition_task(
-                    task.id,
-                    TaskStatus.IN_PROGRESS,
-                    phase=Phase(step.action),
-                )
-
-        return None
-
-    # -----------------------------------------------------------------------
-    # PHASE 4: SPAWN -- decide and spawn workers
-    # -----------------------------------------------------------------------
-
-    def _spawn(
-        self,
-        cycle_num: int,
-        executor: PipelineExecutor,
-    ) -> list[tuple[str, str, PipelinePosition]]:
-        """Decide what to spawn and return spawn list."""
-        to_spawn: list[tuple[str, str, PipelinePosition]] = []
-
-        # Rebuild world after reaping + gates + actions
-        world_after = self._build_world()
-        spawn_actions = decide(world_after, self._max_workers, self._max_task_rounds)
-
-        # Check for Halt from decide()
-        for act in spawn_actions:
-            if isinstance(act, Halt):
-                # We can't return halt from here; check convergence will catch it
-                pass
-
-        for act in spawn_actions:
-            if not isinstance(act, SpawnWorker):
-                continue
-
-            task = self._state.get_task(act.task_id)
-
-            if act.role == "rebase-resolver":
-                pos = executor.initial_position()
-                self._state.transition_task(
-                    act.task_id,
-                    TaskStatus.IN_PROGRESS,
-                    phase=Phase("rebase-resolver"),
-                )
-                to_spawn.append((act.task_id, "rebase-resolver", pos))
-            elif task.status == TaskStatus.IN_PROGRESS and task.phase is not None:
-                # Only spawn for agent steps -- gates and actions are handled in ADVANCE
-                phase_name = str(task.phase)
-                pos = self._find_position_for_step(executor, phase_name)
-                if pos is not None:
-                    step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
-                    if isinstance(step, AgentStep):
-                        to_spawn.append((act.task_id, phase_name, pos))
-            else:
-                pos = executor.initial_position()
-                pipe_action, pos = executor.next_action(pos, result=None)
-                if isinstance(pipe_action, SpawnAgent):
-                    self._state.transition_task(
-                        act.task_id,
-                        TaskStatus.IN_PROGRESS,
-                        phase=Phase(pipe_action.agent),
-                    )
-                    to_spawn.append((act.task_id, pipe_action.agent, pos))
-
-        return to_spawn
-
-    def _execute_spawns(
-        self,
-        to_spawn: list[tuple[str, str, PipelinePosition]],
-        cycle_num: int,
-    ) -> None:
-        """Execute spawn operations."""
-        # Skip spawning during cooldown (after consecutive failures)
-        if to_spawn and self._current_cycle < self._spawn_skip_until:
-            return
-
-        for task_id, role, position in to_spawn:
-            task = self._state.get_task(task_id)
-            branch = task.branch or f"{BRANCH_PREFIX}/{task_id}"
-            if task.branch is None:
-                self._state.set_task_branch(task_id, branch)
-            prompt = self._compose_prompt(task, role, cycle=cycle_num)
-            try:
-                self._runtime.push_branch(branch)
-                handle = self._runtime.spawn(task_id, role, prompt=prompt, branch=branch)
-            except Exception:
-                self._spawn_failures += 1
-                task_fails = self._spawn_task_failures.get(task_id, 0) + 1
-                self._spawn_task_failures[task_id] = task_fails
-                cooldown_cycles = 0
-
-                if self._spawn_failures >= 3:
-                    cooldown_cycles = min(2 ** (self._spawn_failures - 2), 32)
-                    self._spawn_skip_until = self._current_cycle + cooldown_cycles
-
-                self._probe.spawn_failed(
-                    task_id=task_id,
-                    role=role,
-                    branch=branch,
-                    attempt=task_fails,
-                    max_attempts=3,
-                    cooldown_cycles=cooldown_cycles,
-                    cycle=cycle_num,
-                )
-
-                if task_fails >= 3:
-                    reason = f"spawn failed 3 times for {role} on branch {branch}"
-                    self._state.transition_task(task_id, TaskStatus.FAILED, phase=None)
-                    self._probe.task_failed(
-                        task_id=task_id,
-                        spec_ref=task.spec_ref,
-                        reason=reason,
-                        round=task.round,
-                        cycle=cycle_num,
-                    )
-                    self._spawn_task_failures.pop(task_id, None)
-
-                if cooldown_cycles:
-                    break  # Stop trying more spawns this cycle
-                continue
-
-            # Success -- reset counters
-            self._spawn_failures = 0
-            self._spawn_task_failures.pop(task_id, None)
-            self._workers[task_id] = (handle, position, time.monotonic())
-            self._probe.worker_spawned(
-                task_id=task_id,
-                role=role,
-                branch=branch,
-                round=task.round,
-                cycle=cycle_num,
-                spec_ref=task.spec_ref,
-            )
-
-    # -----------------------------------------------------------------------
-    # Convergence check
-    # -----------------------------------------------------------------------
-
-    def _check_convergence(self) -> str | None:
-        """Check if all tasks are complete/failed. Returns halt reason or None."""
-        all_tasks = self._state.get_world().tasks
-        if not all_tasks:
-            return None
-
-        all_done = all(
-            t.status in (TaskStatus.COMPLETE, TaskStatus.FAILED) for t in all_tasks.values()
+        # INTAKE
+        self._apply_intake(
+            run_intake(self._state, self._runtime, self._composer, self._has_failures_since_intake)
         )
-        if all_done and not self._workers:
-            all_complete = all(t.status == TaskStatus.COMPLETE for t in all_tasks.values())
-            if all_complete:
-                return "all tasks complete"
-            return "all tasks resolved (some failed)"
-        return None
 
-    # -----------------------------------------------------------------------
-    # Serial agents (PM intake)
-    # -----------------------------------------------------------------------
+        # ADVANCE
+        advanced = advance(
+            state=self._state,
+            reaped=collected.reaped,
+            reaped_metadata=collected.reaped_metadata,
+            executor=executor,
+            gate=self._gate,
+            action=self._action,
+            pr=self._pr,
+            notification=self._notification,
+            probe=self._probe,
+            max_task_rounds=self._max_task_rounds,
+            max_action_attempts=self._max_action_attempts,
+            action_attempts=dict(self._action_attempts),
+            notified_gates=set(self._notified_gates),
+            cycle=cycle_num,
+        )
+        for t in advanced.transitions:
+            self._state.transition_task(t.task_id, t.status, t.phase, t.round)
+            if t.review is not None:
+                self._state.store_review(
+                    t.task_id, t.review.round, t.review.role, t.review.verdict, t.review.detail
+                )
+            if t.pr_url is not None:
+                self._state.set_task_pr(t.task_id, t.pr_url)
+        self._action_attempts = advanced.action_attempts
+        self._notified_gates = advanced.notified_gates
+        if advanced.halt_reason:
+            self._state.persist("orchestrator: halt")
+            return advanced.halt_reason
+
+        # SPAWN
+        plans = plan_spawns(
+            state=self._state,
+            workers=self._workers,
+            executor=executor,
+            runtime=self._runtime,
+            max_workers=self._max_workers,
+            max_task_rounds=self._max_task_rounds,
+        )
+        self._state.persist("orchestrator: cycle update")
+        self._state.sync()
+        self._execute_spawns(plans, cycle_num)
+        self._emit_cycle_completed(cycle_num, cycle_start, plans, collected.reaped)
+        return self._check_convergence()
+
+    # -- Apply helpers -------------------------------------------------------
+
+    def _apply_intake(self, result: IntakeResult) -> None:
+        """Apply intake result: pin spec_refs, emit probe, reset failure flag."""
+        if not result.ran:
+            return
+        self._has_failures_since_intake = False
+        if result.created_count > 0 and self._spec_source is not None:
+            version = self._spec_source.current_version()
+            world = self._state.get_world()
+            for task in world.tasks.values():
+                if task.id not in result.tasks_before and "@" not in task.spec_ref:
+                    self._state.set_spec_ref(task.id, f"{task.spec_ref}@{version}")
+        self._probe.intake_ran(
+            unprocessed_specs=result.unprocessed_count,
+            created_tasks=result.created_count,
+            success=result.success,
+            cycle=self._current_cycle,
+            duration_s=result.duration_s,
+        )
 
     def _unprocessed_specs(self) -> list[str]:
         """Return spec file paths that have no corresponding task."""
-        all_specs = self._state.list_files("specs/*.md")
-        world = self._state.get_world()
-        covered_refs = {task.spec_ref.split("@")[0] for task in world.tasks.values()}
-        return [s for s in all_specs if s not in covered_refs]
+        return _unprocessed_specs(self._state)
 
     def _collect_cycle_findings(self, reaped_results: dict[str, WorkerResult]) -> str:
-        """Collect findings from all failed results this cycle into a single string."""
+        """Collect findings from all failed results this cycle."""
         sections: list[str] = []
         for task_id, result in reaped_results.items():
             if result.verdict == Verdict.FAIL:
                 sections.append(f"### {task_id}\n{result.detail}")
         return "\n\n".join(sections)
 
-    def _run_intake(self) -> None:
-        """Run PM intake if there are unprocessed specs or task failures."""
-        if self._composer is None:
-            logger.debug("intake: no composer -- skipping")
+    def _execute_spawns(self, plans: list[SpawnPlan], cycle_num: int) -> None:
+        """Execute spawn operations (side effects)."""
+        if plans and self._current_cycle < self._spawn_skip_until:
             return
-
-        unprocessed = self._unprocessed_specs()
-        has_failures = self._has_failures_since_intake
-        if not unprocessed and not has_failures:
-            logger.debug("intake: no unprocessed specs or failures -- skipping")
-            return
-
-        logger.info(
-            "intake: running PM (unprocessed=%d, failures=%s)",
-            len(unprocessed),
-            has_failures,
-        )
-
-        context = IntakeContext(unprocessed_specs=tuple(unprocessed))
-        prompt = self._composer.compose(role="pm", context=context)
-
-        world_before = self._state.get_world()
-        tasks_before = set(world_before.tasks.keys())
-        task_count_before = len(world_before.tasks)
-        intake_start = time.monotonic()
-        success = self._runtime.run_serial("pm", prompt)
-
-        # Count how many tasks were created by comparing before/after
-        world_after = self._state.get_world()
-        task_count_after = len(world_after.tasks)
-        created_count = task_count_after - task_count_before
-
-        # Pin spec_ref to current SHA for newly created tasks
-        if created_count > 0 and self._spec_source is not None:
-            version = self._spec_source.current_version()
-            for task in world_after.tasks.values():
-                if task.id not in tasks_before and "@" not in task.spec_ref:
-                    pinned = f"{task.spec_ref}@{version}"
-                    self._state.set_spec_ref(task.id, pinned)
-
-        self._probe.intake_ran(
-            unprocessed_specs=len(unprocessed),
-            created_tasks=created_count,
-            success=success,
-            cycle=self._current_cycle,
-            duration_s=time.monotonic() - intake_start,
-        )
-
-        # Reset failure flag after intake runs
-        self._has_failures_since_intake = False
-
-    # -----------------------------------------------------------------------
-    # World building
-    # -----------------------------------------------------------------------
-
-    def _build_world(self) -> World:
-        """Build a World snapshot including current worker state from runtime."""
-        base_world = self._state.get_world()
-        workers: dict[str, WorkerState] = {}
-        for task_id, (handle, _pos, _spawn_time) in self._workers.items():
-            poll_status = self._runtime.poll(handle)
-            workers[task_id] = WorkerState(
-                task_id=task_id,
-                role=handle.role,
-                status=poll_status,
+        for plan in plans:
+            task = self._state.get_task(plan.task_id)
+            branch = task.branch or f"{BRANCH_PREFIX}/{plan.task_id}"
+            if task.branch is None:
+                self._state.set_task_branch(plan.task_id, branch)
+            if plan.transition_status is not None:
+                self._state.transition_task(
+                    plan.task_id,
+                    plan.transition_status,
+                    plan.transition_phase,
+                )
+            prompt = self._compose_prompt(task, plan.role, cycle=cycle_num)
+            try:
+                self._runtime.push_branch(branch)
+                handle = self._runtime.spawn(plan.task_id, plan.role, prompt=prompt, branch=branch)
+            except Exception:
+                self._handle_spawn_failure(plan, task, branch, cycle_num)
+                if self._spawn_skip_until > self._current_cycle:
+                    break
+                continue
+            self._spawn_failures = 0
+            self._spawn_task_failures.pop(plan.task_id, None)
+            self._workers[plan.task_id] = (handle, plan.position, time.monotonic())
+            self._probe.worker_spawned(
+                task_id=plan.task_id,
+                role=plan.role,
+                branch=branch,
+                round=task.round,
+                cycle=cycle_num,
+                spec_ref=task.spec_ref,
             )
-        return World(
-            tasks=base_world.tasks,
-            workers=workers,
-            epoch=base_world.epoch,
-        )
 
-    # -----------------------------------------------------------------------
-    # Prompt composition
-    # -----------------------------------------------------------------------
+    def _handle_spawn_failure(
+        self, plan: SpawnPlan, task: Task, branch: str, cycle_num: int
+    ) -> None:
+        """Track spawn failure, apply backoff and task failure if needed."""
+        self._spawn_failures += 1
+        task_fails = self._spawn_task_failures.get(plan.task_id, 0) + 1
+        self._spawn_task_failures[plan.task_id] = task_fails
+        cooldown_cycles = 0
+        if self._spawn_failures >= 3:
+            cooldown_cycles = min(2 ** (self._spawn_failures - 2), 32)
+            self._spawn_skip_until = self._current_cycle + cooldown_cycles
+        self._probe.spawn_failed(
+            task_id=plan.task_id,
+            role=plan.role,
+            branch=branch,
+            attempt=task_fails,
+            max_attempts=3,
+            cooldown_cycles=cooldown_cycles,
+            cycle=cycle_num,
+        )
+        if task_fails >= 3:
+            reason = f"spawn failed 3 times for {plan.role} on branch {branch}"
+            self._state.transition_task(plan.task_id, TaskStatus.FAILED, phase=None)
+            self._probe.task_failed(
+                task_id=plan.task_id,
+                spec_ref=task.spec_ref,
+                reason=reason,
+                round=task.round,
+                cycle=cycle_num,
+            )
+            self._spawn_task_failures.pop(plan.task_id, None)
 
     def _compose_prompt(self, task: Task, role: str, cycle: int) -> str:
-        """Compose a prompt for a worker using PromptComposer if available."""
+        """Compose a prompt for a worker."""
         if self._composer is None:
             return ""
-
         findings = self._state.get_findings(task.id)
         context = TaskContext(
             task_id=task.id,
@@ -982,75 +395,36 @@ class Orchestrator:
         )
         return prompt
 
-    # -----------------------------------------------------------------------
-    # Pipeline position helpers
-    # -----------------------------------------------------------------------
-
-    def _position_from_phase(self, executor: PipelineExecutor, task: Task) -> PipelinePosition:
-        """Determine pipeline position from a task's current phase."""
-        if task.phase is not None:
-            pos = self._find_position_for_role(executor, str(task.phase))
-            if pos is not None:
-                return pos
-        return executor.initial_position()
-
-    @staticmethod
-    def _find_position_for_role(executor: PipelineExecutor, role: str) -> PipelinePosition | None:
-        """Walk the pipeline for an AgentStep matching the given role name."""
-
-        def _search(
-            steps: tuple[PipelineStep, ...], prefix: tuple[int, ...]
-        ) -> PipelinePosition | None:
-            for i, step in enumerate(steps):
-                path = (*prefix, i)
-                if isinstance(step, AgentStep) and step.agent == role:
-                    return PipelinePosition(path=path)
-                if isinstance(step, LoopStep):
-                    found = _search(step.steps, path)
-                    if found is not None:
-                        return found
+    def _check_convergence(self) -> str | None:
+        """Check if all tasks are complete/failed."""
+        all_tasks = self._state.get_world().tasks
+        if not all_tasks:
             return None
+        all_done = all(
+            t.status in (TaskStatus.COMPLETE, TaskStatus.FAILED) for t in all_tasks.values()
+        )
+        if all_done and not self._workers:
+            if all(t.status == TaskStatus.COMPLETE for t in all_tasks.values()):
+                return "all tasks complete"
+            return "all tasks resolved (some failed)"
+        return None
 
-        return _search(executor.pipeline, ())
-
-    @staticmethod
-    def _find_position_for_step(
-        executor: PipelineExecutor, phase_name: str
-    ) -> PipelinePosition | None:
-        """Walk the pipeline for any step whose name matches phase_name."""
-
-        def _step_name(step: PipelineStep) -> str | None:
-            if isinstance(step, AgentStep):
-                return step.agent
-            if isinstance(step, GateStep):
-                return step.gate
-            if isinstance(step, ActionStep):
-                return step.action
-            return None
-
-        def _search(
-            steps: tuple[PipelineStep, ...], prefix: tuple[int, ...]
-        ) -> PipelinePosition | None:
-            for i, step in enumerate(steps):
-                path = (*prefix, i)
-                if _step_name(step) == phase_name:
-                    return PipelinePosition(path=path)
-                if isinstance(step, LoopStep):
-                    found = _search(step.steps, path)
-                    if found is not None:
-                        return found
-            return None
-
-        return _search(executor.pipeline, ())
+    def _emit_halted(self, reason: str, total_cycles: int) -> None:
+        world = self._state.get_world()
+        self._probe.orchestrator_halted(
+            reason=reason,
+            total_cycles=total_cycles,
+            completed_tasks=sum(1 for t in world.tasks.values() if t.status == TaskStatus.COMPLETE),
+            failed_tasks=sum(1 for t in world.tasks.values() if t.status == TaskStatus.FAILED),
+        )
 
     def _emit_cycle_completed(
         self,
         cycle_num: int,
         cycle_start: float,
-        to_spawn: list[tuple[str, str, PipelinePosition]],
+        plans: list[SpawnPlan],
         reaped_results: dict[str, WorkerResult],
     ) -> None:
-        """Emit cycle_completed probe event."""
         all_tasks = self._state.get_world().tasks
         self._probe.cycle_completed(
             cycle=cycle_num,
@@ -1059,56 +433,7 @@ class Orchestrator:
             in_progress=sum(1 for t in all_tasks.values() if t.status == TaskStatus.IN_PROGRESS),
             complete=sum(1 for t in all_tasks.values() if t.status == TaskStatus.COMPLETE),
             failed=sum(1 for t in all_tasks.values() if t.status == TaskStatus.FAILED),
-            spawned_ids=tuple(tid for tid, _, _ in to_spawn),
+            spawned_ids=tuple(p.task_id for p in plans),
             reaped_ids=tuple(reaped_results.keys()),
             duration_s=time.monotonic() - cycle_start,
         )
-
-
-# ---------------------------------------------------------------------------
-# Module-level helpers
-# ---------------------------------------------------------------------------
-
-
-def _phase_for_action(action: object) -> str | None:
-    """Extract a phase name from a pipeline action (WaitForGate or PerformAction)."""
-    if isinstance(action, WaitForGate):
-        return action.gate
-    if isinstance(action, PerformAction):
-        return action.action
-    return None
-
-
-def _phase_for_pipe_action(
-    action: SpawnAgent | WaitForGate | PerformAction | PipelineComplete | PipelineFailed,
-) -> str | None:
-    """Extract a phase name from any pipeline action type."""
-    if isinstance(action, SpawnAgent):
-        return action.agent
-    if isinstance(action, WaitForGate):
-        return action.gate
-    if isinstance(action, PerformAction):
-        return action.action
-    return None
-
-
-def _collect_roles(steps: tuple[PipelineStep, ...]) -> set[str]:
-    """Recursively collect all role names from a pipeline."""
-    roles: set[str] = set()
-    for step in steps:
-        if isinstance(step, AgentStep):
-            roles.add(step.agent)
-        elif isinstance(step, LoopStep):
-            roles.update(_collect_roles(step.steps))
-    return roles
-
-
-def _collect_steps_of_type(steps: tuple[PipelineStep, ...], step_type: type) -> list[PipelineStep]:
-    """Recursively collect all steps of a given type from a pipeline."""
-    result: list[PipelineStep] = []
-    for step in steps:
-        if isinstance(step, step_type):
-            result.append(step)
-        elif isinstance(step, LoopStep):
-            result.extend(_collect_steps_of_type(step.steps, step_type))
-    return result
