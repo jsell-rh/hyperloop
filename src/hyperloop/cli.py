@@ -248,6 +248,31 @@ def init(
 
 
 @app.command()
+def dashboard(
+    path: Path = typer.Option(
+        Path.cwd(),
+        help="Path to the target repo. Default: current directory.",
+    ),
+    port: int = typer.Option(8787, help="Port for the dashboard server."),
+) -> None:
+    """Start the read-only dashboard server."""
+    import uvicorn
+
+    from dashboard.server.app import create_app
+
+    repo_path = path.resolve()
+    if not (repo_path / ".git").exists():
+        console.print(f"[bold red]Error:[/bold red] {repo_path} is not a git repository.")
+        raise typer.Exit(code=1)
+
+    console.print(f"[bold green]Starting dashboard[/bold green] on http://localhost:{port}")
+    console.print(f"  Repo: {repo_path}")
+
+    dash_app = create_app(str(repo_path))
+    uvicorn.run(dash_app, host="0.0.0.0", port=port, log_level="info")
+
+
+@app.command()
 def run(
     path: Path = typer.Option(
         Path.cwd(),
