@@ -226,6 +226,7 @@ class IntakeContext:
     """Context for PM intake."""
 
     unprocessed_specs: tuple[str, ...]
+    failed_tasks: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

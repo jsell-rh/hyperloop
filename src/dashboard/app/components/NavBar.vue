@@ -71,7 +71,7 @@ defineExpose({ flashRefreshBar })
 </script>
 
 <template>
-  <nav class="relative h-12 w-full bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 flex items-center px-6">
+  <nav class="relative h-14 w-full bg-white dark:bg-gray-900 border-b border-gray-200/60 dark:border-gray-800 flex items-center px-8">
     <!-- Refresh indicator bar -->
     <div
       class="absolute top-0 left-0 right-0 h-0.5 bg-blue-500 transition-opacity duration-300"
@@ -79,7 +79,7 @@ defineExpose({ flashRefreshBar })
     />
 
     <!-- Left: brand -->
-    <span class="text-lg font-semibold text-gray-900 dark:text-gray-100 mr-8 shrink-0">
+    <span class="text-base font-semibold tracking-tight text-gray-800 dark:text-gray-200 mr-8 shrink-0">
       Hyperloop
     </span>
 
@@ -89,7 +89,7 @@ defineExpose({ flashRefreshBar })
         v-for="link in navLinks"
         :key="link.to"
         :to="link.to"
-        class="px-3 h-12 flex items-center text-sm font-medium transition-colors"
+        class="px-3 h-14 flex items-center text-sm font-medium transition-colors"
         :class="[
           isActive(link.to)
             ? 'text-gray-900 dark:text-gray-100 border-b-2 border-gray-900 dark:border-gray-100'
@@ -104,16 +104,10 @@ defineExpose({ flashRefreshBar })
     <div class="ml-auto flex items-center gap-4">
       <!-- Liveness indicator -->
       <div class="flex items-center gap-2">
-        <span class="relative flex h-2 w-2">
-          <span
-            class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-            :class="statusDotColor"
-          />
-          <span
-            class="relative inline-flex rounded-full h-2 w-2"
-            :class="statusDotColor"
-          />
-        </span>
+        <span
+          class="inline-flex rounded-full h-2 w-2"
+          :class="statusDotColor"
+        />
         <span class="text-xs text-gray-500 dark:text-gray-400">
           Updated {{ lastUpdatedText }}
         </span>
@@ -121,24 +115,19 @@ defineExpose({ flashRefreshBar })
 
       <!-- Dark mode toggle -->
       <button
-        class="p-1.5 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+        class="p-2 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
         title="Toggle dark mode"
         @click="toggleDark"
       >
         <!-- Sun icon (shown in dark mode) -->
-        <svg v-if="isDark" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <svg v-if="isDark" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
         </svg>
         <!-- Moon icon (shown in light mode) -->
-        <svg v-else class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <svg v-else class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
         </svg>
       </button>
-
-      <!-- Repo path -->
-      <span class="text-sm text-gray-500 dark:text-gray-400 font-mono truncate max-w-xs">
-        {{ health?.repo_path || '' }}
-      </span>
     </div>
   </nav>
 </template>

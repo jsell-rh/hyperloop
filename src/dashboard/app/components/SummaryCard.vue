@@ -16,23 +16,23 @@ const colorClasses: Record<string, string> = {
 const displayCount = ref(props.count)
 
 watch(() => props.count, (newVal) => {
-  const start = displayCount.value
-  const diff = newVal - start
-  if (diff === 0) return
-  const steps = 15
-  let step = 0
-  const timer = setInterval(() => {
-    step++
-    displayCount.value = Math.round(start + (diff * step / steps))
-    if (step >= steps) clearInterval(timer)
-  }, 20)
+  const from = displayCount.value
+  const duration = 400
+  const start = performance.now()
+  function step(now: number): void {
+    const t = Math.min((now - start) / duration, 1)
+    const eased = 1 - Math.pow(1 - t, 3)
+    displayCount.value = Math.round(from + (newVal - from) * eased)
+    if (t < 1) requestAnimationFrame(step)
+  }
+  requestAnimationFrame(step)
 })
 </script>
 
 <template>
-  <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 shadow-sm">
+  <div class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none">
     <p class="text-sm text-gray-500 dark:text-gray-400">{{ label }}</p>
-    <p :class="colorClasses[color ?? 'default']" class="mt-1 text-2xl font-semibold">
+    <p :class="colorClasses[color ?? 'default']" class="mt-1 text-3xl font-semibold" style="font-variant-numeric: tabular-nums">
       {{ displayCount }}
     </p>
   </div>

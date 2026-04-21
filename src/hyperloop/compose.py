@@ -251,9 +251,24 @@ class PromptComposer:
                 )
             )
 
-        spec_list = "\n".join(f"- {s}" for s in context.unprocessed_specs)
-        text_parts.append(f"## Specs to Process\n\n{spec_list}")
-        sections.append(PromptSection(source="spec", label="spec", content=spec_list))
+        if context.unprocessed_specs:
+            spec_list = "\n".join(f"- {s}" for s in context.unprocessed_specs)
+            text_parts.append(f"## Specs to Process\n\n{spec_list}")
+            sections.append(PromptSection(source="spec", label="spec", content=spec_list))
+
+        if context.failed_tasks:
+            failed_list = "\n".join(f"- {t}" for t in context.failed_tasks)
+            failed_section = (
+                "The following tasks have failed and may need new approaches or "
+                "different task decomposition:\n\n" + failed_list
+            )
+            text_parts.append(f"## Failed Tasks\n\n{failed_section}")
+            sections.append(
+                PromptSection(source="findings", label="findings", content=failed_section)
+            )
+
+        if not context.unprocessed_specs and not context.failed_tasks:
+            text_parts.append("## Specs to Process\n\n(none)")
 
         text = "\n\n".join(text_parts) + "\n"
         return ComposedPrompt(sections=tuple(sections), text=text)

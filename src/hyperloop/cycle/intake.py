@@ -88,7 +88,18 @@ def run_intake(
         has_failures,
     )
 
-    context = IntakeContext(unprocessed_specs=tuple(unprocessed))
+    # Collect failed task IDs when re-triggering on failures
+    failed_task_ids: tuple[str, ...] = ()
+    if has_failures:
+        from hyperloop.domain.model import TaskStatus
+
+        world = state.get_world()
+        failed_task_ids = tuple(t.id for t in world.tasks.values() if t.status == TaskStatus.FAILED)
+
+    context = IntakeContext(
+        unprocessed_specs=tuple(unprocessed),
+        failed_tasks=failed_task_ids,
+    )
     composed = composer.compose(role="pm", context=context)
     prompt = composed.text
 

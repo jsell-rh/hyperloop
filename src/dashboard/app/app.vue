@@ -11,7 +11,7 @@ useHead({
 </script>
 
 <template>
-  <div class="min-h-screen bg-white dark:bg-gray-950">
+  <div class="min-h-screen bg-gray-50 dark:bg-[#0a0a0f]">
     <NavBar />
     <NuxtPage v-slot="{ Component }">
       <Transition name="page" mode="out-in">
