@@ -9,3 +9,8 @@ build/
 .venv/
 worktrees/
 .hyperloop/
+
+# Dashboard frontend build artifacts
+node_modules/
+.nuxt/
+.output/
