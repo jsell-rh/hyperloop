@@ -65,6 +65,7 @@ class Orchestrator:
         max_workers: int = 6,
         max_task_rounds: int = 50,
         max_action_attempts: int = 3,
+        base_branch: str = "main",
         gate: GatePort | None = None,
         action: ActionPort | None = None,
         pr: PRPort | None = None,
@@ -81,6 +82,7 @@ class Orchestrator:
         self._max_workers = max_workers
         self._max_task_rounds = max_task_rounds
         self._max_action_attempts = max_action_attempts
+        self._base_branch = base_branch
         self._gate = gate
         self._action = action
         self._pr = pr
@@ -320,6 +322,10 @@ class Orchestrator:
                 )
             prompt = self._compose_prompt(task, plan.role, cycle=cycle_num)
             try:
+                # Rebase existing branches onto trunk before spawning so workers
+                # see the latest process-improver changes and state files.
+                if task.branch is not None and self._pr is not None:
+                    self._pr.rebase_branch(branch, self._base_branch)
                 self._runtime.push_branch(branch)
                 self._probe.branch_pushed(branch=branch)
                 handle = self._runtime.spawn(plan.task_id, plan.role, prompt=prompt, branch=branch)

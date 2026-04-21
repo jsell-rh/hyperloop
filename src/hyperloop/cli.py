@@ -477,6 +477,7 @@ def run(
         max_workers=cfg.max_workers,
         max_task_rounds=cfg.max_task_rounds,
         max_action_attempts=cfg.max_action_attempts,
+        base_branch=cfg.base_branch,
         gate=gate,
         action=action,
         pr=pr_manager,
