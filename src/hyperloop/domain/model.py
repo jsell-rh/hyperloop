@@ -237,3 +237,25 @@ class ImprovementContext:
 
 AgentContext = TaskContext | IntakeContext | ImprovementContext
 """Union of all context types for prompt composition."""
+
+
+# ---------------------------------------------------------------------------
+# Composed prompt with provenance
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PromptSection:
+    """A section of a composed prompt with its source layer."""
+
+    source: str  # "base", "project-overlay", "process-overlay", "spec", "findings", "runtime"
+    label: str  # "prompt", "guidelines", "spec", "findings", "epilogue"
+    content: str
+
+
+@dataclass(frozen=True)
+class ComposedPrompt:
+    """A fully composed prompt with provenance for each section."""
+
+    sections: tuple[PromptSection, ...]
+    text: str  # the flattened string passed to the runtime

@@ -11,7 +11,10 @@ RecordingProbe (tests/fakes/probe.py).
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from hyperloop.domain.model import PromptSection
 
 
 class OrchestratorProbe(Protocol):
@@ -298,6 +301,7 @@ class OrchestratorProbe(Protocol):
         task_id: str,
         role: str,
         prompt_text: str,
+        sections: tuple[PromptSection, ...],
         round: int,
         cycle: int,
     ) -> None:

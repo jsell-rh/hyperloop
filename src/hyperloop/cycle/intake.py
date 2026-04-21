@@ -89,7 +89,8 @@ def run_intake(
     )
 
     context = IntakeContext(unprocessed_specs=tuple(unprocessed))
-    prompt = composer.compose(role="pm", context=context)
+    composed = composer.compose(role="pm", context=context)
+    prompt = composed.text
 
     world_before = state.get_world()
     tasks_before = set(world_before.tasks.keys())

@@ -383,7 +383,7 @@ class Orchestrator:
             findings=findings,
             round=task.round,
         )
-        prompt = self._composer.compose(
+        composed = self._composer.compose(
             role=role,
             context=context,
             epilogue=self._runtime.worker_epilogue(),
@@ -391,11 +391,12 @@ class Orchestrator:
         self._probe.prompt_composed(
             task_id=task.id,
             role=role,
-            prompt_text=prompt,
+            prompt_text=composed.text,
+            sections=composed.sections,
             round=task.round,
             cycle=cycle,
         )
-        return prompt
+        return composed.text
 
     def _check_convergence(self) -> str | None:
         """Check if all tasks are complete/failed."""

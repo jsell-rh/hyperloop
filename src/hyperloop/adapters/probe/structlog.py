@@ -138,7 +138,16 @@ class StructlogProbe:
     # ------------------------------------------------------------------
 
     def prompt_composed(self, **kw: object) -> None:
-        self._log.debug("prompt_composed", **kw)
+        sections = kw.pop("sections", ())
+        section_sources: list[str] = []
+        if isinstance(sections, tuple):
+            section_sources = [getattr(s, "source", str(s)) for s in sections]
+        kw_out = {
+            **kw,
+            "section_count": len(section_sources),
+            "section_sources": section_sources,
+        }
+        self._log.debug("prompt_composed", **kw_out)
 
     # ------------------------------------------------------------------
     # Git remote operations

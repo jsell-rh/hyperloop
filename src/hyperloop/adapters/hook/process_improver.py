@@ -38,7 +38,8 @@ class ProcessImproverHook:
             return
 
         context = ImprovementContext(findings=findings_text)
-        prompt = self._composer.compose(role="process-improver", context=context)
+        composed = self._composer.compose(role="process-improver", context=context)
+        prompt = composed.text
 
         failed_ids = tuple(task_id for task_id, r in results.items() if r.verdict == Verdict.FAIL)
 

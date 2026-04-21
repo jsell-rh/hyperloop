@@ -12,7 +12,13 @@ from pathlib import Path
 import pytest
 
 from hyperloop.compose import AgentTemplate, PromptComposer, load_templates_from_dir
-from hyperloop.domain.model import ImprovementContext, IntakeContext, TaskContext
+from hyperloop.domain.model import (
+    ComposedPrompt,
+    ImprovementContext,
+    IntakeContext,
+    PromptSection,
+    TaskContext,
+)
 from tests.fakes.state import InMemoryStateStore
 
 # The base/ dir lives at the repo root, adjacent to src/
@@ -46,6 +52,18 @@ def _state_with_spec(
 class TestBasePromptOnly:
     """Compose with base prompt only — no overlay, no findings."""
 
+    def test_compose_returns_composed_prompt(self) -> None:
+        state = _state_with_spec()
+        composer = PromptComposer(templates=_templates(), state=state)
+
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        result = composer.compose(role="implementer", context=ctx)
+
+        assert isinstance(result, ComposedPrompt)
+        assert isinstance(result.sections, tuple)
+        assert len(result.sections) > 0
+        assert all(isinstance(s, PromptSection) for s in result.sections)
+
     def test_compose_returns_base_prompt_content(self) -> None:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
@@ -54,7 +72,7 @@ class TestBasePromptOnly:
         result = composer.compose(role="implementer", context=ctx)
 
         # Base prompt content should be present
-        assert "You are a worker agent implementing a task" in result
+        assert "You are a worker agent implementing a task" in result.text
 
     def test_compose_includes_spec_content(self) -> None:
         state = _state_with_spec()
@@ -63,7 +81,7 @@ class TestBasePromptOnly:
         ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
 
-        assert "Build a widget." in result
+        assert "Build a widget." in result.text
 
     def test_compose_includes_no_findings_when_empty(self) -> None:
         state = _state_with_spec()
@@ -73,7 +91,9 @@ class TestBasePromptOnly:
         result = composer.compose(role="implementer", context=ctx)
 
         # Should not have a findings section with content
-        assert "## Findings" not in result or result.split("## Findings")[-1].strip() == ""
+        has_findings = "## Findings" in result.text
+        if has_findings:
+            assert result.text.split("## Findings")[-1].strip() == ""
 
 
 class TestTemplateVariables:
@@ -86,8 +106,8 @@ class TestTemplateVariables:
         ctx = TaskContext(task_id="task-027", spec_ref="specs/persistence.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
 
-        assert "specs/persistence.md" in result
-        assert "{spec_ref}" not in result
+        assert "specs/persistence.md" in result.text
+        assert "{spec_ref}" not in result.text
 
     def test_task_id_is_replaced(self) -> None:
         state = _state_with_spec()
@@ -96,8 +116,8 @@ class TestTemplateVariables:
         ctx = TaskContext(task_id="task-027", spec_ref="specs/persistence.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
 
-        assert "task-027" in result
-        assert "{task_id}" not in result
+        assert "task-027" in result.text
+        assert "{task_id}" not in result.text
 
 
 class TestProcessOverlay:
@@ -119,8 +139,8 @@ class TestProcessOverlay:
         ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
 
-        assert "## Guidelines" in result
-        assert "Always run linter before submitting." in result
+        assert "## Guidelines" in result.text
+        assert "Always run linter before submitting." in result.text
 
     def test_no_overlay_still_composes(self) -> None:
         """When no overlay file exists, composition still succeeds."""
@@ -133,7 +153,7 @@ class TestProcessOverlay:
         result = composer.compose(role="implementer", context=ctx)
 
         # Should still have the base prompt
-        assert "You are a worker agent implementing a task" in result
+        assert "You are a worker agent implementing a task" in result.text
 
 
 class TestFindings:
@@ -151,8 +171,142 @@ class TestFindings:
         )
         result = composer.compose(role="implementer", context=ctx)
 
-        assert "Test suite failed: missing null check in widget.py line 42" in result
-        assert "## Findings" in result
+        assert "Test suite failed: missing null check in widget.py line 42" in result.text
+        assert "## Findings" in result.text
+
+
+class TestSectionProvenance:
+    """ComposedPrompt sections carry correct source and label attribution."""
+
+    def test_task_prompt_has_base_source(self) -> None:
+        state = _state_with_spec()
+        composer = PromptComposer(templates=_templates(), state=state)
+
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        result = composer.compose(role="implementer", context=ctx)
+
+        prompt_sections = [s for s in result.sections if s.label == "prompt"]
+        assert len(prompt_sections) == 1
+        assert prompt_sections[0].source == "base"
+
+    def test_task_spec_has_spec_source(self) -> None:
+        state = _state_with_spec()
+        composer = PromptComposer(templates=_templates(), state=state)
+
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        result = composer.compose(role="implementer", context=ctx)
+
+        spec_sections = [s for s in result.sections if s.label == "spec"]
+        assert len(spec_sections) == 1
+        assert spec_sections[0].source == "spec"
+        assert "Build a widget." in spec_sections[0].content
+
+    def test_task_guidelines_has_process_overlay_source(self) -> None:
+        state = _state_with_spec()
+        templates = _templates()
+        templates["implementer"] = AgentTemplate(
+            name="implementer",
+            prompt=templates["implementer"].prompt,
+            guidelines="Run tests first.",
+            annotations=templates["implementer"].annotations,
+        )
+        composer = PromptComposer(templates=templates, state=state)
+
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        result = composer.compose(role="implementer", context=ctx)
+
+        guidelines_sections = [s for s in result.sections if s.label == "guidelines"]
+        assert len(guidelines_sections) == 1
+        assert guidelines_sections[0].source == "process-overlay"
+        assert "Run tests first." in guidelines_sections[0].content
+
+    def test_task_findings_has_findings_source(self) -> None:
+        state = _state_with_spec()
+        composer = PromptComposer(templates=_templates(), state=state)
+
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="null check missing",
+            round=1,
+        )
+        result = composer.compose(role="implementer", context=ctx)
+
+        findings_sections = [s for s in result.sections if s.label == "findings"]
+        assert len(findings_sections) == 1
+        assert findings_sections[0].source == "findings"
+        assert "null check missing" in findings_sections[0].content
+
+    def test_task_epilogue_has_runtime_source(self) -> None:
+        state = _state_with_spec()
+        composer = PromptComposer(templates=_templates(), state=state)
+
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        result = composer.compose(role="implementer", context=ctx, epilogue="Push your branch.")
+
+        epilogue_sections = [s for s in result.sections if s.label == "epilogue"]
+        assert len(epilogue_sections) == 1
+        assert epilogue_sections[0].source == "runtime"
+        assert "Push your branch." in epilogue_sections[0].content
+
+    def test_no_findings_means_no_findings_section(self) -> None:
+        state = _state_with_spec()
+        composer = PromptComposer(templates=_templates(), state=state)
+
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        result = composer.compose(role="implementer", context=ctx)
+
+        findings_sections = [s for s in result.sections if s.label == "findings"]
+        assert len(findings_sections) == 0
+
+    def test_no_epilogue_means_no_epilogue_section(self) -> None:
+        state = _state_with_spec()
+        composer = PromptComposer(templates=_templates(), state=state)
+
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        result = composer.compose(role="implementer", context=ctx)
+
+        epilogue_sections = [s for s in result.sections if s.label == "epilogue"]
+        assert len(epilogue_sections) == 0
+
+    def test_project_overlay_source_from_annotation(self) -> None:
+        state = _state_with_spec()
+        templates = _templates()
+        templates["implementer"] = AgentTemplate(
+            name="implementer",
+            prompt=templates["implementer"].prompt,
+            guidelines="",
+            annotations={"hyperloop.io/source": "project-overlay"},
+        )
+        composer = PromptComposer(templates=templates, state=state)
+
+        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        result = composer.compose(role="implementer", context=ctx)
+
+        prompt_sections = [s for s in result.sections if s.label == "prompt"]
+        assert prompt_sections[0].source == "project-overlay"
+
+    def test_intake_sections(self) -> None:
+        state = _state_with_spec()
+        composer = PromptComposer(templates=_templates(), state=state)
+
+        ctx = IntakeContext(unprocessed_specs=("specs/widget.md",))
+        result = composer.compose(role="pm", context=ctx)
+
+        assert any(s.label == "prompt" and s.source == "base" for s in result.sections)
+        assert any(s.label == "spec" for s in result.sections)
+
+    def test_improvement_sections(self) -> None:
+        state = _state_with_spec()
+        composer = PromptComposer(templates=_templates(), state=state)
+
+        ctx = ImprovementContext(findings="Some failure details")
+        result = composer.compose(role="process-improver", context=ctx)
+
+        assert any(s.label == "prompt" and s.source == "base" for s in result.sections)
+        findings_sections = [s for s in result.sections if s.label == "findings"]
+        assert len(findings_sections) == 1
+        assert findings_sections[0].source == "findings"
 
 
 class TestUnknownRole:
@@ -179,7 +333,7 @@ class TestMissingSpecRef:
         result = composer.compose(role="implementer", context=ctx)
 
         # Should still compose with the base prompt
-        assert "You are a worker agent implementing a task" in result
+        assert "You are a worker agent implementing a task" in result.text
 
     def test_missing_spec_notes_absence(self) -> None:
         state = InMemoryStateStore()
@@ -190,9 +344,9 @@ class TestMissingSpecRef:
 
         # Should note that the spec file could not be read
         assert (
-            "not found" in result.lower()
-            or "could not" in result.lower()
-            or "missing" in result.lower()
+            "not found" in result.text.lower()
+            or "could not" in result.text.lower()
+            or "missing" in result.text.lower()
         )
 
 
@@ -217,7 +371,9 @@ class TestAllRoles:
 
         result = composer.compose(role=role, context=ctx)
 
-        assert len(result) > 0
+        assert isinstance(result, ComposedPrompt)
+        assert len(result.text) > 0
+        assert len(result.sections) > 0
 
 
 class TestLoadTemplatesFromDir:
@@ -327,7 +483,7 @@ class TestKustomizeIntegration:
 
         ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
         result = composer.compose(role="implementer", context=ctx)
-        assert "You are a worker agent implementing a task" in result
+        assert "You are a worker agent implementing a task" in result.text
 
 
 class TestCheckKustomize:

@@ -414,7 +414,7 @@ class TestProbeDoesNotRaise:
         probe.rebase_conflict(task_id="t", branch="b", attempt=1, max_attempts=3)
         probe.recovery_started(in_progress_tasks=0)
         probe.orphan_found(task_id="t", branch="b")
-        probe.prompt_composed(task_id="t", role="r", prompt_text="p", round=1, cycle=1)
+        probe.prompt_composed(task_id="t", role="r", prompt_text="p", sections=(), round=1, cycle=1)
 
 
 class TestOrchestratorRunSpan:

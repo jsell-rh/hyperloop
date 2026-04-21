@@ -29,12 +29,14 @@ from hyperloop.domain.model import (
     ActionStep,
     AgentContext,
     AgentStep,
+    ComposedPrompt,
     GateStep,
     ImprovementContext,
     IntakeContext,
     LoopStep,
     PipelineStep,
     Process,
+    PromptSection,
     TaskContext,
 )
 
@@ -137,7 +139,7 @@ class PromptComposer:
         role: str,
         context: AgentContext,
         epilogue: str = "",
-    ) -> str:
+    ) -> ComposedPrompt:
         """Compose the full prompt for a worker.
 
         Layers:
@@ -153,7 +155,7 @@ class PromptComposer:
             epilogue: Runtime-specific instructions appended to task worker prompts.
 
         Returns:
-            The composed prompt string ready to pass to a worker.
+            A ComposedPrompt with section provenance and flattened text.
 
         Raises:
             ValueError: If the role has no resolved template.
@@ -176,7 +178,7 @@ class PromptComposer:
         template: AgentTemplate,
         context: TaskContext,
         epilogue: str = "",
-    ) -> str:
+    ) -> ComposedPrompt:
         """Compose prompt for a per-task worker (implementer, verifier, rebase-resolver)."""
         prompt = (
             template.prompt.replace("{spec_ref}", context.spec_ref)
@@ -189,64 +191,104 @@ class PromptComposer:
         spec_content = self._state.read_file(spec_path)
 
         # Assemble: prompt + guidelines + spec + findings + epilogue
-        sections: list[str] = [prompt.rstrip()]
+        text_parts: list[str] = [prompt.rstrip()]
+        prompt_source = template.annotations.get("hyperloop.io/source", "base")
+        sections: list[PromptSection] = [
+            PromptSection(source=prompt_source, label="prompt", content=prompt.rstrip()),
+        ]
 
         if template.guidelines:
-            sections.append(f"## Guidelines\n{template.guidelines}")
-
-        if spec_content is not None:
-            sections.append(f"## Spec\n{spec_content}")
-        else:
+            text_parts.append(f"## Guidelines\n{template.guidelines}")
             sections.append(
-                f"## Spec\n[Spec file '{context.spec_ref}' not found."
-                " Proceed with available context.]"
+                PromptSection(
+                    source="process-overlay", label="guidelines", content=template.guidelines
+                )
             )
 
+        if spec_content is not None:
+            text_parts.append(f"## Spec\n{spec_content}")
+            sections.append(PromptSection(source="spec", label="spec", content=spec_content))
+        else:
+            fallback = (
+                f"[Spec file '{context.spec_ref}' not found. Proceed with available context.]"
+            )
+            text_parts.append(f"## Spec\n{fallback}")
+            sections.append(PromptSection(source="spec", label="spec", content=fallback))
+
         if context.findings:
-            sections.append(f"## Findings\n{context.findings}")
+            text_parts.append(f"## Findings\n{context.findings}")
+            sections.append(
+                PromptSection(source="findings", label="findings", content=context.findings)
+            )
 
         if epilogue:
-            sections.append(f"## Runtime\n{epilogue}")
+            text_parts.append(f"## Runtime\n{epilogue}")
+            sections.append(PromptSection(source="runtime", label="epilogue", content=epilogue))
 
-        return "\n\n".join(sections) + "\n"
+        text = "\n\n".join(text_parts) + "\n"
+        return ComposedPrompt(sections=tuple(sections), text=text)
 
     def _compose_intake(
         self,
         role: str,
         template: AgentTemplate,
         context: IntakeContext,
-    ) -> str:
+    ) -> ComposedPrompt:
         """Compose prompt for PM intake."""
         prompt = template.prompt
 
-        sections: list[str] = [prompt.rstrip()]
+        text_parts: list[str] = [prompt.rstrip()]
+        prompt_source = template.annotations.get("hyperloop.io/source", "base")
+        sections: list[PromptSection] = [
+            PromptSection(source=prompt_source, label="prompt", content=prompt.rstrip()),
+        ]
 
         if template.guidelines:
-            sections.append(f"## Guidelines\n{template.guidelines}")
+            text_parts.append(f"## Guidelines\n{template.guidelines}")
+            sections.append(
+                PromptSection(
+                    source="process-overlay", label="guidelines", content=template.guidelines
+                )
+            )
 
         spec_list = "\n".join(f"- {s}" for s in context.unprocessed_specs)
-        sections.append(f"## Specs to Process\n\n{spec_list}")
+        text_parts.append(f"## Specs to Process\n\n{spec_list}")
+        sections.append(PromptSection(source="spec", label="spec", content=spec_list))
 
-        return "\n\n".join(sections) + "\n"
+        text = "\n\n".join(text_parts) + "\n"
+        return ComposedPrompt(sections=tuple(sections), text=text)
 
     def _compose_improvement(
         self,
         role: str,
         template: AgentTemplate,
         context: ImprovementContext,
-    ) -> str:
+    ) -> ComposedPrompt:
         """Compose prompt for process-improver."""
         prompt = template.prompt
 
-        sections: list[str] = [prompt.rstrip()]
+        text_parts: list[str] = [prompt.rstrip()]
+        prompt_source = template.annotations.get("hyperloop.io/source", "base")
+        sections: list[PromptSection] = [
+            PromptSection(source=prompt_source, label="prompt", content=prompt.rstrip()),
+        ]
 
         if template.guidelines:
-            sections.append(f"## Guidelines\n{template.guidelines}")
+            text_parts.append(f"## Guidelines\n{template.guidelines}")
+            sections.append(
+                PromptSection(
+                    source="process-overlay", label="guidelines", content=template.guidelines
+                )
+            )
 
         if context.findings:
-            sections.append(f"## Findings\n{context.findings}")
+            text_parts.append(f"## Findings\n{context.findings}")
+            sections.append(
+                PromptSection(source="findings", label="findings", content=context.findings)
+            )
 
-        return "\n\n".join(sections) + "\n"
+        text = "\n\n".join(text_parts) + "\n"
+        return ComposedPrompt(sections=tuple(sections), text=text)
 
 
 def _run_kustomize(target: str) -> str:
