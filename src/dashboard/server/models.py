@@ -119,6 +119,7 @@ class GraphNode(BaseModel):
     status: str
     phase: str | None
     spec_ref: str
+    round: int
 
 
 class GraphEdge(BaseModel):

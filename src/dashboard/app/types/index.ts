@@ -86,6 +86,7 @@ export interface GraphNode {
   status: 'not-started' | 'in-progress' | 'complete' | 'failed'
   phase: string | null
   spec_ref: string
+  round: number
 }
 
 export interface GraphEdge {

@@ -484,7 +484,7 @@ class TestGraph:
         assert edge["to_id"] == "task-002"
 
     def test_graph_node_fields(self, seeded_repo: Path) -> None:
-        """Graph nodes include status, phase, and spec_ref without version."""
+        """Graph nodes include status, phase, spec_ref without version, and round."""
         client = _make_client(seeded_repo)
         data = client.get("/api/tasks/graph").json()
 
@@ -492,6 +492,10 @@ class TestGraph:
         assert task_001["status"] == "in-progress"
         assert task_001["phase"] == "implementer"
         assert task_001["spec_ref"] == "specs/widget.md"  # no @version
+        assert task_001["round"] == 1
+
+        task_002 = next(n for n in data["nodes"] if n["id"] == "task-002")
+        assert task_002["round"] == 0
 
     def test_graph_critical_path(self, seeded_repo: Path) -> None:
         """Critical path includes the longest chain of non-terminal tasks."""

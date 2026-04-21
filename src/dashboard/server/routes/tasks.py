@@ -165,6 +165,7 @@ def get_task_graph() -> GraphResponse:
                 status=_status_str(task.status),
                 phase=str(task.phase) if task.phase else None,
                 spec_ref=task.spec_ref.split("@")[0],
+                round=task.round,
             )
         )
         for dep in task.deps:

@@ -160,9 +160,9 @@ function zoomOut(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Word-boundary aware truncation (38 chars per spec)
+// Word-boundary aware truncation (28 chars to fit 230px nodes)
 // ---------------------------------------------------------------------------
-function truncateTitle(title: string, maxChars: number = 38): string {
+function truncateTitle(title: string, maxChars: number = 28): string {
   if (title.length <= maxChars) return title
   const truncated = title.slice(0, maxChars)
   const lastSpace = truncated.lastIndexOf(' ')
@@ -182,6 +182,7 @@ interface LayoutNode {
   status: string
   phase: string | null
   specRef: string
+  round: number
   x: number
   y: number
   height: number
@@ -390,6 +391,17 @@ function getEdgeDimOpacity(edge: LayoutEdge): number {
 const tooltipNode = ref<LayoutNode | null>(null)
 const tooltipStyle = ref({ top: '0px', left: '0px' })
 
+// Bar segment tooltip (separate from main node tooltip)
+const barTooltip = ref<{ text: string; x: number; y: number } | null>(null)
+const barTooltipStyle = computed(() => {
+  if (!barTooltip.value || !containerRef.value) return { left: '0px', top: '0px' }
+  const rect = containerRef.value.getBoundingClientRect()
+  return {
+    left: `${barTooltip.value.x - rect.left - 30}px`,
+    top: `${barTooltip.value.y - rect.top - 28}px`,
+  }
+})
+
 function handleNodeEnter(node: LayoutNode, event: MouseEvent): void {
   hoveredNodeId.value = node.id
   tooltipNode.value = node
@@ -485,7 +497,8 @@ function handleNodeKeydown(e: KeyboardEvent, nodeId: string): void {
 // ---------------------------------------------------------------------------
 function getNodeAriaLabel(node: LayoutNode): string {
   const phase = node.phase ? `, phase: ${node.phase}` : ''
-  return `${node.fullTitle} (${node.id}), status: ${node.status}${phase}`
+  const round = node.round > 0 ? `, round ${node.round}` : ''
+  return `${node.fullTitle} (${node.id}), status: ${node.status}${phase}${round}`
 }
 
 // ---------------------------------------------------------------------------
@@ -746,6 +759,7 @@ const layout = computed(() => {
       status: n.status,
       phase: n.phase,
       specRef: n.spec_ref,
+      round: n.round,
       x: pos.x,
       y: pos.y,
       height: pos.h,
@@ -1024,14 +1038,16 @@ onUnmounted(() => {
             :style="(activeNodeId === node.id) ? 'transform: scale(1.03); transform-origin: ' + (node.x + NODE_WIDTH/2) + 'px ' + (node.y + node.height/2) + 'px' : undefined"
           />
 
-          <!-- Title: 14px, font-weight 600, centered -->
+          <!-- Title: 13px, font-weight 600, centered, clipped to node bounds -->
           <text
             :x="node.x + NODE_WIDTH / 2"
             :y="node.y + 20"
-            font-size="14"
+            font-size="13"
             font-weight="600"
             text-anchor="middle"
             :fill="getTitleFill(node.status)"
+            :textLength="node.title.length > 24 ? NODE_WIDTH - 16 : undefined"
+            :lengthAdjust="node.title.length > 24 ? 'spacing' : undefined"
           >
             {{ node.title }}
           </text>
@@ -1048,11 +1064,35 @@ onUnmounted(() => {
             {{ node.id }}
           </text>
 
+          <!-- Round indicator badge (top-right corner, only when round > 0) -->
+          <g v-if="node.round > 0">
+            <rect
+              :x="node.x + NODE_WIDTH - 28"
+              :y="node.y + 4"
+              width="24"
+              height="14"
+              rx="7"
+              :fill="isDark ? 'rgba(251,191,36,0.15)' : 'rgba(245,158,11,0.1)'"
+              :stroke="isDark ? '#fbbf24' : '#f59e0b'"
+              stroke-width="0.5"
+            />
+            <text
+              :x="node.x + NODE_WIDTH - 16"
+              :y="node.y + 14"
+              font-size="9"
+              font-weight="600"
+              text-anchor="middle"
+              :fill="isDark ? '#fbbf24' : '#d97706'"
+            >
+              R{{ node.round }}
+            </text>
+          </g>
+
           <!-- Mini pipeline bar (in-progress nodes with pipeline steps) -->
           <template v-if="node.status === 'in-progress' && pipelineSteps && pipelineSteps.length > 0">
             <g :transform="`translate(${node.x + 12}, ${node.y + 46})`">
               <template v-for="(step, si) in pipelineSteps" :key="'step-' + si">
-                <!-- Step segment -->
+                <!-- Step segment with hover tooltip and fill transition -->
                 <rect
                   :x="si * ((NODE_WIDTH - 24) / pipelineSteps.length)"
                   y="0"
@@ -1060,6 +1100,9 @@ onUnmounted(() => {
                   height="4"
                   :rx="2"
                   :fill="getMiniBarFill(step.name, node.phase, si)"
+                  class="pipeline-bar-segment"
+                  @mouseenter.stop="barTooltip = { text: step.name, x: $event.clientX, y: $event.clientY }"
+                  @mouseleave.stop="barTooltip = null"
                 />
                 <!-- Step label (only for active step) -->
                 <text
@@ -1101,8 +1144,18 @@ onUnmounted(() => {
     >
       <p class="font-medium leading-snug">{{ tooltipNode.fullTitle }}</p>
       <p class="text-gray-400 mt-0.5">
-        {{ tooltipNode.id }} &middot; {{ tooltipNode.status }}{{ tooltipNode.phase ? ' / ' + tooltipNode.phase : '' }}
+        {{ tooltipNode.id }} &middot; {{ tooltipNode.status }}{{ tooltipNode.phase ? ' / ' + tooltipNode.phase : '' }}{{ tooltipNode.round > 0 ? ' (R' + tooltipNode.round + ')' : '' }}
       </p>
+    </div>
+
+    <!-- Pipeline bar segment tooltip -->
+    <div
+      v-if="barTooltip"
+      class="absolute z-30 pointer-events-none px-2 py-1 rounded text-[10px] font-medium shadow-md"
+      :class="isDark ? 'bg-gray-800 text-gray-200' : 'bg-gray-900 text-white'"
+      :style="{ left: barTooltipStyle.left, top: barTooltipStyle.top }"
+    >
+      {{ barTooltip.text }}
     </div>
 
     <!-- Zoom controls: glassmorphism icon buttons, stacked vertically -->
@@ -1150,6 +1203,7 @@ onUnmounted(() => {
         <th scope="col">Title</th>
         <th scope="col">Status</th>
         <th scope="col">Phase</th>
+        <th scope="col">Round</th>
       </tr>
     </thead>
     <tbody>
@@ -1158,6 +1212,7 @@ onUnmounted(() => {
         <td>{{ node.fullTitle }}</td>
         <td>{{ node.status }}</td>
         <td>{{ node.phase ?? '--' }}</td>
+        <td>{{ node.round }}</td>
       </tr>
     </tbody>
   </table>
@@ -1182,9 +1237,31 @@ onUnmounted(() => {
   filter: url(#hover-glow);
 }
 
+/* Pipeline bar segment fill transition */
+.pipeline-bar-segment {
+  transition: fill 500ms ease;
+  cursor: default;
+}
+
 /* Critical path marching ants */
 .critical-edge {
   animation: edge-flow 1s linear infinite;
+}
+
+/* Respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .pipeline-bar-segment {
+    transition: none;
+  }
+  .graph-node {
+    animation: none;
+  }
+  .graph-node-rect {
+    transition: none;
+  }
+  .critical-edge {
+    animation: none;
+  }
 }
 
 /* Screen-reader only utility */
