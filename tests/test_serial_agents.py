@@ -24,6 +24,7 @@ from hyperloop.domain.model import (
 )
 from hyperloop.loop import Orchestrator
 from tests.fakes.runtime import InMemoryRuntime
+from tests.fakes.spec_source import FakeSpecSource
 from tests.fakes.state import InMemoryStateStore
 
 # ---------------------------------------------------------------------------
@@ -75,6 +76,7 @@ def _make_orchestrator(
     runtime: InMemoryRuntime,
     composer: PromptComposer | None = None,
     max_task_rounds: int = 50,
+    spec_source: FakeSpecSource | None = None,
 ) -> Orchestrator:
     hooks: list[ProcessImproverHook] = []
     if composer is not None:
@@ -87,6 +89,7 @@ def _make_orchestrator(
         max_task_rounds=max_task_rounds,
         hooks=tuple(hooks),
         composer=composer,
+        spec_source=spec_source,
     )
 
 
@@ -346,6 +349,111 @@ class TestPMIntake:
         orch.run_cycle()
         pm_runs_next = [r for r in runtime.serial_runs if r.role == "pm"]
         assert len(pm_runs_next) == 1  # still 1, not 2
+
+
+# ---------------------------------------------------------------------------
+# SHA pinning
+# ---------------------------------------------------------------------------
+
+
+class TestSpecRefPinning:
+    """After intake, new tasks get spec_ref pinned to the current SHA."""
+
+    def test_new_tasks_get_sha_pinned_spec_ref(self) -> None:
+        """Tasks created by the PM agent have @sha appended to spec_ref."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.set_file("specs/widget.md", "Widget spec content")
+
+        spec_source = FakeSpecSource()
+        spec_source.set_version("abc123")
+
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        def create_task_during_intake(prompt: str) -> bool:
+            state.add_task(_task(task_id="task-new", spec_ref="specs/widget.md"))
+            return True
+
+        runtime.set_serial_callback("pm", create_task_during_intake)
+        orch = _make_orchestrator(state, runtime, composer=composer, spec_source=spec_source)
+
+        orch.run_cycle()
+
+        task = state.get_task("task-new")
+        assert task.spec_ref == "specs/widget.md@abc123"
+
+    def test_existing_tasks_not_re_pinned(self) -> None:
+        """Tasks that existed before intake are not modified."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.set_file("specs/new.md", "New spec")
+        state.add_task(_task(task_id="task-old", spec_ref="specs/old.md@oldsha"))
+
+        spec_source = FakeSpecSource()
+        spec_source.set_version("newsha")
+
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+        orch = _make_orchestrator(state, runtime, composer=composer, spec_source=spec_source)
+
+        orch.run_cycle()
+
+        task = state.get_task("task-old")
+        assert task.spec_ref == "specs/old.md@oldsha"
+
+    def test_already_pinned_tasks_not_double_pinned(self) -> None:
+        """If PM writes spec_ref with @sha already, don't append again."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.set_file("specs/widget.md", "Widget spec")
+
+        spec_source = FakeSpecSource()
+        spec_source.set_version("abc123")
+
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        def create_pinned_task(prompt: str) -> bool:
+            state.add_task(_task(task_id="task-pre-pinned", spec_ref="specs/widget.md@already"))
+            return True
+
+        runtime.set_serial_callback("pm", create_pinned_task)
+        orch = _make_orchestrator(state, runtime, composer=composer, spec_source=spec_source)
+
+        orch.run_cycle()
+
+        task = state.get_task("task-pre-pinned")
+        assert task.spec_ref == "specs/widget.md@already"
+
+    def test_no_pinning_without_spec_source(self) -> None:
+        """Without a spec_source, spec_ref stays bare (no crash)."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.set_file("specs/widget.md", "Widget spec")
+
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        def create_task(prompt: str) -> bool:
+            state.add_task(_task(task_id="task-bare", spec_ref="specs/widget.md"))
+            return True
+
+        runtime.set_serial_callback("pm", create_task)
+        orch = _make_orchestrator(state, runtime, composer=composer)
+
+        orch.run_cycle()
+
+        task = state.get_task("task-bare")
+        assert task.spec_ref == "specs/widget.md"
+
+    def test_unprocessed_specs_recognizes_pinned_refs(self) -> None:
+        """A task with spec_ref 'specs/widget.md@sha' covers 'specs/widget.md'."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.set_file("specs/widget.md", "Widget spec")
+        state.add_task(_task(spec_ref="specs/widget.md@abc123"))
+
+        orch = _make_orchestrator(state, runtime)
+        unprocessed = orch._unprocessed_specs()
+
+        assert unprocessed == []
 
 
 # ---------------------------------------------------------------------------
