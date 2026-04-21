@@ -15,12 +15,17 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from hyperloop.adapters.git._worktree import (
     cleanup_worktree,
     create_worktree,
 )
 from hyperloop.domain.model import TaskStatus
 from hyperloop.pr import PRManager
+
+pytestmark = pytest.mark.slow
+
 
 # ---------------------------------------------------------------------------
 # Helpers
