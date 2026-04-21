@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.21.0 (2026-04-21)
+
+### Bug Fixes
+
+- Parse flat config per spec, validate gate/action ports at startup
+  ([`2abadeb`](https://github.com/jsell-rh/hyperloop/commit/2abadeb150818fbb1a9e7f7e2aa0a7c4bc2d1d96))
+
+
 ## v0.20.5 (2026-04-21)
 
 
