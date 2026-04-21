@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { TaskDetail, PromptEntry } from '~/types'
+import type { TaskDetail, PipelineStepInfo, ReconstructedPrompt } from '~/types'
 
 const route = useRoute()
-const { fetchTask } = useApi()
+const { fetchTask, fetchPipeline, fetchTaskPrompt } = useApi()
 
 const taskId = computed(() => route.params.id as string)
 
@@ -10,6 +10,12 @@ const { data: task } = useAsyncData<TaskDetail>(
   `task-${taskId.value}`,
   () => fetchTask(taskId.value),
   { server: false },
+)
+
+const { data: pipelineSteps } = useAsyncData<PipelineStepInfo[]>(
+  'pipeline-steps',
+  () => fetchPipeline(),
+  { server: false, default: () => [] },
 )
 
 const activeTab = ref<'overview' | 'reviews' | 'prompt'>('overview')
@@ -20,11 +26,19 @@ const sortedReviews = computed(() => {
   return [...task.value.reviews].sort((a, b) => b.round - a.round)
 })
 
-const prompts = computed<PromptEntry[]>(() => task.value?.prompts ?? [])
+// Prompt data — loaded on demand when the prompt tab is activated
+const promptData = ref<ReconstructedPrompt[]>([])
+const promptLoaded = ref(false)
 
-// Default pipeline steps (the backend could provide these in the future)
-const pipelineSteps = computed(() => {
-  return ['implementer', 'verifier', 'gate', 'merge']
+watch(activeTab, async (tab) => {
+  if (tab === 'prompt' && !promptLoaded.value) {
+    try {
+      promptData.value = await fetchTaskPrompt(taskId.value)
+    } catch {
+      promptData.value = []
+    }
+    promptLoaded.value = true
+  }
 })
 
 // Poll every 10 seconds
@@ -140,27 +154,14 @@ onUnmounted(() => {
                 <span v-else class="text-gray-400 dark:text-gray-500">--</span>
               </dd>
             </div>
-            <div>
-              <dt class="text-gray-500 dark:text-gray-400">Dependencies</dt>
-              <dd class="mt-0.5 text-gray-900 dark:text-gray-100">
-                <template v-if="task.deps.length > 0">
-                  <NuxtLink
-                    v-for="dep in task.deps"
-                    :key="dep"
-                    :to="`/tasks/${dep}`"
-                    class="text-blue-600 dark:text-blue-400 hover:underline mr-2"
-                  >
-                    {{ dep }}
-                  </NuxtLink>
-                </template>
-                <span v-else class="text-gray-400 dark:text-gray-500">None</span>
-              </dd>
-            </div>
           </dl>
         </div>
 
         <!-- Pipeline position -->
-        <div class="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5 shadow-sm">
+        <div
+          v-if="pipelineSteps && pipelineSteps.length > 0"
+          class="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5 shadow-sm"
+        >
           <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">
             Pipeline Position
           </h2>
@@ -168,6 +169,14 @@ onUnmounted(() => {
             :steps="pipelineSteps"
             :current-phase="task.phase"
           />
+        </div>
+
+        <!-- Dependencies -->
+        <div class="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5 shadow-sm">
+          <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">
+            Dependencies
+          </h2>
+          <DependencyTree :deps="task.deps_detail" />
         </div>
       </div>
 
@@ -187,7 +196,7 @@ onUnmounted(() => {
 
       <!-- Prompt tab -->
       <div v-if="activeTab === 'prompt'">
-        <PromptViewer :prompts="prompts" />
+        <PromptViewer :prompts="promptData" />
       </div>
     </template>
 

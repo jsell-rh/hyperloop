@@ -194,6 +194,24 @@ class TestTasks:
         assert data["deps"] == ["task-001"]
         assert data["reviews"] == []
 
+    def test_task_detail_deps_detail(self, seeded_repo):
+        client = _make_client(seeded_repo)
+        resp = client.get("/api/tasks/task-002")
+        assert resp.status_code == 200
+        data = resp.json()
+        deps_detail = data["deps_detail"]
+        assert len(deps_detail) == 1
+        assert deps_detail[0]["id"] == "task-001"
+        assert deps_detail[0]["title"] == "Build widget"
+        assert deps_detail[0]["status"] == "in-progress"
+
+    def test_task_detail_no_deps_has_empty_detail(self, seeded_repo):
+        client = _make_client(seeded_repo)
+        resp = client.get("/api/tasks/task-001")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["deps_detail"] == []
+
     def test_task_not_found(self, seeded_repo):
         client = _make_client(seeded_repo)
         resp = client.get("/api/tasks/task-999")
@@ -260,6 +278,145 @@ class TestEmptyRepo:
         summary_data = client.get("/api/summary").json()
         assert summary_data["total"] == 0
         assert summary_data["specs_total"] == 0
+
+
+class TestPipeline:
+    def test_pipeline_returns_steps(self, tmp_path):
+        """Pipeline endpoint returns flattened steps from process.yaml."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        # Write a process.yaml in base/
+        base_dir = repo / "base"
+        base_dir.mkdir()
+        process_yaml = {
+            "apiVersion": "hyperloop.io/v1",
+            "kind": "Process",
+            "metadata": {"name": "default"},
+            "pipeline": [
+                {"loop": [{"agent": "implementer"}, {"agent": "verifier"}]},
+                {"gate": "pr-require-label"},
+                {"action": "merge-pr"},
+            ],
+        }
+        (base_dir / "process.yaml").write_text(yaml.dump(process_yaml))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/pipeline")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 4
+        assert data[0] == {"name": "implementer", "type": "agent"}
+        assert data[1] == {"name": "verifier", "type": "agent"}
+        assert data[2] == {"name": "pr-require-label", "type": "gate"}
+        assert data[3] == {"name": "merge-pr", "type": "action"}
+
+    def test_pipeline_empty_when_no_process(self, tmp_path):
+        """Pipeline endpoint returns empty list when no process.yaml exists."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/pipeline")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
+class TestPromptReconstruction:
+    def test_prompt_returns_sections(self, tmp_path):
+        """Prompt endpoint returns reconstructed prompt sections for a task."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        # Write an agent template
+        base_dir = repo / "base"
+        base_dir.mkdir()
+        agent_yaml = {
+            "apiVersion": "hyperloop.io/v1",
+            "kind": "Agent",
+            "metadata": {"name": "implementer"},
+            "prompt": "You are implementing task {task_id}.",
+            "guidelines": "Follow the code style.",
+        }
+        (base_dir / "implementer.yaml").write_text(yaml.dump(agent_yaml))
+
+        _write_spec_file(repo, "specs/widget.md", "# Widget\n\nBuild it.\n")
+        _write_task_file(
+            repo,
+            "task-001",
+            {
+                "id": "task-001",
+                "title": "Build widget",
+                "spec_ref": "specs/widget.md@abc",
+                "status": "in-progress",
+                "phase": "implementer",
+                "deps": [],
+                "round": 1,
+                "branch": "hyperloop/task-001",
+                "pr": None,
+            },
+        )
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/tasks/task-001/prompt")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) >= 1
+
+        # The implementer prompt should be first (current phase)
+        impl = data[0]
+        assert impl["role"] == "implementer"
+        sections = impl["sections"]
+        labels = [s["label"] for s in sections]
+        assert "prompt" in labels
+        assert "guidelines" in labels
+        assert "spec" in labels
+
+        # Verify variable substitution happened
+        prompt_section = next(s for s in sections if s["label"] == "prompt")
+        assert "task-001" in prompt_section["content"]
+
+    def test_prompt_empty_when_no_templates(self, tmp_path):
+        """Prompt endpoint returns empty list when no agent templates exist."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        _write_task_file(
+            repo,
+            "task-001",
+            {
+                "id": "task-001",
+                "title": "A task",
+                "spec_ref": "specs/a.md",
+                "status": "not-started",
+                "phase": None,
+                "deps": [],
+                "round": 0,
+                "branch": None,
+                "pr": None,
+            },
+        )
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/tasks/task-001/prompt")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_prompt_not_found_for_missing_task(self, tmp_path):
+        """Prompt endpoint returns 404 for unknown task."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+        client = _make_client(repo)
+        resp = client.get("/api/tasks/task-999/prompt")
+        assert resp.status_code == 404
 
 
 class TestCompleteSpec:

@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import type { PromptEntry } from '~/types'
+import type { ReconstructedPrompt } from '~/types'
 
 defineProps<{
-  prompts: PromptEntry[]
+  prompts: ReconstructedPrompt[]
 }>()
 
 const expandedPanels = ref<Record<string, boolean>>({})
 
-function panelKey(roundIndex: number, sectionIndex: number): string {
-  return `${roundIndex}-${sectionIndex}`
+function panelKey(roleIndex: number, sectionIndex: number): string {
+  return `${roleIndex}-${sectionIndex}`
 }
 
 function togglePanel(key: string) {
@@ -50,11 +50,11 @@ function getSourceStyle(source: string) {
 <template>
   <div class="space-y-6">
     <div
-      v-for="(entry, roundIndex) in prompts"
-      :key="`${entry.round}-${entry.role}`"
+      v-for="(entry, roleIndex) in prompts"
+      :key="entry.role"
     >
       <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-        Round {{ entry.round }} -- {{ entry.role }}
+        {{ entry.role }}
       </h4>
 
       <div class="space-y-2">
@@ -66,11 +66,11 @@ function getSourceStyle(source: string) {
           <!-- Panel header -->
           <button
             class="w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-900/50 hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors text-left"
-            @click="togglePanel(panelKey(roundIndex, sectionIndex))"
+            @click="togglePanel(panelKey(roleIndex, sectionIndex))"
           >
             <svg
               class="h-3 w-3 text-gray-400 transition-transform flex-shrink-0"
-              :class="{ 'rotate-90': expandedPanels[panelKey(roundIndex, sectionIndex)] }"
+              :class="{ 'rotate-90': expandedPanels[panelKey(roleIndex, sectionIndex)] }"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -91,7 +91,7 @@ function getSourceStyle(source: string) {
 
           <!-- Panel content -->
           <div
-            v-if="expandedPanels[panelKey(roundIndex, sectionIndex)]"
+            v-if="expandedPanels[panelKey(roleIndex, sectionIndex)]"
             class="px-3 py-2 border-t border-gray-200 dark:border-gray-800"
           >
             <pre class="text-xs text-gray-700 dark:text-gray-300 font-mono whitespace-pre-wrap overflow-x-auto">{{ section.content }}</pre>

@@ -27,11 +27,42 @@ class Review(BaseModel):
     detail: str
 
 
+class DepDetail(BaseModel):
+    """Summary info for a dependency task."""
+
+    id: str
+    title: str
+    status: str
+
+
 class TaskDetail(TaskSummary):
     """Full task detail including dependencies and review history."""
 
     deps: list[str]
+    deps_detail: list[DepDetail]
     reviews: list[Review]
+
+
+class PipelineStepInfo(BaseModel):
+    """A single step in the flattened pipeline."""
+
+    name: str
+    type: str
+
+
+class PromptSectionResponse(BaseModel):
+    """A section of a reconstructed prompt with source provenance."""
+
+    source: str
+    label: str
+    content: str
+
+
+class ReconstructedPrompt(BaseModel):
+    """A reconstructed prompt for a task role."""
+
+    role: str
+    sections: list[PromptSectionResponse]
 
 
 class SpecSummary(BaseModel):

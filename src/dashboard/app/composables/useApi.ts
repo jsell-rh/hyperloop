@@ -1,4 +1,12 @@
-import type { SpecSummary, SpecDetail, TaskSummary, TaskDetail, Summary } from '~/types'
+import type {
+  SpecSummary,
+  SpecDetail,
+  TaskSummary,
+  TaskDetail,
+  Summary,
+  PipelineStepInfo,
+  ReconstructedPrompt,
+} from '~/types'
 
 const API_BASE = '/api'
 
@@ -18,5 +26,19 @@ export function useApi() {
   const fetchSummary = () =>
     $fetch<Summary>(`${API_BASE}/summary`)
 
-  return { fetchSpecs, fetchSpec, fetchTasks, fetchTask, fetchSummary }
+  const fetchPipeline = () =>
+    $fetch<PipelineStepInfo[]>(`${API_BASE}/pipeline`)
+
+  const fetchTaskPrompt = (taskId: string) =>
+    $fetch<ReconstructedPrompt[]>(`${API_BASE}/tasks/${taskId}/prompt`)
+
+  return {
+    fetchSpecs,
+    fetchSpec,
+    fetchTasks,
+    fetchTask,
+    fetchSummary,
+    fetchPipeline,
+    fetchTaskPrompt,
+  }
 }

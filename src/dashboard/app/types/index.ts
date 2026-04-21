@@ -25,10 +25,16 @@ export interface TaskSummary {
   spec_ref: string
 }
 
+export interface DepDetail {
+  id: string
+  title: string
+  status: 'not-started' | 'in-progress' | 'complete' | 'failed'
+}
+
 export interface TaskDetail extends TaskSummary {
   deps: string[]
+  deps_detail: DepDetail[]
   reviews: Review[]
-  prompts?: PromptEntry[]
 }
 
 export interface Review {
@@ -48,6 +54,16 @@ export interface PromptSection {
   source: string
   label: string
   content: string
+}
+
+export interface PipelineStepInfo {
+  name: string
+  type: string
+}
+
+export interface ReconstructedPrompt {
+  role: string
+  sections: PromptSection[]
 }
 
 export interface Summary {

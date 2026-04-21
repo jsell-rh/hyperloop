@@ -2,11 +2,24 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+import yaml
 from fastapi import APIRouter, HTTPException
 
 from dashboard.server.deps import get_repo_path, get_state
-from dashboard.server.models import Review, TaskDetail, TaskSummary
+from dashboard.server.models import (
+    DepDetail,
+    PromptSectionResponse,
+    ReconstructedPrompt,
+    Review,
+    TaskDetail,
+    TaskSummary,
+)
 from dashboard.server.reviews import read_reviews
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 router = APIRouter()
 
@@ -33,6 +46,30 @@ def _task_to_summary(task: object) -> TaskSummary:
     )
 
 
+def _resolve_deps_detail(dep_ids: tuple[str, ...]) -> list[DepDetail]:
+    """Look up each dependency task and return summary info.
+
+    Missing deps are silently skipped — the task may reference a dep that
+    has been deleted or is not yet visible.
+    """
+    state = get_state()
+    world = state.get_world()
+    details: list[DepDetail] = []
+    for dep_id in dep_ids:
+        dep_task = world.tasks.get(dep_id)
+        if dep_task is not None:
+            details.append(
+                DepDetail(
+                    id=dep_task.id,
+                    title=dep_task.title,
+                    status=_status_str(dep_task.status),
+                )
+            )
+        else:
+            details.append(DepDetail(id=dep_id, title="(unknown)", status="not-started"))
+    return details
+
+
 @router.get("/api/tasks")
 def list_tasks(
     status: str | None = None,
@@ -53,13 +90,14 @@ def list_tasks(
 
 @router.get("/api/tasks/{task_id}")
 def get_task(task_id: str) -> TaskDetail:
-    """Return full task detail with review history."""
+    """Return full task detail with review history and dependency info."""
     try:
         task = get_state().get_task(task_id)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")  # noqa: B904
 
     reviews: list[Review] = read_reviews(get_repo_path(), task_id)
+    deps_detail = _resolve_deps_detail(task.deps)
 
     return TaskDetail(
         id=task.id,
@@ -71,5 +109,147 @@ def get_task(task_id: str) -> TaskDetail:
         pr=task.pr,
         spec_ref=task.spec_ref,
         deps=list(task.deps),
+        deps_detail=deps_detail,
         reviews=reviews,
     )
+
+
+# ---------------------------------------------------------------------------
+# Prompt reconstruction
+# ---------------------------------------------------------------------------
+
+
+def _load_agent_templates(repo_path: Path) -> dict[str, dict[str, str]]:
+    """Load agent templates from YAML files.
+
+    Tries the kustomize overlay directory first, then falls back to the
+    base directory.  Returns a dict mapping role name to prompt/guidelines.
+    """
+    candidates = [
+        repo_path / ".hyperloop" / "agents",
+        repo_path / "base",
+    ]
+
+    templates: dict[str, dict[str, str]] = {}
+    for base_dir in candidates:
+        if not base_dir.is_dir():
+            continue
+        for yaml_file in base_dir.glob("*.yaml"):
+            if yaml_file.name == "kustomization.yaml":
+                continue
+            try:
+                with open(yaml_file) as f:
+                    doc = yaml.safe_load(f)
+            except (yaml.YAMLError, OSError):
+                continue
+            if not isinstance(doc, dict):
+                continue
+            if doc.get("kind") != "Agent":
+                continue
+            metadata = doc.get("metadata", {})
+            name = metadata.get("name", "") if isinstance(metadata, dict) else ""
+            if not name:
+                name = str(doc.get("name", ""))
+            if not name:
+                continue
+            prompt_text = str(doc.get("prompt", ""))
+            guidelines_text = str(doc.get("guidelines", "")).strip()
+            # Only set if not already found (overlay takes priority)
+            if name not in templates:
+                templates[name] = {"prompt": prompt_text, "guidelines": guidelines_text}
+        if templates:
+            break  # Use the first directory that has templates
+    return templates
+
+
+@router.get("/api/tasks/{task_id}/prompt")
+def get_task_prompt(task_id: str) -> list[ReconstructedPrompt]:
+    """Reconstruct the prompt that would be composed for a task.
+
+    This reads the agent templates + task context and assembles the
+    prompt sections with source provenance, mirroring compose.py logic
+    without requiring kustomize.
+    """
+    state = get_state()
+    repo_path = get_repo_path()
+
+    try:
+        task = state.get_task(task_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")  # noqa: B904
+
+    templates = _load_agent_templates(repo_path)
+    if not templates:
+        return []
+
+    # Read spec content
+    spec_ref = task.spec_ref
+    spec_path = spec_ref.split("@")[0] if "@" in spec_ref else spec_ref
+    spec_content = state.read_file(spec_path)
+
+    # Read findings
+    findings = state.get_findings(task_id)
+
+    # Determine which roles to reconstruct: the task's current phase
+    # plus common pipeline roles
+    roles_to_show: list[str] = []
+    # Show the current phase role if it maps to an agent template
+    if task.phase is not None and str(task.phase) in templates:
+        roles_to_show.append(str(task.phase))
+    # Also include all agent templates that are relevant to task pipelines
+    for role_name in templates:
+        if role_name not in roles_to_show:
+            roles_to_show.append(role_name)
+
+    results: list[ReconstructedPrompt] = []
+    for role in roles_to_show:
+        tmpl = templates.get(role)
+        if tmpl is None:
+            continue
+
+        sections: list[PromptSectionResponse] = []
+
+        # Template prompt with variable substitution
+        prompt_text = (
+            tmpl["prompt"]
+            .replace("{spec_ref}", spec_ref)
+            .replace("{task_id}", task_id)
+            .replace("{round}", str(task.round))
+        )
+        sections.append(
+            PromptSectionResponse(source="base", label="prompt", content=prompt_text.rstrip())
+        )
+
+        # Guidelines
+        if tmpl["guidelines"]:
+            sections.append(
+                PromptSectionResponse(
+                    source="process-overlay",
+                    label="guidelines",
+                    content=tmpl["guidelines"],
+                )
+            )
+
+        # Spec content
+        if spec_content is not None:
+            sections.append(
+                PromptSectionResponse(source="spec", label="spec", content=spec_content)
+            )
+        else:
+            sections.append(
+                PromptSectionResponse(
+                    source="spec",
+                    label="spec",
+                    content=f"[Spec file '{spec_ref}' not found.]",
+                )
+            )
+
+        # Findings
+        if findings:
+            sections.append(
+                PromptSectionResponse(source="findings", label="findings", content=findings)
+            )
+
+        results.append(ReconstructedPrompt(role=role, sections=sections))
+
+    return results
