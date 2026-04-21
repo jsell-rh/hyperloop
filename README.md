@@ -134,7 +134,7 @@ notifications:
 
 ## Custom Processes
 
-Override the default pipeline in `process.yaml`:
+Override the default pipeline in `.hyperloop/agents/process/process.yaml`:
 
 ```yaml
 pipeline:

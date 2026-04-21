@@ -33,14 +33,42 @@ def _parse_task_file(content: str) -> dict[str, object]:
     """Parse a task file into a frontmatter dict.
 
     The file format is pure YAML frontmatter delimited by ``---`` lines.
+    Falls back to quoting bare values when agents write unquoted colons
+    (e.g. ``title: Todo (view mode: checkbox)``).
     """
     match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
     if not match:
         msg = "Task file missing YAML frontmatter"
         raise ValueError(msg)
     fm_raw = match.group(1)
-    frontmatter: dict[str, object] = yaml.safe_load(fm_raw)
+    try:
+        frontmatter: dict[str, object] = yaml.safe_load(fm_raw)
+    except yaml.YAMLError:
+        frontmatter = _parse_frontmatter_lenient(fm_raw)
     return frontmatter
+
+
+def _parse_frontmatter_lenient(fm_raw: str) -> dict[str, object]:
+    """Line-based fallback parser for agent-written frontmatter with unquoted colons."""
+    result: dict[str, object] = {}
+    for line in fm_raw.splitlines():
+        if not line.strip():
+            continue
+        colon_pos = line.find(":")
+        if colon_pos == -1:
+            continue
+        key = line[:colon_pos].strip()
+        value = line[colon_pos + 1 :].strip()
+        if value.startswith("[") and value.endswith("]"):
+            inner = value[1:-1].strip()
+            result[key] = [v.strip() for v in inner.split(",")] if inner else []
+        elif value.lower() in ("null", "~", ""):
+            result[key] = None
+        elif value.isdigit():
+            result[key] = int(value)
+        else:
+            result[key] = value
+    return result
 
 
 def _frontmatter_to_task(fm: dict[str, object]) -> Task:
@@ -136,9 +164,12 @@ class GitStateStore:
         tasks: dict[str, Task] = {}
         if self._tasks_dir.exists():
             for task_file in sorted(self._tasks_dir.glob("task-*.md")):
-                fm = _parse_task_file(task_file.read_text())
-                task = _frontmatter_to_task(fm)
-                tasks[task.id] = task
+                try:
+                    fm = _parse_task_file(task_file.read_text())
+                    task = _frontmatter_to_task(fm)
+                    tasks[task.id] = task
+                except (ValueError, yaml.YAMLError, KeyError):
+                    continue
 
         try:
             epoch = self._git("rev-parse", "HEAD")
