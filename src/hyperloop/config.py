@@ -53,6 +53,14 @@ class ObservabilityConfig:
 
 
 @dataclass(frozen=True)
+class DashboardConfig:
+    """Dashboard configuration — opt-in event streaming for the Activity view."""
+
+    enabled: bool
+    events_limit: int
+
+
+@dataclass(frozen=True)
 class AmbientConfig:
     """Ambient Code Platform runtime configuration."""
 
@@ -84,6 +92,9 @@ class Config:
         default_factory=lambda: ObservabilityConfig(
             log_format="console", log_level="info", matrix=None
         )
+    )
+    dashboard: DashboardConfig = field(
+        default_factory=lambda: DashboardConfig(enabled=False, events_limit=1000)
     )
 
 
@@ -187,6 +198,12 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
             flat["otel_endpoint"] = str(otel.get("endpoint", ""))
             flat["otel_service_name"] = str(otel.get("service_name", "hyperloop"))
 
+    # dashboard section
+    dashboard = raw.get("dashboard")
+    if isinstance(dashboard, dict):
+        flat["dashboard_enabled"] = dashboard.get("enabled", False)
+        flat["dashboard_events_limit"] = dashboard.get("events_limit", 1000)
+
     return flat
 
 
@@ -277,6 +294,12 @@ def load_config(
             repo_url=str(values.get("ambient_repo_url", "")),
         )
 
+    # Build DashboardConfig
+    dashboard_cfg = DashboardConfig(
+        enabled=bool(values.get("dashboard_enabled", False)),
+        events_limit=int(values.get("dashboard_events_limit", 1000)),  # type: ignore[arg-type]
+    )
+
     return Config(
         repo=values["repo"],  # type: ignore[arg-type]
         base_branch=str(values["base_branch"]),
@@ -294,4 +317,5 @@ def load_config(
         runtime=str(values["runtime"]),
         ambient=ambient_cfg,
         observability=obs_cfg,
+        dashboard=dashboard_cfg,
     )

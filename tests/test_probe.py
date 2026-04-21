@@ -10,6 +10,7 @@ from __future__ import annotations
 import inspect
 
 from hyperloop.adapters.probe import MultiProbe, NullProbe
+from hyperloop.adapters.probe.file import FileProbe
 from hyperloop.ports.probe import OrchestratorProbe
 from tests.fakes.probe import RecordingProbe
 
@@ -92,6 +93,19 @@ class TestMultiProbe:
 
         # Should not raise — exception is caught and logged internally
         multi.cycle_started(cycle=1)
+
+
+class TestFileProbe:
+    """FileProbe implements all protocol methods and writes JSONL."""
+
+    def test_has_every_protocol_method(self, tmp_path) -> None:
+        """FileProbe must implement every method from OrchestratorProbe."""
+        probe = FileProbe(tmp_path / "events.jsonl")
+        for method_name in _probe_methods():
+            assert hasattr(probe, method_name), (
+                f"FileProbe is missing method '{method_name}' from OrchestratorProbe"
+            )
+            getattr(probe, method_name)(test_key="test_value")
 
 
 class TestRecordingProbe:

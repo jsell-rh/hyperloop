@@ -564,6 +564,197 @@ class TestGraph:
         assert "task-b" in data["critical_path"]
 
 
+class TestActivity:
+    def test_activity_no_events(self, tmp_path: Path) -> None:
+        """Returns enabled=false when no events file exists."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+        client = _make_client(repo)
+
+        resp = client.get("/api/activity")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["enabled"] is False
+        assert data["current_cycle"] == 0
+        assert data["cycles"] == []
+        assert data["active_workers"] == []
+
+    def test_activity_with_events(self, tmp_path: Path) -> None:
+        """Parses JSONL events and returns grouped cycles."""
+        import json
+        from datetime import UTC, datetime
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        # Write events JSONL file
+        events_dir = tmp_path / "cache"
+        events_dir.mkdir()
+        events_path = events_dir / "events.jsonl"
+
+        now = datetime.now(UTC).isoformat()
+        events = [
+            {
+                "ts": now,
+                "event": "cycle_started",
+                "cycle": 1,
+                "active_workers": 0,
+                "not_started": 2,
+                "in_progress": 0,
+                "complete": 0,
+                "failed": 0,
+            },
+            {
+                "ts": now,
+                "event": "worker_spawned",
+                "task_id": "task-001",
+                "role": "implementer",
+                "branch": "hyperloop/task-001",
+                "round": 0,
+                "cycle": 1,
+                "spec_ref": "specs/a.md",
+            },
+            {
+                "ts": now,
+                "event": "task_advanced",
+                "task_id": "task-001",
+                "from_phase": None,
+                "to_phase": "implementer",
+                "from_status": "not-started",
+                "to_status": "in-progress",
+                "round": 0,
+                "cycle": 1,
+                "spec_ref": "specs/a.md",
+            },
+            {
+                "ts": now,
+                "event": "cycle_completed",
+                "cycle": 1,
+                "active_workers": 1,
+                "not_started": 1,
+                "in_progress": 1,
+                "complete": 0,
+                "failed": 0,
+                "spawned_ids": ["task-001"],
+                "reaped_ids": [],
+                "duration_s": 2.5,
+            },
+        ]
+        with open(events_path, "w") as f:
+            for ev in events:
+                f.write(json.dumps(ev) + "\n")
+
+        # Write pointer file
+        pointer_dir = repo / ".hyperloop"
+        pointer_dir.mkdir(parents=True, exist_ok=True)
+        (pointer_dir / ".dashboard-events-path").write_text(str(events_path))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/activity")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["enabled"] is True
+        assert data["current_cycle"] == 1
+        assert len(data["cycles"]) == 1
+        cycle = data["cycles"][0]
+        assert cycle["cycle"] == 1
+        assert cycle["duration_s"] == 2.5
+        assert len(cycle["phases"]["spawn"]["spawned"]) == 1
+        assert cycle["phases"]["spawn"]["spawned"][0]["task_id"] == "task-001"
+        assert len(cycle["phases"]["advance"]["transitions"]) == 1
+        # Worker is still active (spawned but not reaped)
+        assert len(data["active_workers"]) == 1
+        assert data["active_workers"][0]["task_id"] == "task-001"
+
+    def test_file_probe_writes_events(self, tmp_path: Path) -> None:
+        """FileProbe writes JSONL events to disk."""
+        import json
+
+        from hyperloop.adapters.probe.file import FileProbe
+
+        events_path = tmp_path / "events.jsonl"
+        probe = FileProbe(events_path, max_events=100)
+
+        probe.cycle_started(
+            cycle=1,
+            active_workers=0,
+            not_started=5,
+            in_progress=0,
+            complete=0,
+            failed=0,
+        )
+        probe.worker_spawned(
+            task_id="task-001",
+            role="implementer",
+            branch="hyperloop/task-001",
+            round=0,
+            cycle=1,
+            spec_ref="specs/a.md",
+        )
+
+        assert events_path.exists()
+        lines = events_path.read_text().strip().splitlines()
+        assert len(lines) == 2
+
+        ev1 = json.loads(lines[0])
+        assert ev1["event"] == "cycle_started"
+        assert ev1["cycle"] == 1
+
+        ev2 = json.loads(lines[1])
+        assert ev2["event"] == "worker_spawned"
+        assert ev2["task_id"] == "task-001"
+
+    def test_file_probe_truncates_on_startup(self, tmp_path: Path) -> None:
+        """FileProbe truncates to max_events when file exceeds limit."""
+        import json
+
+        from hyperloop.adapters.probe.file import FileProbe
+
+        events_path = tmp_path / "events.jsonl"
+        # Write 10 events
+        with open(events_path, "w") as f:
+            for i in range(10):
+                f.write(json.dumps({"ts": "2024-01-01", "event": "test", "n": i}) + "\n")
+
+        # Create probe with max_events=5 -- should truncate on startup
+        _probe = FileProbe(events_path, max_events=5)
+        lines = events_path.read_text().strip().splitlines()
+        assert len(lines) == 5
+
+        # Should keep the last 5
+        first = json.loads(lines[0])
+        assert first["n"] == 5
+
+    def test_file_probe_serializes_tuples(self, tmp_path: Path) -> None:
+        """FileProbe serializes tuples to lists."""
+        import json
+
+        from hyperloop.adapters.probe.file import FileProbe
+
+        events_path = tmp_path / "events.jsonl"
+        probe = FileProbe(events_path)
+
+        probe.cycle_completed(
+            cycle=1,
+            active_workers=0,
+            not_started=0,
+            in_progress=0,
+            complete=1,
+            failed=0,
+            spawned_ids=("task-001",),
+            reaped_ids=(),
+            duration_s=1.0,
+        )
+
+        lines = events_path.read_text().strip().splitlines()
+        ev = json.loads(lines[0])
+        assert ev["spawned_ids"] == ["task-001"]
+        assert ev["reaped_ids"] == []
+
+
 class TestProcess:
     def test_process_returns_pipeline_tree(self, tmp_path: Path) -> None:
         """Process endpoint preserves pipeline nesting."""

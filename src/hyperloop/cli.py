@@ -376,6 +376,28 @@ def run(
 
         probe = NullProbe()
 
+    # Wire FileProbe for dashboard event streaming
+    if cfg.dashboard.enabled:
+        import hashlib
+
+        from hyperloop.adapters.probe import MultiProbe as _MultiProbe
+        from hyperloop.adapters.probe.file import FileProbe
+
+        repo_hash = hashlib.md5(str(repo_path).encode()).hexdigest()[:8]
+        events_path = Path.home() / ".cache" / "hyperloop" / repo_hash / "events.jsonl"
+        file_probe = FileProbe(events_path, max_events=cfg.dashboard.events_limit)
+
+        # Wrap existing probe in MultiProbe with FileProbe
+        if not isinstance(probe, _MultiProbe):
+            probe = _MultiProbe((probe, file_probe))
+        else:
+            probe = _MultiProbe((*probe._probes, file_probe))
+
+        # Write a pointer file so the dashboard knows where events are
+        pointer_path = repo_path / ".hyperloop" / ".dashboard-events-path"
+        pointer_path.parent.mkdir(parents=True, exist_ok=True)
+        pointer_path.write_text(str(events_path))
+
     if cfg.runtime == "ambient":
         if cfg.ambient is None:
             console.print(
