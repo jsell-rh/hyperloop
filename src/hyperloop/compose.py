@@ -184,8 +184,9 @@ class PromptComposer:
             .replace("{round}", str(context.round))
         )
 
-        # Read spec content from state store
-        spec_content = self._state.read_file(context.spec_ref)
+        # Read spec content — strip @sha suffix for filesystem lookup
+        spec_path = context.spec_ref.split("@")[0] if "@" in context.spec_ref else context.spec_ref
+        spec_content = self._state.read_file(spec_path)
 
         # Assemble: prompt + guidelines + spec + findings + epilogue
         sections: list[str] = [prompt.rstrip()]

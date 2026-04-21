@@ -168,10 +168,10 @@ def _spec_name_from_ref(spec_ref: str) -> str:
     """Derive a spec label name from a spec_ref path.
 
     'specs/persistence.md' -> 'persistence'
+    'specs/persistence.md@abc123' -> 'persistence'
     'specs/sub/feature.md' -> 'sub/feature'
     """
-    # Remove 'specs/' prefix and '.md' suffix
-    name = spec_ref
+    name = spec_ref.split("@")[0] if "@" in spec_ref else spec_ref
     name = re.sub(r"^specs/", "", name)
     name = re.sub(r"\.md$", "", name)
     return name
