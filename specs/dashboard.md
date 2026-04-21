@@ -517,6 +517,183 @@ The task detail page includes a "Prompt" tab. Each prompt entry (per round/role)
 
 Content is rendered as monospace text (not markdown — it's a prompt, not documentation).
 
+## Navigation
+
+Persistent top navigation bar in `app.vue`. Four sections:
+
+| Nav Item | Route | Purpose |
+|---|---|---|
+| Overview | `/` | Spec cards + summary + dependency graph |
+| Activity | `/activity` | Cycle-by-cycle reconciliation log (requires `dashboard.enabled`) |
+| Process | `/process` | Pipeline definition, gates, actions, hooks |
+| Agents | `/agents` | Per-role prompt composition with layer breakdown |
+
+Tasks are accessed contextually from specs, activity, or the dependency graph — not as a top-level nav item.
+
+## Dependency Graph
+
+The overview page includes a dependency DAG visualization showing all tasks as nodes and their dependency relationships as edges.
+
+### Layout
+
+Below the spec cards grid, a full-width card titled "Dependency Graph". The graph uses automatic DAG layout (topological ordering, left-to-right flow). Each node shows:
+
+- Task ID
+- Short title (truncated to ~30 chars)
+- Status badge (colored: gray/blue/green/red)
+- Current phase (small text below title)
+
+Edges are directional arrows from dependency to dependent. Edge color reflects blocking status: green if the dep is complete, red if the dep is failed, gray if not-started, blue if in-progress.
+
+### Critical Path
+
+The longest chain of non-complete tasks is highlighted with thicker edges and a subtle background. This is the bottleneck — the chain that determines when the project finishes. Computed via longest-path algorithm on the DAG (only considering non-terminal tasks).
+
+### Interaction
+
+- Click a node to navigate to `/tasks/{id}`
+- Hover a node to highlight its dependency chain (ancestors and descendants)
+- Zoom/pan for large graphs (> 20 nodes)
+
+### API
+
+`GET /api/tasks/graph`
+
+Returns the full task list with deps, optimized for graph rendering:
+
+```json
+{
+  "nodes": [
+    { "id": "task-001", "title": "Value objects", "status": "complete", "phase": null, "spec_ref": "specs/domain-model.md" },
+    { "id": "task-002", "title": "Domain events", "status": "in-progress", "phase": "verifier", "spec_ref": "specs/domain-model.md" }
+  ],
+  "edges": [
+    { "from": "task-001", "to": "task-002" }
+  ],
+  "critical_path": ["task-003", "task-007", "task-012"]
+}
+```
+
+### Component
+
+`DependencyGraph.vue` — uses a lightweight DAG layout library (e.g., `dagre` via `@dagrejs/dagre` or `elkjs`). Renders as SVG within the card. Falls back to a flat table if the library isn't available.
+
+## Process View (`/process`)
+
+Pipeline definition, gate/action/hook configuration, and process-improver learnings — all in one reference page.
+
+### Sections
+
+1. **Pipeline Flowchart** — horizontal structural diagram showing the pipeline with loop grouping. Agent nodes blue-tinted, gate nodes amber, action nodes green. Raw YAML collapsible below.
+2. **Gates** — table of gate configs (name, type, configuration)
+3. **Actions** — table of action configs
+4. **Hooks** — table of hooks with descriptions
+5. **Process Learning** — current state of the process overlay (what the process-improver has learned: which agents have guidelines, what the guidelines say)
+6. **Source Provenance** — where the config comes from (file paths, kustomize refs)
+
+### API
+
+`GET /api/process`
+
+```json
+{
+  "pipeline_steps": [
+    { "type": "loop", "children": [
+      { "type": "agent", "name": "implementer" },
+      { "type": "agent", "name": "verifier" }
+    ]},
+    { "type": "gate", "name": "pr-require-label" },
+    { "type": "action", "name": "merge-pr" }
+  ],
+  "pipeline_raw": "- loop:\n    - agent: implementer\n    ...",
+  "gates": { "pr-require-label": { "type": "label" } },
+  "actions": { "merge-pr": { "type": "pr-merge" } },
+  "hooks": { "after_reap": [{ "type": "process-improver" }] },
+  "process_learning": {
+    "patched_agents": ["implementer", "verifier"],
+    "guidelines": { "implementer": "- Do not delete files...", "verifier": "- Run full test suite..." },
+    "check_scripts": ["no-unscoped-deletions.sh"]
+  },
+  "source_file": ".hyperloop/agents/process/process.yaml",
+  "base_ref": "github.com/org/hyperloop//base?ref=main"
+}
+```
+
+## Agents View (`/agents`)
+
+Per-role prompt composition showing the three-layer breakdown.
+
+### Layout
+
+Left sidebar listing agent roles (with amber dot indicator for roles that have process overlay patches). Main area shows the selected role's prompt broken into layers.
+
+### Layers
+
+Three collapsible panels per agent:
+
+1. **Base** (gray) — the `prompt` field from the base definition
+2. **Project Overlay** (purple) — any prompt/guidelines patches from the project overlay
+3. **Process Overlay** (amber) — guidelines written by the process-improver, with last-modified timestamp
+
+Below the layers: a "Composed Preview" showing the final merged prompt template (without per-task spec/findings injection).
+
+### Check Scripts
+
+A fourth panel showing executable check scripts from `.hyperloop/checks/` with their content.
+
+### API
+
+`GET /api/agents`
+
+```json
+[
+  {
+    "name": "implementer",
+    "prompt": "You are a worker agent...",
+    "guidelines": "- Do not delete files...",
+    "has_process_patches": true,
+    "process_overlay_file": ".hyperloop/agents/process/implementer-overlay.yaml"
+  }
+]
+```
+
+`GET /api/agents/checks`
+
+```json
+[
+  { "name": "no-unscoped-deletions.sh", "path": ".hyperloop/checks/no-unscoped-deletions.sh", "content": "#!/bin/bash\n..." }
+]
+```
+
+## Activity View (`/activity`)
+
+Cycle-by-cycle reconciliation log. Requires `dashboard.enabled: true` in `.hyperloop.yaml`.
+
+### Opt-in Data Collection
+
+When `dashboard.enabled` is true, the orchestrator wires a `FileProbe` adapter that writes one JSON line per probe event to `~/.cache/hyperloop/{repo-hash}/events.jsonl`. The file is capped at `dashboard.events_limit` events (default 1000). When the dashboard is not enabled, no FileProbe is wired and there is no I/O overhead.
+
+If the Activity page is loaded without event data, it shows: "Enable `dashboard: { enabled: true }` in .hyperloop.yaml to see cycle activity."
+
+### Sections
+
+1. **Status Strip** — current cycle number, active workers, task breakdown, orchestrator status (running/halted/stale)
+2. **Worker Timeline** — horizontal bars for active and recently completed workers, with duration and verdict
+3. **Cycle Log** — reverse-chronological cards, each showing the four phases (COLLECT, INTAKE, ADVANCE, SPAWN) with event details
+
+### API
+
+`GET /api/activity?since_cycle=N&limit=20`
+
+### FileProbe Configuration
+
+```yaml
+# .hyperloop.yaml
+dashboard:
+  enabled: true
+  events_limit: 1000
+```
+
 ## Design Principles
 
 - **Clean, enterprise.** No visual clutter, no decorative elements. Information density without noise.
