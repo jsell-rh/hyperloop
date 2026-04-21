@@ -1,0 +1,417 @@
+# Dashboard
+
+A read-only web UI that shows orchestrator state per-repo. Separate process from the orchestrator — different lifecycle, different deployment. The orchestrator writes state, the dashboard reads it.
+
+## Core Design
+
+The dashboard is an observer. It uses `StateStore` and `SpecSource` ports in read-only mode to display the current state of an orchestrated repo. It never writes state, never spawns workers, and never touches `Runtime`, `PRPort`, `ActionPort`, or `NotificationPort`.
+
+**Two processes, one config.** The dashboard reads `.hyperloop.yaml` from the target repo to construct the same `StateStore` and `SpecSource` adapters the orchestrator uses. It sees exactly what the orchestrator sees.
+
+**Can observe any repo.** The dashboard does not need to run in the same environment as the orchestrator. Point it at any repo with `.hyperloop/state/` and it renders the current state.
+
+## Architecture
+
+```
+dashboard/
+├── server/                     # Python backend (FastAPI)
+│   ├── __init__.py
+│   ├── app.py                  # FastAPI app + lifespan
+│   ├── routes/
+│   │   ├── specs.py            # /api/specs endpoints
+│   │   ├── tasks.py            # /api/tasks endpoints
+│   │   └── health.py           # /api/health
+│   └── deps.py                 # StateStore + SpecSource dependency injection
+├── app/                        # Nuxt 4 frontend
+│   ├── nuxt.config.ts
+│   ├── app.vue
+│   ├── pages/
+│   │   ├── index.vue           # Overview — specs with progress
+│   │   ├── specs/[id].vue      # Spec detail — tasks + content
+│   │   └── tasks/[id].vue      # Task detail — reviews + pipeline
+│   ├── components/
+│   │   ├── SpecCard.vue
+│   │   ├── TaskRow.vue
+│   │   ├── PipelineIndicator.vue
+│   │   ├── StatusBadge.vue
+│   │   └── ReviewTimeline.vue
+│   ├── composables/
+│   │   └── useApi.ts           # Typed API client
+│   └── types/
+│       └── index.ts            # TypeScript types matching backend models
+├── package.json
+└── pyproject.toml
+```
+
+### Backend
+
+Thin Python API server using FastAPI. No business logic — it translates port reads into JSON responses.
+
+The backend constructs `StateStore` and `SpecSource` from the target repo's `.hyperloop.yaml`, identical to how `wiring.py` constructs them for the orchestrator. This means the dashboard sees the same state files, same spec versions, same review history.
+
+### Frontend
+
+Nuxt 4 + shadcn-vue (Tailwind-based component library). Renders orchestrator state as a multi-page dashboard with spec progress, task pipelines, and review history.
+
+### Communication
+
+REST API. The frontend polls the backend at a configurable interval. No WebSocket — polling is sufficient for the ~10s refresh cadence this dashboard targets.
+
+## CLI
+
+```bash
+# Start dashboard for the current repo (reads .hyperloop.yaml from cwd)
+hyperloop dashboard
+
+# Specify a port
+hyperloop dashboard --port 8080
+
+# Observe a remote repo (clones to a temp dir, pulls on each refresh)
+hyperloop dashboard --repo owner/repo --port 8080
+```
+
+### Launch behavior
+
+`hyperloop dashboard` starts both the Python API server and serves the built Nuxt frontend.
+
+- **Development:** Nuxt dev server proxies `/api/*` requests to the Python backend. Two processes.
+- **Production:** Python serves the pre-built Nuxt static files from `dashboard/app/.output/public/` alongside the API routes. Single process.
+
+## Backend API
+
+All endpoints are read-only. The backend calls `state.get_world()` and `spec_source.read()` on each request — the `StateStore` and `SpecSource` implementations handle freshness (for git-backed state, this means reading from disk or pulling from remote).
+
+### `GET /api/health`
+
+```json
+{
+  "status": "ok",
+  "repo": "owner/repo",
+  "state_store": "git",
+  "spec_source": "git"
+}
+```
+
+### `GET /api/specs`
+
+List all specs with task progress summary.
+
+```json
+[
+  {
+    "spec_ref": "specs/persistence.md",
+    "title": "Persistent Storage",
+    "tasks_total": 4,
+    "tasks_complete": 2,
+    "tasks_in_progress": 1,
+    "tasks_failed": 1,
+    "tasks_not_started": 0
+  }
+]
+```
+
+Derived from `StateStore.get_world()`. Tasks are grouped by `spec_ref` (stripping the `@version` suffix for grouping). The title is extracted from the first `# heading` of the spec content.
+
+### `GET /api/specs/{spec_ref}`
+
+Spec detail with rendered content and associated tasks.
+
+```json
+{
+  "spec_ref": "specs/persistence.md",
+  "content": "# Persistent Storage\n\nThe system shall...",
+  "tasks": [
+    {
+      "id": "task-027",
+      "title": "Implement Places DB persistent storage",
+      "status": "in-progress",
+      "phase": "implementer",
+      "round": 2,
+      "branch": "hyperloop/task-027",
+      "pr": "https://github.com/owner/repo/pull/42",
+      "spec_ref": "specs/persistence.md@abc123"
+    }
+  ]
+}
+```
+
+`spec_ref` in the URL is the unversioned spec path (e.g., `specs/persistence.md`). The backend reads the latest version via `SpecSource.read()`. Tasks are all tasks whose `spec_ref` starts with this path.
+
+### `GET /api/tasks`
+
+List all tasks, optionally filtered.
+
+Query parameters:
+- `status` — filter by status (`not-started`, `in-progress`, `complete`, `failed`)
+- `spec_ref` — filter by spec path prefix
+
+```json
+[
+  {
+    "id": "task-027",
+    "title": "Implement Places DB persistent storage",
+    "status": "in-progress",
+    "phase": "implementer",
+    "round": 2,
+    "branch": "hyperloop/task-027",
+    "pr": "https://github.com/owner/repo/pull/42",
+    "spec_ref": "specs/persistence.md@abc123"
+  }
+]
+```
+
+### `GET /api/tasks/{task_id}`
+
+Task detail with full review history.
+
+```json
+{
+  "id": "task-027",
+  "title": "Implement Places DB persistent storage",
+  "status": "in-progress",
+  "phase": "implementer",
+  "round": 2,
+  "branch": "hyperloop/task-027",
+  "pr": "https://github.com/owner/repo/pull/42",
+  "spec_ref": "specs/persistence.md@abc123",
+  "deps": ["task-004"],
+  "reviews": [
+    {
+      "round": 0,
+      "role": "verifier",
+      "verdict": "fail",
+      "detail": "Branch deletes 3 files from main that are out-of-scope..."
+    },
+    {
+      "round": 1,
+      "role": "verifier",
+      "verdict": "fail",
+      "detail": "Tests fail: missing null check in widget.py line 42..."
+    }
+  ]
+}
+```
+
+Reviews are read via `StateStore.get_findings(task_id)`, parsed from the review file format (YAML frontmatter + body).
+
+### `GET /api/summary`
+
+Aggregate progress across all tasks.
+
+```json
+{
+  "total": 12,
+  "not_started": 3,
+  "in_progress": 4,
+  "complete": 4,
+  "failed": 1,
+  "specs_total": 5,
+  "specs_complete": 2
+}
+```
+
+A spec is "complete" when all of its tasks are in terminal states and at least one is `complete`.
+
+## Frontend Views
+
+### Overview page (`/`)
+
+Grid of spec cards. Each card shows:
+- Spec title (first `#` heading from the spec file)
+- Progress bar (complete / total tasks)
+- Status breakdown: counts by status, shown as small colored badges
+- Click navigates to spec detail
+
+Cards are sorted: specs with in-progress work first, then not-started, then complete, then all-failed.
+
+### Spec detail page (`/specs/:id`)
+
+Two sections:
+
+**Spec content.** The spec file rendered as markdown with proper typography. Read-only.
+
+**Task list.** Table of all tasks for this spec:
+
+| Column | Content |
+|---|---|
+| ID | `task-027` |
+| Title | Implement Places DB persistent storage |
+| Status | Badge: `in-progress` (blue) |
+| Phase | Current pipeline step: `implementer` |
+| Round | `2` |
+| PR | Link to PR (if exists) |
+
+Click a task row to navigate to task detail.
+
+### Task detail page (`/tasks/:id`)
+
+Three sections:
+
+**Task metadata.** Card showing ID, title, status, spec_ref, branch, PR link, dependencies.
+
+**Pipeline position.** Visual representation of the pipeline with the current step highlighted. Shows the full pipeline structure (e.g., `loop[ implementer → verifier ] → gate → merge`) with the active step indicated. Completed steps are marked, upcoming steps are dimmed.
+
+**Review history.** Timeline of all reviews across all rounds. Each entry shows:
+- Round number
+- Role (implementer, verifier, human)
+- Verdict badge (pass/fail)
+- Detail text (the review body)
+
+Most recent round at the top. Failed rounds show the verifier's findings. Pass rounds show confirmation.
+
+## UI Components
+
+### StatusBadge
+
+Color-coded badge for task status:
+
+| Status | Color | Label |
+|---|---|---|
+| `not-started` | Gray | Not Started |
+| `in-progress` | Blue | In Progress |
+| `complete` | Green | Complete |
+| `failed` | Red | Failed |
+
+Uses shadcn-vue `Badge` with variant mapped to status.
+
+### PipelineIndicator
+
+Horizontal step indicator showing the full pipeline. Steps are rendered as connected nodes:
+
+```
+[ implementer ] → [ verifier ] → [ gate ] → [ merge ]
+       ●                ○             ○          ○
+    (active)        (pending)     (pending)  (pending)
+```
+
+For loop structures, steps inside the loop are visually grouped with a loop indicator showing the current round.
+
+Uses shadcn-vue `Separator` between steps.
+
+### SpecCard
+
+Card component for the overview grid:
+- Title, progress bar, status badges
+- Uses shadcn-vue `Card`, `Progress`, `Badge`
+
+### TaskRow
+
+Table row component for the spec detail task list:
+- Compact layout with status badge, phase text, round count
+- Uses shadcn-vue `Table` row styling
+
+### ReviewTimeline
+
+Vertical timeline of review entries:
+- Each entry: round badge, role, verdict badge, detail text
+- Expandable detail (collapsed by default if long)
+- Uses shadcn-vue `Card`, `Badge`, `Separator`
+
+## TypeScript Types
+
+```typescript
+// types/index.ts
+
+interface SpecSummary {
+  spec_ref: string
+  title: string
+  tasks_total: number
+  tasks_complete: number
+  tasks_in_progress: number
+  tasks_failed: number
+  tasks_not_started: number
+}
+
+interface SpecDetail {
+  spec_ref: string
+  content: string
+  tasks: TaskSummary[]
+}
+
+interface TaskSummary {
+  id: string
+  title: string
+  status: "not-started" | "in-progress" | "complete" | "failed"
+  phase: string | null
+  round: number
+  branch: string | null
+  pr: string | null
+  spec_ref: string
+}
+
+interface TaskDetail extends TaskSummary {
+  deps: string[]
+  reviews: Review[]
+}
+
+interface Review {
+  round: number
+  role: string
+  verdict: string
+  detail: string
+}
+
+interface Summary {
+  total: number
+  not_started: number
+  in_progress: number
+  complete: number
+  failed: number
+  specs_total: number
+  specs_complete: number
+}
+```
+
+## Backend Dependency Injection
+
+```python
+# dashboard/server/deps.py
+
+from hyperloop.ports.state import StateStore
+from hyperloop.ports.spec_source import SpecSource
+
+_state: StateStore
+_spec_source: SpecSource
+
+def init(repo_path: str) -> None:
+    """Construct StateStore and SpecSource from repo's .hyperloop.yaml.
+
+    Uses the same wiring logic as the orchestrator (hyperloop.wiring)
+    but only constructs the two read-only ports.
+    """
+    ...
+
+def get_state() -> StateStore:
+    return _state
+
+def get_spec_source() -> SpecSource:
+    return _spec_source
+```
+
+The `init` function reads `.hyperloop.yaml` from the target repo and constructs the appropriate `StateStore` and `SpecSource` adapters. For the git adapter set, this means `GitStateStore` and `GitSpecSource` pointed at the repo.
+
+For `--repo owner/repo` mode: the backend clones the repo to a temp directory and constructs the adapters against the clone. On each `get_world()` call, the `GitStateStore` pulls from remote.
+
+## Refresh Strategy
+
+- Frontend polls `/api/tasks` and `/api/summary` every N seconds (configurable, default 10s)
+- Backend calls `state.get_world()` on each request — `StateStore` reads current state from disk
+- For git-backed state: `GitStateStore.get_world()` reads `.hyperloop/state/` files from the working tree
+- For remote observation (`--repo`): the backend runs `git pull` periodically (on each `get_world()` call or on a background timer) to stay current
+- No WebSocket needed — polling matches the orchestrator's own cycle cadence
+
+## Design Principles
+
+- **Clean, enterprise.** No visual clutter, no decorative elements. Information density without noise.
+- **shadcn-vue components.** Card, Badge, Table, Tabs, Progress, Separator. No custom CSS beyond Tailwind utilities.
+- **Responsive.** Works on desktop and tablet. Not optimized for mobile — this is a monitoring dashboard.
+- **Fast loads.** Nuxt SSR for initial paint. Client-side polling for updates. No full page reloads on navigation.
+- **Dark mode.** Supported via Tailwind's dark mode classes. Follows system preference.
+
+## What This Does Not Cover
+
+- **Write operations.** The dashboard is read-only. No task creation, no status changes, no PR actions.
+- **Authentication.** The dashboard is a local dev tool. Auth is out of scope for v1.
+- **Multi-repo views.** One dashboard instance observes one repo. Run multiple instances for multiple repos.
+- **Historical trends.** The dashboard shows current state, not time-series data. Git history provides the audit trail.
+- **WebSocket/SSE push.** Polling is sufficient. If latency requirements change, SSE can be added to the backend without frontend changes (the composable abstracts the transport).

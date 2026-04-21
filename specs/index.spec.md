@@ -6,3 +6,4 @@
 | [prompt-composition.md](prompt-composition.md) | Kustomize-based three-layer prompt composition (base, project overlay, process overlay) |
 | [observability.md](observability.md) | Domain-oriented observability — probe interface, structured events, adapter implementations |
 | [ambient-runtime.md](ambient-runtime.md) | Ambient Code Platform runtime adapter — sessions-only model, SSE events, remote execution |
+| [dashboard.md](dashboard.md) | Read-only web dashboard — Nuxt 4 + FastAPI observer for orchestrator state per-repo |
