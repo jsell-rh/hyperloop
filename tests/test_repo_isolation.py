@@ -144,9 +144,9 @@ class TestRebaseBranchIsolation:
 
         # Working tree must still have exactly the same dirty files
         status_after = _porcelain_status(repo)
-        assert (
-            status_after == status_before
-        ), f"Working tree changed!\nBefore: {status_before!r}\nAfter: {status_after!r}"
+        assert status_after == status_before, (
+            f"Working tree changed!\nBefore: {status_before!r}\nAfter: {status_after!r}"
+        )
 
         # The dirty file content must be preserved
         assert (repo / "dirty.txt").read_text() == "uncommitted state change\n"
