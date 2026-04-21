@@ -3,7 +3,6 @@ import { marked } from 'marked'
 import type { SpecDetail } from '~/types'
 
 const route = useRoute()
-const router = useRouter()
 const { fetchSpec } = useApi()
 const { markFetched } = useLiveness()
 
@@ -32,9 +31,10 @@ useHead({ title: computed(() => {
   return `${spec.value.spec_ref} - Hyperloop`
 }) })
 
-function goBack(): void {
-  router.back()
-}
+const breadcrumbItems = computed(() => [
+  { label: 'Overview', to: '/' },
+  { label: spec.value?.spec_ref ?? specRef.value },
+])
 
 // Poll every 10 seconds
 let refreshInterval: ReturnType<typeof setInterval> | undefined
@@ -52,16 +52,8 @@ onUnmounted(() => {
 
 <template>
   <div class="max-w-7xl mx-auto px-6 py-8">
-    <!-- Back link -->
-    <button
-      class="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 mb-6"
-      @click="goBack"
-    >
-      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
-      </svg>
-      Back
-    </button>
+    <!-- Breadcrumb -->
+    <Breadcrumb :items="breadcrumbItems" />
 
     <!-- Error banner -->
     <div v-if="error" class="mb-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-4 py-3 flex items-center gap-2">

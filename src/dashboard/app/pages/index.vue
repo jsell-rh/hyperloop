@@ -24,6 +24,31 @@ const { data: summary, error: summaryError } = useAsyncData<Summary>(
   { server: false, default: () => ({ total: 0, not_started: 0, in_progress: 0, complete: 0, failed: 0, specs_total: 0, specs_complete: 0 }) },
 )
 
+// Spec-level metrics computed from specs data
+const specMetrics = computed(() => {
+  const list = specs.value ?? []
+  let complete = 0
+  let inProgress = 0
+  let blocked = 0
+  const total = list.length
+
+  for (const s of list) {
+    const allDone = s.tasks_total > 0 && s.tasks_complete === s.tasks_total
+    const isBlocked = s.tasks_failed > 0 && s.tasks_in_progress === 0
+    const hasProgress = s.tasks_in_progress > 0
+
+    if (allDone) {
+      complete++
+    } else if (isBlocked) {
+      blocked++
+    } else if (hasProgress) {
+      inProgress++
+    }
+  }
+
+  return { complete, inProgress, blocked, total }
+})
+
 const { data: graph, error: graphError } = useAsyncData<GraphData>(
   'graph',
   async () => {
@@ -42,15 +67,17 @@ const { data: pipelineSteps } = useAsyncData<PipelineStepInfo[]>(
 
 const error = computed(() => specsError.value || summaryError.value || graphError.value)
 
-// Sort specs: in-progress first, then not-started, then complete, then all-failed
+// Sort specs: blocked first, then in-progress, then not-started, then complete
 const sortedSpecs = computed(() => {
   if (!specs.value) return []
   return [...specs.value].sort((a, b) => {
     const priority = (s: SpecSummary): number => {
-      if (s.tasks_in_progress > 0) return 0
-      if (s.tasks_not_started > 0) return 1
-      if (s.tasks_complete > 0 && s.tasks_failed === 0) return 2
-      return 3
+      const isBlocked = s.tasks_failed > 0 && s.tasks_in_progress === 0
+      if (isBlocked) return 0
+      if (s.tasks_in_progress > 0) return 1
+      if (s.tasks_not_started > 0) return 2
+      if (s.tasks_complete > 0 && s.tasks_failed === 0) return 3
+      return 4
     }
     return priority(a) - priority(b)
   })
@@ -65,10 +92,24 @@ useHead({ title: computed(() => {
   return 'Hyperloop Dashboard'
 }) })
 
+// Collapsible dependency graph (A4)
+const graphExpanded = ref(false)
+
+watch(graphExpanded, (val) => {
+  localStorage.setItem('hyperloop-graph-expanded', val ? 'true' : 'false')
+})
+
 // Poll every 10 seconds
 let refreshInterval: ReturnType<typeof setInterval> | undefined
 
 onMounted(() => {
+  // Restore graph collapsed state
+  const stored = localStorage.getItem('hyperloop-graph-expanded')
+  if (stored === 'true') {
+    graphExpanded.value = true
+  }
+
+  // Start polling
   refreshInterval = setInterval(async () => {
     await Promise.all([
       refreshNuxtData('specs'),
@@ -101,13 +142,17 @@ onUnmounted(() => {
       <span class="text-sm text-red-700 dark:text-red-400">Unable to reach the Hyperloop API. Retrying...</span>
     </div>
 
-    <!-- Summary bar -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-      <SummaryCard label="Total" :count="summary?.total ?? 0" />
-      <SummaryCard label="Complete" :count="summary?.complete ?? 0" color="green" />
-      <SummaryCard label="In Progress" :count="summary?.in_progress ?? 0" color="blue" />
-      <SummaryCard label="Failed" :count="summary?.failed ?? 0" color="red" />
+    <!-- Summary bar: spec-level metrics -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
+      <SummaryCard label="Specs Complete" :count="specMetrics.complete" color="green" />
+      <SummaryCard label="Specs In Progress" :count="specMetrics.inProgress" color="blue" />
+      <SummaryCard label="Specs Blocked" :count="specMetrics.blocked" color="red" />
+      <SummaryCard label="Total Specs" :count="specMetrics.total" />
     </div>
+    <!-- Task-level secondary line -->
+    <p class="text-xs text-gray-400 dark:text-gray-500 mb-8">
+      {{ summary?.total ?? 0 }} tasks total ({{ summary?.complete ?? 0 }} complete, {{ summary?.in_progress ?? 0 }} in progress, {{ summary?.failed ?? 0 }} failed)
+    </p>
 
     <!-- Spec cards grid -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -132,15 +177,39 @@ onUnmounted(() => {
       </p>
     </div>
 
-    <!-- Dependency Graph -->
+    <!-- Dependency Graph (collapsible) -->
     <div
       v-if="graph && graph.nodes.length > 0"
-      class="mt-8 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm"
+      class="mt-8 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-sm"
     >
-      <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
-        Dependency Graph
-      </h2>
-      <DependencyGraph :graph="graph" :pipeline-steps="pipelineSteps ?? []" />
+      <button
+        class="w-full flex items-center justify-between p-5 text-left"
+        @click="graphExpanded = !graphExpanded"
+      >
+        <div class="flex items-center gap-2">
+          <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">
+            Dependency Graph
+          </h2>
+          <span class="inline-flex items-center rounded-md bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-400">
+            {{ graph.nodes.length }}
+          </span>
+        </div>
+        <svg
+          class="h-5 w-5 text-gray-400 dark:text-gray-500 transition-transform duration-200"
+          :class="{ 'rotate-180': graphExpanded }"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      <Transition name="expand">
+        <div v-if="graphExpanded" class="px-5 pb-5">
+          <DependencyGraph :graph="graph" :pipeline-steps="pipelineSteps ?? []" />
+        </div>
+      </Transition>
     </div>
   </div>
 </template>

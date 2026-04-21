@@ -23,16 +23,31 @@ const inProgressPercent = computed(() => {
 const specPath = computed(() => {
   return `/specs/${props.spec.spec_ref}`
 })
+
+const isBlocked = computed(() => {
+  return props.spec.tasks_failed > 0 && props.spec.tasks_in_progress === 0
+})
 </script>
 
 <template>
   <NuxtLink
     :to="specPath"
-    class="block rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm transition-colors hover:border-gray-300 dark:hover:border-gray-600"
+    class="block rounded-lg border bg-white dark:bg-gray-900 p-5 shadow-sm transition-colors hover:border-gray-300 dark:hover:border-gray-600"
+    :class="isBlocked
+      ? 'border-gray-200 dark:border-gray-700 border-l-4 border-l-red-500'
+      : 'border-gray-200 dark:border-gray-700'"
   >
-    <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
-      {{ spec.title }}
-    </h3>
+    <div class="flex items-center gap-2">
+      <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+        {{ spec.title }}
+      </h3>
+      <span
+        v-if="isBlocked"
+        class="inline-flex items-center rounded-md bg-red-100 dark:bg-red-900/30 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-400 shrink-0"
+      >
+        Blocked
+      </span>
+    </div>
     <p class="mt-1 text-xs text-gray-500 dark:text-gray-400 truncate">
       {{ spec.spec_ref }}
     </p>

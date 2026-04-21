@@ -2,7 +2,6 @@
 import type { TaskDetail, PipelineStepInfo, ReconstructedPrompt } from '~/types'
 
 const route = useRoute()
-const router = useRouter()
 const { fetchTask, fetchPipeline, fetchTaskPrompt } = useApi()
 const { markFetched } = useLiveness()
 
@@ -36,6 +35,36 @@ const sortedReviews = computed(() => {
   return [...task.value.reviews].sort((a, b) => b.round - a.round)
 })
 
+// Latest review for inline preview on overview tab (A3)
+const latestReview = computed(() => {
+  if (sortedReviews.value.length === 0) return null
+  return sortedReviews.value[0]
+})
+
+const latestReviewPreview = computed(() => {
+  if (!latestReview.value) return ''
+  const lines = latestReview.value.detail.split('\n')
+  return lines.slice(0, 3).join('\n')
+})
+
+const latestReviewTruncated = computed(() => {
+  if (!latestReview.value) return false
+  return latestReview.value.detail.split('\n').length > 3
+})
+
+const verdictStyleMap: Record<string, { bg: string; text: string }> = {
+  pass: { bg: 'bg-green-100 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-400' },
+  fail: { bg: 'bg-red-100 dark:bg-red-900/30', text: 'text-red-700 dark:text-red-400' },
+}
+
+function getVerdictClasses(verdict: string): string {
+  const style = verdictStyleMap[verdict] ?? {
+    bg: 'bg-gray-100 dark:bg-gray-800',
+    text: 'text-gray-600 dark:text-gray-400',
+  }
+  return `${style.bg} ${style.text}`
+}
+
 // Prompt data -- loaded on demand when the prompt tab is activated
 const promptData = ref<ReconstructedPrompt[]>([])
 const promptLoaded = ref(false)
@@ -57,9 +86,16 @@ useHead({ title: computed(() => {
   return `${task.value.id} - ${task.value.title} - Hyperloop`
 }) })
 
-function goBack(): void {
-  router.back()
-}
+const breadcrumbItems = computed(() => {
+  const items: Array<{ label: string; to?: string }> = [
+    { label: 'Overview', to: '/' },
+  ]
+  if (task.value) {
+    items.push({ label: task.value.spec_ref.split('@')[0], to: `/specs/${task.value.spec_ref.split('@')[0]}` })
+    items.push({ label: task.value.id })
+  }
+  return items
+})
 
 // Poll every 10 seconds
 let refreshInterval: ReturnType<typeof setInterval> | undefined
@@ -77,16 +113,8 @@ onUnmounted(() => {
 
 <template>
   <div class="max-w-5xl mx-auto px-6 py-8">
-    <!-- Back link -->
-    <button
-      class="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 mb-6"
-      @click="goBack"
-    >
-      <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
-      </svg>
-      Back
-    </button>
+    <!-- Breadcrumb -->
+    <Breadcrumb :items="breadcrumbItems" />
 
     <!-- Error banner -->
     <div v-if="error" class="mb-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 px-4 py-3 flex items-center gap-2">
@@ -186,6 +214,35 @@ onUnmounted(() => {
                   </dd>
                 </div>
               </dl>
+            </div>
+
+            <!-- Latest review inline (A3) -->
+            <div
+              v-if="latestReview"
+              class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 shadow-sm"
+            >
+              <div class="flex items-center gap-2 mb-2">
+                <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  Latest Review
+                </h2>
+                <span
+                  :class="getVerdictClasses(latestReview.verdict)"
+                  class="inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium"
+                >
+                  {{ latestReview.verdict }}
+                </span>
+                <span class="inline-flex items-center rounded-md bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:text-gray-400">
+                  {{ latestReview.role }}
+                </span>
+              </div>
+              <p class="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-line line-clamp-3">{{ latestReviewPreview }}</p>
+              <button
+                v-if="latestReviewTruncated"
+                class="mt-1 text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                @click="activeTab = 'reviews'"
+              >
+                Show full review
+              </button>
             </div>
 
             <!-- Pipeline position -->
