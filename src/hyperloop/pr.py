@@ -56,9 +56,10 @@ class PRManager:
         self._ensured_labels.add(name)
 
     def ensure_gate_labels(self) -> None:
-        """Create gate labels (e.g. lgtm) on the repo. Call at startup."""
-        self._ensure_label("lgtm", "0E8A16")
+        """Create all hyperloop labels on the repo. Call at startup."""
         self._ensure_label("hyperloop", "1D76DB")
+        self._ensure_label("lgtm", "0E8A16")
+        self._ensure_label("hyperloop/needs-approval", "FBCA04")
 
     def get_pr_state(self, pr_url: str) -> PRState | None:
         """Return the PR's current state, or None if not found."""
