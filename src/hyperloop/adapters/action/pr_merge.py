@@ -92,7 +92,15 @@ class PRMergeAction:
 
         # Rebase
         if not self._pr.rebase_branch(branch, self._base_branch):
-            return ActionResult(outcome=ActionOutcome.ERROR, detail="Rebase conflict")
+            conflicts = self._detect_conflicts(branch)
+            detail = "Rebase conflict with " + self._base_branch
+            if conflicts:
+                detail += ". Conflicting files: " + ", ".join(conflicts)
+            detail += (
+                ". Your work is preserved on the branch. "
+                "Please rebase onto " + self._base_branch + " and resolve the conflicts."
+            )
+            return ActionResult(outcome=ActionOutcome.ERROR, detail=detail)
 
         # Wait for mergeable
         if not self._pr.wait_mergeable(pr_url):
@@ -113,6 +121,43 @@ class PRMergeAction:
             detail="Merged",
             pr_url=new_pr_url,  # Only set if we recreated
         )
+
+    def _detect_conflicts(self, branch: str) -> list[str]:
+        """Detect which files conflict between the branch and base.
+
+        Does a dry-run merge to find conflicting files without modifying
+        the working tree.
+        """
+        import subprocess
+
+        git_cmd = ["git"]
+        if self._repo_path is not None:
+            git_cmd = ["git", "-C", self._repo_path]
+
+        # Try a merge tree (no-checkout) to detect conflicts
+        result = subprocess.run(
+            [*git_cmd, "merge-tree", "--write-tree", self._base_branch, branch],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return []
+
+        # Parse conflicting file names from merge-tree output
+        conflicts: list[str] = []
+        for line in result.stdout.splitlines():
+            # merge-tree outputs "CONFLICT (content): ..." lines
+            if line.startswith("CONFLICT"):
+                # Extract filename — usually last token or after "Merge conflict in "
+                if "Merge conflict in " in line:
+                    conflicts.append(line.split("Merge conflict in ")[-1].strip())
+                elif line.endswith(")"):
+                    pass  # Header line like "CONFLICT (content):"
+            # Also check informational messages for file paths
+            elif line.strip() and not line.startswith(" ") and "/" in line:
+                conflicts.append(line.strip())
+
+        return conflicts
 
     def _get_branch_tip(self, branch: str) -> str | None:
         """Return the SHA of a remote branch tip, or None."""

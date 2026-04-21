@@ -416,6 +416,11 @@ def run(
 
         hooks.append(ProcessImproverHook(runtime, composer, probe))
 
+    # Build spec source
+    from hyperloop.adapters.git.spec_source import GitSpecSource
+
+    spec_source = GitSpecSource(repo_path)
+
     orchestrator = Orchestrator(
         state=state,
         runtime=runtime,
@@ -426,6 +431,7 @@ def run(
         gate=gate,
         action=action,
         pr=pr_manager,
+        spec_source=spec_source,
         hooks=tuple(hooks),
         notification=notification,
         composer=composer,
