@@ -75,6 +75,10 @@ class StateStore(Protocol):
         """Set the PR URL on a task."""
         ...
 
+    def set_spec_ref(self, task_id: str, spec_ref: str) -> None:
+        """Pin the spec_ref on a task (e.g. append @sha after intake)."""
+        ...
+
     def persist(self, message: str) -> None:
         """Persist all pending state changes."""
         ...

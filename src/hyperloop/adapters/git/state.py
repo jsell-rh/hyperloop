@@ -269,6 +269,12 @@ class GitStateStore:
         fm["pr"] = pr_url
         self._write_task_file(task_id, fm)
 
+    def set_spec_ref(self, task_id: str, spec_ref: str) -> None:
+        """Pin the spec_ref on a task file (e.g. append @sha after intake)."""
+        fm = self._read_task_file(task_id)
+        fm["spec_ref"] = spec_ref
+        self._write_task_file(task_id, fm)
+
     def add_task(self, task: Task) -> None:
         """Add a new task to the store."""
         fm: dict[str, object] = {

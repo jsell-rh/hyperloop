@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from hyperloop.ports.pr import PRPort
     from hyperloop.ports.probe import OrchestratorProbe
     from hyperloop.ports.runtime import Runtime
+    from hyperloop.ports.spec_source import SpecSource
     from hyperloop.ports.state import StateStore
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger()
@@ -82,6 +83,7 @@ class Orchestrator:
         gate: GatePort | None = None,
         action: ActionPort | None = None,
         pr: PRPort | None = None,
+        spec_source: SpecSource | None = None,
         hooks: tuple[CycleHook, ...] = (),
         notification: NotificationPort | None = None,
         composer: PromptComposer | None = None,
@@ -97,6 +99,7 @@ class Orchestrator:
         self._gate = gate
         self._action = action
         self._pr = pr
+        self._spec_source = spec_source
         self._hooks = hooks
         self._notification: NotificationPort = notification or NullNotification()
         self._composer = composer
@@ -839,7 +842,7 @@ class Orchestrator:
         """Return spec file paths that have no corresponding task."""
         all_specs = self._state.list_files("specs/*.md")
         world = self._state.get_world()
-        covered_refs = {task.spec_ref for task in world.tasks.values()}
+        covered_refs = {task.spec_ref.split("@")[0] for task in world.tasks.values()}
         return [s for s in all_specs if s not in covered_refs]
 
     def _collect_cycle_findings(self, reaped_results: dict[str, WorkerResult]) -> str:
@@ -871,13 +874,24 @@ class Orchestrator:
         context = IntakeContext(unprocessed_specs=tuple(unprocessed))
         prompt = self._composer.compose(role="pm", context=context)
 
-        task_count_before = len(self._state.get_world().tasks)
+        world_before = self._state.get_world()
+        tasks_before = set(world_before.tasks.keys())
+        task_count_before = len(world_before.tasks)
         intake_start = time.monotonic()
         success = self._runtime.run_serial("pm", prompt)
 
         # Count how many tasks were created by comparing before/after
-        task_count_after = len(self._state.get_world().tasks)
+        world_after = self._state.get_world()
+        task_count_after = len(world_after.tasks)
         created_count = task_count_after - task_count_before
+
+        # Pin spec_ref to current SHA for newly created tasks
+        if created_count > 0 and self._spec_source is not None:
+            version = self._spec_source.current_version()
+            for task in world_after.tasks.values():
+                if task.id not in tasks_before and "@" not in task.spec_ref:
+                    pinned = f"{task.spec_ref}@{version}"
+                    self._state.set_spec_ref(task.id, pinned)
 
         self._probe.intake_ran(
             unprocessed_specs=len(unprocessed),

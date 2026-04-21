@@ -76,6 +76,21 @@ class InMemoryStateStore:
             pr=old.pr,
         )
 
+    def set_spec_ref(self, task_id: str, spec_ref: str) -> None:
+        """Pin the spec_ref on a task."""
+        old = self._tasks[task_id]
+        self._tasks[task_id] = Task(
+            id=old.id,
+            title=old.title,
+            spec_ref=spec_ref,
+            status=old.status,
+            phase=old.phase,
+            deps=old.deps,
+            round=old.round,
+            branch=old.branch,
+            pr=old.pr,
+        )
+
     # -- StateStore protocol ------------------------------------------------
 
     def get_world(self) -> World:
