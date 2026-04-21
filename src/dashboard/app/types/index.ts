@@ -135,3 +135,90 @@ export interface HealthData {
   state_store: string
   spec_source: string
 }
+
+// ---------------------------------------------------------------------------
+// Activity types
+// ---------------------------------------------------------------------------
+
+export interface ActiveWorker {
+  task_id: string
+  role: string
+  started_at: string
+  duration_s: number
+}
+
+export interface ReapedWorker {
+  task_id: string
+  role: string
+  verdict: string
+  duration_s: number
+}
+
+export interface CollectPhase {
+  reaped: ReapedWorker[]
+}
+
+export interface IntakePhase {
+  ran: boolean
+  created_tasks: number | null
+}
+
+export interface PhaseTransition {
+  task_id: string
+  from_phase: string | null
+  to_phase: string | null
+}
+
+export interface AdvancePhase {
+  transitions: PhaseTransition[]
+}
+
+export interface SpawnedWorker {
+  task_id: string
+  role: string
+}
+
+export interface SpawnPhase {
+  spawned: SpawnedWorker[]
+}
+
+export interface CyclePhases {
+  collect: CollectPhase
+  intake: IntakePhase
+  advance: AdvancePhase
+  spawn: SpawnPhase
+}
+
+export interface CycleDetail {
+  cycle: number
+  timestamp: string
+  duration_s: number | null
+  phases: CyclePhases
+}
+
+export interface ActivityResponse {
+  current_cycle: number
+  orchestrator_status: string
+  active_workers: ActiveWorker[]
+  cycles: CycleDetail[]
+  enabled: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Agents types
+// ---------------------------------------------------------------------------
+
+export interface AgentDefinition {
+  name: string
+  prompt: string
+  guidelines: string
+  has_process_patches: boolean
+  process_overlay_guidelines: string | null
+  process_overlay_file: string | null
+}
+
+export interface CheckScript {
+  name: string
+  path: string
+  content: string
+}

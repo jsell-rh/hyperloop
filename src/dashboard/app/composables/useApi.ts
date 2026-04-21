@@ -9,6 +9,9 @@ import type {
   GraphData,
   ProcessData,
   HealthData,
+  AgentDefinition,
+  CheckScript,
+  ActivityResponse,
 } from '~/types'
 
 const API_BASE = '/api'
@@ -44,6 +47,15 @@ export function useApi() {
   const fetchHealth = () =>
     $fetch<HealthData>(`${API_BASE}/health`)
 
+  const fetchAgents = () =>
+    $fetch<AgentDefinition[]>(`${API_BASE}/agents`)
+
+  const fetchChecks = () =>
+    $fetch<CheckScript[]>(`${API_BASE}/agents/checks`)
+
+  const fetchActivity = (params?: { since_cycle?: number; limit?: number }) =>
+    $fetch<ActivityResponse>(`${API_BASE}/activity`, { params })
+
   return {
     fetchSpecs,
     fetchSpec,
@@ -55,5 +67,8 @@ export function useApi() {
     fetchGraph,
     fetchProcess,
     fetchHealth,
+    fetchAgents,
+    fetchChecks,
+    fetchActivity,
   }
 }

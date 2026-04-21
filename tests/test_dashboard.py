@@ -722,3 +722,126 @@ class TestProcess:
         data = client.get("/api/process").json()
 
         assert "process.yaml" in data["source_file"]
+
+
+class TestAgents:
+    def test_agents_list(self, tmp_path: Path) -> None:
+        """Returns agents from kustomize build (fallback to base/ YAML)."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        base_dir = repo / "base"
+        base_dir.mkdir()
+        agent_yaml = {
+            "apiVersion": "hyperloop.io/v1",
+            "kind": "Agent",
+            "metadata": {"name": "implementer"},
+            "prompt": "You are implementing a task.",
+            "guidelines": "Follow the style guide.",
+        }
+        (base_dir / "implementer.yaml").write_text(yaml.dump(agent_yaml))
+
+        verifier_yaml = {
+            "apiVersion": "hyperloop.io/v1",
+            "kind": "Agent",
+            "metadata": {"name": "verifier"},
+            "prompt": "You are verifying a task.",
+            "guidelines": "",
+        }
+        (base_dir / "verifier.yaml").write_text(yaml.dump(verifier_yaml))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/agents")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        names = [a["name"] for a in data]
+        assert "implementer" in names
+        assert "verifier" in names
+
+        impl = next(a for a in data if a["name"] == "implementer")
+        assert "implementing a task" in impl["prompt"]
+        assert impl["guidelines"] == "Follow the style guide."
+        assert impl["has_process_patches"] is False
+        assert impl["process_overlay_guidelines"] is None
+        assert impl["process_overlay_file"] is None
+
+    def test_agents_with_process_overlay(self, tmp_path: Path) -> None:
+        """Agents with process overlay files are flagged correctly."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        base_dir = repo / "base"
+        base_dir.mkdir()
+        agent_yaml = {
+            "apiVersion": "hyperloop.io/v1",
+            "kind": "Agent",
+            "metadata": {"name": "implementer"},
+            "prompt": "You are implementing.",
+            "guidelines": "Do not delete files.",
+        }
+        (base_dir / "implementer.yaml").write_text(yaml.dump(agent_yaml))
+
+        process_dir = repo / ".hyperloop" / "agents" / "process"
+        process_dir.mkdir(parents=True)
+        overlay = {
+            "metadata": {"name": "implementer"},
+            "guidelines": "- Run tests before submitting.",
+        }
+        (process_dir / "implementer-overlay.yaml").write_text(yaml.dump(overlay))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        data = client.get("/api/agents").json()
+        assert len(data) == 1
+
+        impl = data[0]
+        assert impl["has_process_patches"] is True
+        assert impl["process_overlay_guidelines"] == "- Run tests before submitting."
+        assert "implementer-overlay.yaml" in impl["process_overlay_file"]
+
+    def test_agents_empty_repo(self, tmp_path: Path) -> None:
+        """Returns empty list when no agent templates exist."""
+        repo = tmp_path / "empty"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/agents")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_agents_checks_empty(self, tmp_path: Path) -> None:
+        """No checks dir returns empty list."""
+        repo = tmp_path / "empty"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/agents/checks")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_agents_checks_returns_scripts(self, tmp_path: Path) -> None:
+        """Check scripts endpoint returns script content."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        checks_dir = repo / ".hyperloop" / "checks"
+        checks_dir.mkdir(parents=True)
+        script_content = "#!/bin/bash\necho 'running checks'\n"
+        (checks_dir / "no-deletions.sh").write_text(script_content)
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/agents/checks")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["name"] == "no-deletions.sh"
+        assert data[0]["path"] == ".hyperloop/checks/no-deletions.sh"
+        assert "running checks" in data[0]["content"]

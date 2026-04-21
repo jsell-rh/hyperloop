@@ -141,6 +141,97 @@ class GraphResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Activity models
+# ---------------------------------------------------------------------------
+
+
+class ActiveWorker(BaseModel):
+    """A currently running worker."""
+
+    task_id: str
+    role: str
+    started_at: str
+    duration_s: float
+
+
+class ReapedWorker(BaseModel):
+    """A worker that completed in a cycle."""
+
+    task_id: str
+    role: str
+    verdict: str
+    duration_s: float
+
+
+class CollectPhase(BaseModel):
+    """COLLECT phase detail for a cycle."""
+
+    reaped: list[ReapedWorker]
+
+
+class IntakePhase(BaseModel):
+    """INTAKE phase detail for a cycle."""
+
+    ran: bool
+    created_tasks: int | None = None
+
+
+class PhaseTransition(BaseModel):
+    """A task phase transition in the ADVANCE phase."""
+
+    task_id: str
+    from_phase: str | None
+    to_phase: str | None
+
+
+class AdvancePhase(BaseModel):
+    """ADVANCE phase detail for a cycle."""
+
+    transitions: list[PhaseTransition]
+
+
+class SpawnedWorker(BaseModel):
+    """A worker spawned in a cycle."""
+
+    task_id: str
+    role: str
+
+
+class SpawnPhase(BaseModel):
+    """SPAWN phase detail for a cycle."""
+
+    spawned: list[SpawnedWorker]
+
+
+class CyclePhases(BaseModel):
+    """The four phases of a reconciliation cycle."""
+
+    collect: CollectPhase
+    intake: IntakePhase
+    advance: AdvancePhase
+    spawn: SpawnPhase
+
+
+class CycleDetail(BaseModel):
+    """Detail for a single reconciliation cycle."""
+
+    cycle: int
+    timestamp: str
+    duration_s: float | None
+    phases: CyclePhases
+
+
+class ActivityResponse(BaseModel):
+    """Response for the activity endpoint."""
+
+    current_cycle: int
+    orchestrator_status: str
+    active_workers: list[ActiveWorker]
+    cycles: list[CycleDetail]
+    enabled: bool
+
+
 class PipelineTreeStep(BaseModel):
     """A step in the pipeline tree (preserving nesting)."""
 
@@ -167,3 +258,27 @@ class ProcessResponse(BaseModel):
     process_learning: ProcessLearning
     source_file: str
     base_ref: str | None
+
+
+# ---------------------------------------------------------------------------
+# Agents models
+# ---------------------------------------------------------------------------
+
+
+class AgentDefinition(BaseModel):
+    """Per-role agent definition with layer breakdown."""
+
+    name: str
+    prompt: str
+    guidelines: str
+    has_process_patches: bool
+    process_overlay_guidelines: str | None
+    process_overlay_file: str | None
+
+
+class CheckScript(BaseModel):
+    """An executable check script from .hyperloop/checks/."""
+
+    name: str
+    path: str
+    content: str

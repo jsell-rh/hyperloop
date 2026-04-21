@@ -13,7 +13,16 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 from dashboard.server import deps
-from dashboard.server.routes import health, pipeline, process, specs, summary, tasks
+from dashboard.server.routes import (
+    activity,
+    agents,
+    health,
+    pipeline,
+    process,
+    specs,
+    summary,
+    tasks,
+)
 
 
 @asynccontextmanager
@@ -41,6 +50,8 @@ def create_app(repo_path: str = ".") -> FastAPI:
         allow_methods=["GET"],
         allow_headers=["*"],
     )
+    app.include_router(activity.router)
+    app.include_router(agents.router)
     app.include_router(health.router)
     app.include_router(pipeline.router)
     app.include_router(process.router)
