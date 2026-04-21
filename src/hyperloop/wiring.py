@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from hyperloop.adapters.git.state import GitStateStore
 from hyperloop.adapters.probe import NullProbe
-from hyperloop.adapters.state import GitStateStore
 from hyperloop.domain.model import ActionStep, AgentStep, LoopStep, Process
 from hyperloop.loop import Orchestrator
 
@@ -125,7 +125,7 @@ def _build_runtime(cfg: Config, repo_path: Path, probe: OrchestratorProbe) -> Ru
         if cfg.ambient is None:
             msg = "runtime: ambient requires an 'ambient' section in config"
             raise ValueError(msg)
-        from hyperloop.adapters.runtime.ambient import AmbientRuntime
+        from hyperloop.adapters.ambient.runtime import AmbientRuntime
 
         return AmbientRuntime(
             repo_path=str(repo_path),
@@ -135,6 +135,6 @@ def _build_runtime(cfg: Config, repo_path: Path, probe: OrchestratorProbe) -> Ru
             repo_url=cfg.ambient.repo_url,
         )
 
-    from hyperloop.adapters.runtime import AgentSdkRuntime
+    from hyperloop.adapters.git.runtime import AgentSdkRuntime
 
     return AgentSdkRuntime(repo_path=str(repo_path), probe=probe)

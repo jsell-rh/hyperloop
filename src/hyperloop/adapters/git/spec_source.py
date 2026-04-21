@@ -1,8 +1,8 @@
 """GitSpecSource -- reads spec files from a git repository.
 
-Stub implementation -- not yet wired. The spec groups git adapters
-under adapters/git/. Full reorganization of state/runtime into git/
-is deferred to a follow-up.
+Stub implementation -- not yet wired.  Lives alongside state.py
+(GitStateStore), runtime.py (AgentSdkRuntime), and _worktree.py
+under adapters/git/.
 """
 
 from __future__ import annotations

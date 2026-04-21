@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hyperloop.adapters.runtime import AgentSdkRuntime
+from hyperloop.adapters.git.runtime import AgentSdkRuntime
 from hyperloop.domain.model import Verdict
 
 if TYPE_CHECKING:

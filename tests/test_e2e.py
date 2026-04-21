@@ -10,7 +10,7 @@ import subprocess
 from textwrap import dedent
 from typing import TYPE_CHECKING
 
-from hyperloop.adapters.state import GitStateStore
+from hyperloop.adapters.git.state import GitStateStore
 from hyperloop.domain.model import (
     AgentStep,
     LoopStep,

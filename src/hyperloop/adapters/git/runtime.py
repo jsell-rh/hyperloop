@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, cast
 import structlog
 import yaml
 
-from hyperloop.adapters.runtime._worktree import (
+from hyperloop.adapters.git._worktree import (
     clean_git_env,
     cleanup_worktree,
     create_worktree,

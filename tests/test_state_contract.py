@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from hyperloop.adapters.state import GitStateStore
+from hyperloop.adapters.git.state import GitStateStore
 from hyperloop.domain.model import Phase, Task, TaskStatus
 from tests.fakes.state import InMemoryStateStore
 

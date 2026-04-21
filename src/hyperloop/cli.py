@@ -322,7 +322,7 @@ def run(
         )
 
     # 5. Construct runtime and state store, run loop
-    from hyperloop.adapters.state import GitStateStore
+    from hyperloop.adapters.git.state import GitStateStore
     from hyperloop.domain.model import ActionStep, AgentStep, LoopStep, Process
     from hyperloop.loop import Orchestrator
 
@@ -358,7 +358,7 @@ def run(
                 " an 'ambient' section in config."
             )
             raise typer.Exit(code=1)
-        from hyperloop.adapters.runtime.ambient import AmbientRuntime
+        from hyperloop.adapters.ambient.runtime import AmbientRuntime
 
         runtime = AmbientRuntime(
             repo_path=str(repo_path),
@@ -368,7 +368,7 @@ def run(
             repo_url=cfg.ambient.repo_url,
         )
     else:
-        from hyperloop.adapters.runtime import AgentSdkRuntime
+        from hyperloop.adapters.git.runtime import AgentSdkRuntime
 
         runtime = AgentSdkRuntime(repo_path=str(repo_path), probe=probe)
 

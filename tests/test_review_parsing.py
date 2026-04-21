@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from hyperloop.adapters.runtime.agent_sdk import _read_review_from_worktree
+from hyperloop.adapters.git.runtime import _read_review_from_worktree
 from hyperloop.domain.model import Verdict
 
 if TYPE_CHECKING:

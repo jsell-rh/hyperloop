@@ -15,7 +15,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from hyperloop.adapters.runtime._worktree import (
+from hyperloop.adapters.git._worktree import (
     cleanup_worktree,
     create_worktree,
 )
