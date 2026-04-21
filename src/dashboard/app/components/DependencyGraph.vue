@@ -1,16 +1,61 @@
 <script setup lang="ts">
-import type { GraphData } from '~/types'
+import type { GraphData, PipelineStepInfo } from '~/types'
 
 const props = defineProps<{
   graph: GraphData
+  pipelineSteps?: PipelineStepInfo[]
 }>()
 
 // Layout constants
-const NODE_WIDTH = 180
-const NODE_HEIGHT = 60
+const NODE_WIDTH = 200
+const NODE_HEIGHT = 72
 const LAYER_GAP = 60
 const NODE_GAP = 20
 const PADDING = 20
+const TITLE_MAX_CHARS = 25
+
+// Zoom and pan state
+const scale = ref(1)
+const panX = ref(0)
+const panY = ref(0)
+const isPanning = ref(false)
+let panStart = { x: 0, y: 0 }
+
+function onWheel(e: WheelEvent): void {
+  e.preventDefault()
+  const delta = e.deltaY > 0 ? 0.9 : 1.1
+  scale.value = Math.max(0.3, Math.min(3, scale.value * delta))
+}
+
+function onMouseDown(e: MouseEvent): void {
+  if (e.button !== 0) return
+  isPanning.value = true
+  panStart = { x: e.clientX - panX.value, y: e.clientY - panY.value }
+}
+
+function onMouseMove(e: MouseEvent): void {
+  if (!isPanning.value) return
+  panX.value = e.clientX - panStart.x
+  panY.value = e.clientY - panStart.y
+}
+
+function onMouseUp(): void {
+  isPanning.value = false
+}
+
+function resetView(): void {
+  scale.value = 1
+  panX.value = 0
+  panY.value = 0
+}
+
+function zoomIn(): void {
+  scale.value = Math.min(3, scale.value * 1.2)
+}
+
+function zoomOut(): void {
+  scale.value = Math.max(0.3, scale.value * 0.8)
+}
 
 // Status colors
 const statusColors: Record<string, { fill: string; stroke: string; fillDark: string; strokeDark: string }> = {
@@ -40,6 +85,12 @@ onMounted(() => {
   onUnmounted(() => observer.disconnect())
 })
 
+function truncateTitle(title: string): string {
+  return title.length > TITLE_MAX_CHARS
+    ? title.slice(0, TITLE_MAX_CHARS) + '...'
+    : title
+}
+
 interface LayoutNode {
   id: string
   title: string
@@ -60,6 +111,30 @@ interface LayoutEdge {
   toId: string
   status: string
   isCritical: boolean
+}
+
+// Mini pipeline: determine step state for a given node phase
+type MiniStepState = 'completed' | 'active' | 'pending'
+
+function getMiniStepState(stepIndex: number, nodePhase: string | null): MiniStepState {
+  if (!props.pipelineSteps || props.pipelineSteps.length === 0 || !nodePhase) return 'pending'
+  const activeIndex = props.pipelineSteps.findIndex(s => s.name === nodePhase)
+  if (activeIndex === -1) return 'pending'
+  if (stepIndex < activeIndex) return 'completed'
+  if (stepIndex === activeIndex) return 'active'
+  return 'pending'
+}
+
+function getMiniDotFill(state: MiniStepState): string {
+  if (state === 'completed') return isDark.value ? '#4ade80' : '#22c55e'
+  if (state === 'active') return isDark.value ? '#60a5fa' : '#3b82f6'
+  return 'none'
+}
+
+function getMiniDotStroke(state: MiniStepState): string {
+  if (state === 'completed') return isDark.value ? '#4ade80' : '#22c55e'
+  if (state === 'active') return isDark.value ? '#60a5fa' : '#3b82f6'
+  return isDark.value ? '#4b5563' : '#d1d5db'
 }
 
 // Hover state
@@ -226,7 +301,7 @@ const layout = computed(() => {
     const pos = positioned.get(n.id) || { x: PADDING, y: PADDING }
     return {
       id: n.id,
-      title: n.title.length > 28 ? n.title.slice(0, 28) + '...' : n.title,
+      title: truncateTitle(n.title),
       fullTitle: n.title,
       status: n.status,
       phase: n.phase,
@@ -304,6 +379,14 @@ function isEdgeRelated(edge: LayoutEdge): boolean {
   if (!hoveredNodeId.value) return true
   return isRelated(edge.fromId) && isRelated(edge.toId)
 }
+
+// Mini pipeline dot positions: center horizontally in the node
+function getPipelineDotX(stepIndex: number, totalSteps: number, nodeX: number): number {
+  const dotSpacing = 8
+  const totalWidth = (totalSteps - 1) * dotSpacing
+  const startX = nodeX + NODE_WIDTH / 2 - totalWidth / 2
+  return startX + stepIndex * dotSpacing
+}
 </script>
 
 <template>
@@ -311,7 +394,16 @@ function isEdgeRelated(edge: LayoutEdge): boolean {
     No tasks to display in the dependency graph.
   </div>
 
-  <div v-else class="overflow-auto max-h-[500px] relative">
+  <div
+    v-else
+    class="relative overflow-hidden rounded-lg max-h-[500px]"
+    :class="isPanning ? 'cursor-grabbing' : 'cursor-grab'"
+    @wheel.prevent="onWheel"
+    @mousedown="onMouseDown"
+    @mousemove="onMouseMove"
+    @mouseup="onMouseUp"
+    @mouseleave="onMouseUp"
+  >
     <svg
       :width="layout.width"
       :height="layout.height"
@@ -341,116 +433,171 @@ function isEdgeRelated(edge: LayoutEdge): boolean {
         <filter id="shadow">
           <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.15" />
         </filter>
+        <!-- Active dot glow -->
+        <filter id="active-glow">
+          <feGaussianBlur stdDeviation="1.5" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
       </defs>
 
-      <!-- Edges -->
-      <line
-        v-for="(edge, i) in layout.edges"
-        :key="'edge-' + i"
-        :x1="edge.fromX"
-        :y1="edge.fromY"
-        :x2="edge.toX - 8"
-        :y2="edge.toY"
-        :stroke="getEdgeColor(edge.status)"
-        :stroke-width="edge.isCritical ? 2.5 : 1"
-        :marker-end="edge.isCritical ? 'url(#arrowhead-critical)' : 'url(#arrowhead)'"
-        :opacity="isEdgeRelated(edge) ? 1 : 0.2"
-        class="transition-opacity duration-150"
-      />
-
-      <!-- Nodes -->
-      <g
-        v-for="node in layout.nodes"
-        :key="node.id"
-        class="cursor-pointer"
-        :opacity="isRelated(node.id) ? 1 : 0.2"
-        style="transition: opacity 150ms ease"
-        @click="handleNodeClick(node.id)"
-        @mouseenter="handleNodeEnter(node)"
-        @mouseleave="handleNodeLeave"
-      >
-        <rect
-          :x="node.x"
-          :y="node.y"
-          :width="NODE_WIDTH"
-          :height="NODE_HEIGHT"
-          :rx="8"
-          :ry="8"
-          :fill="getNodeFill(node.status)"
-          :stroke="getNodeStroke(node.status)"
-          :stroke-width="hoveredNodeId === node.id ? 3 : (node.isCritical ? 3 : 2)"
-          :filter="node.isCritical ? 'url(#shadow)' : undefined"
-          class="graph-node-rect"
+      <g :transform="`translate(${panX}, ${panY}) scale(${scale})`" class="graph-pan-group">
+        <!-- Edges -->
+        <line
+          v-for="(edge, i) in layout.edges"
+          :key="'edge-' + i"
+          :x1="edge.fromX"
+          :y1="edge.fromY"
+          :x2="edge.toX - 8"
+          :y2="edge.toY"
+          :stroke="getEdgeColor(edge.status)"
+          :stroke-width="edge.isCritical ? 2.5 : 1"
+          :marker-end="edge.isCritical ? 'url(#arrowhead-critical)' : 'url(#arrowhead)'"
+          :opacity="isEdgeRelated(edge) ? 1 : 0.2"
+          class="transition-opacity duration-150"
         />
-        <!-- Task ID -->
-        <text
-          :x="node.x + 10"
-          :y="node.y + 18"
-          font-size="11"
-          font-family="ui-monospace, monospace"
-          :fill="isDark ? '#9ca3af' : '#6b7280'"
-        >
-          {{ node.id }}
-        </text>
-        <!-- Title -->
-        <text
-          :x="node.x + 10"
-          :y="node.y + 36"
-          font-size="13"
-          :fill="isDark ? '#e5e7eb' : '#111827'"
-        >
-          {{ node.title }}
-        </text>
-        <!-- Phase -->
-        <text
-          v-if="node.phase"
-          :x="node.x + 10"
-          :y="node.y + 52"
-          font-size="10"
-          :fill="isDark ? '#6b7280' : '#9ca3af'"
-        >
-          {{ node.phase }}
-        </text>
-      </g>
 
-      <!-- Tooltip -->
-      <g v-if="tooltipNode">
-        <rect
-          :x="tooltipX - 80"
-          :y="tooltipY - 38"
-          width="160"
-          height="32"
-          rx="6"
-          :fill="isDark ? '#374151' : '#1f2937'"
-          opacity="0.95"
-        />
-        <text
-          :x="tooltipX"
-          :y="tooltipY - 26"
-          font-size="11"
-          fill="white"
-          text-anchor="middle"
-          font-family="ui-sans-serif, system-ui, sans-serif"
+        <!-- Nodes -->
+        <g
+          v-for="node in layout.nodes"
+          :key="node.id"
+          class="cursor-pointer"
+          :opacity="isRelated(node.id) ? 1 : 0.2"
+          style="transition: opacity 150ms ease"
+          @click="handleNodeClick(node.id)"
+          @mouseenter="handleNodeEnter(node)"
+          @mouseleave="handleNodeLeave"
         >
-          {{ tooltipNode.fullTitle.length > 24 ? tooltipNode.fullTitle.slice(0, 24) + '...' : tooltipNode.fullTitle }}
-        </text>
-        <text
-          :x="tooltipX"
-          :y="tooltipY - 13"
-          font-size="10"
-          fill="#9ca3af"
-          text-anchor="middle"
-          font-family="ui-sans-serif, system-ui, sans-serif"
-        >
-          {{ tooltipNode.status }}{{ tooltipNode.phase ? ' / ' + tooltipNode.phase : '' }}
-        </text>
+          <rect
+            :x="node.x"
+            :y="node.y"
+            :width="NODE_WIDTH"
+            :height="NODE_HEIGHT"
+            :rx="8"
+            :ry="8"
+            :fill="getNodeFill(node.status)"
+            :stroke="getNodeStroke(node.status)"
+            :stroke-width="hoveredNodeId === node.id ? 3 : (node.isCritical ? 3 : 2)"
+            :filter="node.isCritical ? 'url(#shadow)' : undefined"
+            class="graph-node-rect"
+          />
+          <!-- Task ID -->
+          <text
+            :x="node.x + NODE_WIDTH / 2"
+            :y="node.y + 18"
+            font-size="11"
+            font-family="ui-monospace, monospace"
+            text-anchor="middle"
+            :fill="isDark ? '#9ca3af' : '#6b7280'"
+          >
+            {{ node.id }}
+          </text>
+          <!-- Title (truncated, centered) -->
+          <text
+            :x="node.x + NODE_WIDTH / 2"
+            :y="node.y + 36"
+            font-size="13"
+            text-anchor="middle"
+            :fill="isDark ? '#e5e7eb' : '#111827'"
+          >
+            {{ node.title }}
+          </text>
+          <!-- Mini pipeline dots -->
+          <template v-if="pipelineSteps && pipelineSteps.length > 0 && node.phase">
+            <circle
+              v-for="(step, si) in pipelineSteps"
+              :key="'pip-' + node.id + '-' + si"
+              :cx="getPipelineDotX(si, pipelineSteps.length, node.x)"
+              :cy="node.y + 52"
+              r="3"
+              :fill="getMiniDotFill(getMiniStepState(si, node.phase))"
+              :stroke="getMiniDotStroke(getMiniStepState(si, node.phase))"
+              stroke-width="1.5"
+              :filter="getMiniStepState(si, node.phase) === 'active' ? 'url(#active-glow)' : undefined"
+            />
+          </template>
+          <!-- Phase text fallback (when no pipeline steps available) -->
+          <text
+            v-else-if="node.phase"
+            :x="node.x + NODE_WIDTH / 2"
+            :y="node.y + 55"
+            font-size="10"
+            text-anchor="middle"
+            :fill="isDark ? '#6b7280' : '#9ca3af'"
+          >
+            {{ node.phase }}
+          </text>
+        </g>
+
+        <!-- Tooltip -->
+        <g v-if="tooltipNode">
+          <rect
+            :x="tooltipX - 90"
+            :y="tooltipY - 38"
+            width="180"
+            height="32"
+            rx="6"
+            :fill="isDark ? '#374151' : '#1f2937'"
+            opacity="0.95"
+          />
+          <text
+            :x="tooltipX"
+            :y="tooltipY - 26"
+            font-size="11"
+            fill="white"
+            text-anchor="middle"
+            font-family="ui-sans-serif, system-ui, sans-serif"
+          >
+            {{ tooltipNode.fullTitle.length > 30 ? tooltipNode.fullTitle.slice(0, 30) + '...' : tooltipNode.fullTitle }}
+          </text>
+          <text
+            :x="tooltipX"
+            :y="tooltipY - 13"
+            font-size="10"
+            fill="#9ca3af"
+            text-anchor="middle"
+            font-family="ui-sans-serif, system-ui, sans-serif"
+          >
+            {{ tooltipNode.status }}{{ tooltipNode.phase ? ' / ' + tooltipNode.phase : '' }}
+          </text>
+        </g>
       </g>
     </svg>
+
+    <!-- Zoom controls -->
+    <div class="absolute bottom-3 right-3 flex gap-1">
+      <button
+        class="h-7 w-7 flex items-center justify-center rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150 shadow-sm"
+        title="Zoom in"
+        @click="zoomIn"
+      >
+        +
+      </button>
+      <button
+        class="h-7 w-7 flex items-center justify-center rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150 shadow-sm"
+        title="Zoom out"
+        @click="zoomOut"
+      >
+        -
+      </button>
+      <button
+        class="h-7 px-2 flex items-center justify-center rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 text-xs hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-150 shadow-sm"
+        title="Reset view"
+        @click="resetView"
+      >
+        Reset
+      </button>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .graph-node-rect {
   transition: filter 150ms ease, stroke-width 150ms ease;
+}
+.graph-pan-group {
+  transition: transform 0ms;
 }
 </style>

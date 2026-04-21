@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { marked } from 'marked'
 import type { Review } from '~/types'
 
 defineProps<{
@@ -13,6 +14,10 @@ function toggleExpand(index: number) {
 
 function isLong(detail: string): boolean {
   return detail.length > 200
+}
+
+function renderDetail(detail: string): string {
+  return marked.parse(detail) as string
 }
 
 const verdictStyle: Record<string, { bg: string; text: string }> = {
@@ -72,12 +77,11 @@ function getVerdictStyle(verdict: string) {
         </div>
 
         <div class="mt-2">
-          <p
-            class="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap"
+          <div
+            class="prose prose-sm dark:prose-invert max-w-none text-gray-600 dark:text-gray-400"
             :class="{ 'line-clamp-3': isLong(review.detail) && !expandedMap[index] }"
-          >
-            {{ review.detail }}
-          </p>
+            v-html="renderDetail(review.detail)"
+          />
           <button
             v-if="isLong(review.detail)"
             class="mt-1 text-xs text-blue-600 dark:text-blue-400 hover:underline"

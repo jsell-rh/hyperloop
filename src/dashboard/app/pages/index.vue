@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import type { SpecSummary, Summary, GraphData } from '~/types'
+import type { SpecSummary, Summary, GraphData, PipelineStepInfo } from '~/types'
 
-const { fetchSpecs, fetchSummary, fetchGraph } = useApi()
+const { fetchSpecs, fetchSummary, fetchGraph, fetchPipeline } = useApi()
 const { markFetched } = useLiveness()
 
 const { data: specs, error: specsError } = useAsyncData<SpecSummary[]>(
@@ -32,6 +32,12 @@ const { data: graph, error: graphError } = useAsyncData<GraphData>(
     return result
   },
   { server: false, default: () => ({ nodes: [], edges: [], critical_path: [] }) },
+)
+
+const { data: pipelineSteps } = useAsyncData<PipelineStepInfo[]>(
+  'pipeline-steps',
+  () => fetchPipeline(),
+  { server: false, default: () => [] },
 )
 
 const error = computed(() => specsError.value || summaryError.value || graphError.value)
@@ -68,6 +74,7 @@ onMounted(() => {
       refreshNuxtData('specs'),
       refreshNuxtData('summary'),
       refreshNuxtData('graph'),
+      refreshNuxtData('pipeline-steps'),
     ])
   }, 10_000)
 })
@@ -133,7 +140,7 @@ onUnmounted(() => {
       <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
         Dependency Graph
       </h2>
-      <DependencyGraph :graph="graph" />
+      <DependencyGraph :graph="graph" :pipeline-steps="pipelineSteps ?? []" />
     </div>
   </div>
 </template>

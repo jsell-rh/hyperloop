@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { marked } from 'marked'
+
 const props = withDefaults(
   defineProps<{
     label: string
@@ -6,11 +8,18 @@ const props = withDefaults(
     source?: string
     content: string
     defaultOpen?: boolean
+    defaultViewMode?: 'rendered' | 'raw'
   }>(),
-  { defaultOpen: true },
+  { defaultOpen: true, defaultViewMode: 'rendered' },
 )
 
 const isOpen = ref(props.defaultOpen)
+const viewMode = ref<'rendered' | 'raw'>(props.defaultViewMode)
+
+const renderedContent = computed(() => {
+  if (!props.content) return ''
+  return marked.parse(props.content) as string
+})
 
 const badgeStyles: Record<string, { bg: string; text: string }> = {
   gray: {
@@ -42,7 +51,7 @@ const style = computed(() => badgeStyles[props.color] ?? badgeStyles.gray)
       @click="isOpen = !isOpen"
     >
       <svg
-        class="h-3 w-3 text-gray-400 transition-transform flex-shrink-0"
+        class="h-3 w-3 text-gray-400 transition-transform duration-150 flex-shrink-0"
         :class="{ 'rotate-90': isOpen }"
         fill="none"
         viewBox="0 0 24 24"
@@ -63,6 +72,14 @@ const style = computed(() => badgeStyles[props.color] ?? badgeStyles.gray)
       >
         {{ source }}
       </span>
+      <span class="flex-1" />
+      <span
+        v-if="isOpen"
+        class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-150 px-1"
+        @click.stop="viewMode = viewMode === 'rendered' ? 'raw' : 'rendered'"
+      >
+        {{ viewMode === 'rendered' ? 'Raw' : 'Rendered' }}
+      </span>
     </button>
 
     <!-- Body -->
@@ -71,7 +88,17 @@ const style = computed(() => badgeStyles[props.color] ?? badgeStyles.gray)
         v-if="isOpen"
         class="border-t border-gray-200 dark:border-gray-800"
       >
-        <pre class="text-sm font-mono whitespace-pre-wrap bg-gray-50 dark:bg-gray-950 rounded-b p-4 text-gray-700 dark:text-gray-300 overflow-x-auto leading-relaxed">{{ content }}</pre>
+        <!-- Rendered markdown view -->
+        <div
+          v-if="viewMode === 'rendered'"
+          class="prose prose-sm dark:prose-invert max-w-none bg-gray-50 dark:bg-gray-950 rounded-b p-4 overflow-x-auto"
+          v-html="renderedContent"
+        />
+        <!-- Raw monospace view -->
+        <pre
+          v-else
+          class="text-sm font-mono whitespace-pre-wrap bg-gray-50 dark:bg-gray-950 rounded-b p-4 text-gray-700 dark:text-gray-300 overflow-x-auto leading-relaxed"
+        >{{ content }}</pre>
       </div>
     </Transition>
   </div>
