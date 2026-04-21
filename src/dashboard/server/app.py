@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 from dashboard.server import deps
-from dashboard.server.routes import health, pipeline, specs, summary, tasks
+from dashboard.server.routes import health, pipeline, process, specs, summary, tasks
 
 
 @asynccontextmanager
@@ -43,6 +43,7 @@ def create_app(repo_path: str = ".") -> FastAPI:
     )
     app.include_router(health.router)
     app.include_router(pipeline.router)
+    app.include_router(process.router)
     app.include_router(specs.router)
     app.include_router(tasks.router)
     app.include_router(summary.router)

@@ -10,6 +10,9 @@ from fastapi import APIRouter, HTTPException
 from dashboard.server.deps import get_repo_path, get_state
 from dashboard.server.models import (
     DepDetail,
+    GraphEdge,
+    GraphNode,
+    GraphResponse,
     PromptSectionResponse,
     ReconstructedPrompt,
     Review,
@@ -86,6 +89,89 @@ def list_tasks(
         tasks = [t for t in tasks if t.spec_ref.split("@")[0] == spec_ref]
 
     return [_task_to_summary(t) for t in tasks]
+
+
+def _compute_critical_path(tasks: dict[str, object]) -> list[str]:
+    """Find the longest chain of non-terminal tasks using DFS.
+
+    Builds an adjacency list (dep -> dependents) and finds the longest
+    path through tasks that are not complete or failed.
+    """
+    from hyperloop.domain.model import Task, TaskStatus
+
+    # Build adjacency: from dep_id -> list of dependent task ids
+    adjacency: dict[str, list[str]] = {}
+    non_terminal_ids: set[str] = set()
+
+    for task_id, task in tasks.items():
+        assert isinstance(task, Task)
+        if task.status not in (TaskStatus.COMPLETE, TaskStatus.FAILED):
+            non_terminal_ids.add(task_id)
+
+    for task_id, task in tasks.items():
+        assert isinstance(task, Task)
+        if task_id not in non_terminal_ids:
+            continue
+        for dep_id in task.deps:
+            if dep_id in non_terminal_ids:
+                adjacency.setdefault(dep_id, []).append(task_id)
+
+    # Find roots: non-terminal tasks with no non-terminal deps
+    roots: list[str] = []
+    for task_id in non_terminal_ids:
+        task = tasks[task_id]
+        assert isinstance(task, Task)
+        has_non_terminal_dep = any(d in non_terminal_ids for d in task.deps)
+        if not has_non_terminal_dep:
+            roots.append(task_id)
+
+    # DFS longest path from each root
+    memo: dict[str, list[str]] = {}
+
+    def longest_from(node_id: str) -> list[str]:
+        if node_id in memo:
+            return memo[node_id]
+        children = adjacency.get(node_id, [])
+        best: list[str] = []
+        for child in children:
+            candidate = longest_from(child)
+            if len(candidate) > len(best):
+                best = candidate
+        result = [node_id, *best]
+        memo[node_id] = result
+        return result
+
+    overall_best: list[str] = []
+    for root in roots:
+        path = longest_from(root)
+        if len(path) > len(overall_best):
+            overall_best = path
+
+    return overall_best
+
+
+@router.get("/api/tasks/graph")
+def get_task_graph() -> GraphResponse:
+    """Return the full dependency graph with critical path for visualization."""
+    world = get_state().get_world()
+    nodes: list[GraphNode] = []
+    edges: list[GraphEdge] = []
+
+    for task in world.tasks.values():
+        nodes.append(
+            GraphNode(
+                id=task.id,
+                title=task.title,
+                status=_status_str(task.status),
+                phase=str(task.phase) if task.phase else None,
+                spec_ref=task.spec_ref.split("@")[0],
+            )
+        )
+        for dep in task.deps:
+            edges.append(GraphEdge(from_id=dep, to_id=task.id))
+
+    critical_path = _compute_critical_path(world.tasks)
+    return GraphResponse(nodes=nodes, edges=edges, critical_path=critical_path)
 
 
 @router.get("/api/tasks/{task_id}")

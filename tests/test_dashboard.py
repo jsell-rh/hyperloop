@@ -463,3 +463,262 @@ class TestCompleteSpec:
         data = client.get("/api/summary").json()
         assert data["specs_complete"] == 1
         assert data["specs_total"] == 1
+
+
+class TestGraph:
+    def test_graph_returns_nodes_and_edges(self, seeded_repo: Path) -> None:
+        """Graph endpoint returns nodes with status and edges from deps."""
+        client = _make_client(seeded_repo)
+        resp = client.get("/api/tasks/graph")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert len(data["nodes"]) == 2
+        ids = {n["id"] for n in data["nodes"]}
+        assert ids == {"task-001", "task-002"}
+
+        # task-002 depends on task-001
+        assert len(data["edges"]) == 1
+        edge = data["edges"][0]
+        assert edge["from_id"] == "task-001"
+        assert edge["to_id"] == "task-002"
+
+    def test_graph_node_fields(self, seeded_repo: Path) -> None:
+        """Graph nodes include status, phase, and spec_ref without version."""
+        client = _make_client(seeded_repo)
+        data = client.get("/api/tasks/graph").json()
+
+        task_001 = next(n for n in data["nodes"] if n["id"] == "task-001")
+        assert task_001["status"] == "in-progress"
+        assert task_001["phase"] == "implementer"
+        assert task_001["spec_ref"] == "specs/widget.md"  # no @version
+
+    def test_graph_critical_path(self, seeded_repo: Path) -> None:
+        """Critical path includes the longest chain of non-terminal tasks."""
+        client = _make_client(seeded_repo)
+        data = client.get("/api/tasks/graph").json()
+
+        # Both tasks are non-terminal (in-progress and not-started)
+        # task-001 -> task-002 is the longest path
+        assert "task-001" in data["critical_path"]
+        assert "task-002" in data["critical_path"]
+
+    def test_graph_empty_repo(self, tmp_path: Path) -> None:
+        """Graph endpoint returns empty data for a repo with no tasks."""
+        repo = tmp_path / "empty"
+        repo.mkdir()
+        _init_git_repo(repo)
+        client = _make_client(repo)
+
+        resp = client.get("/api/tasks/graph")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["nodes"] == []
+        assert data["edges"] == []
+        assert data["critical_path"] == []
+
+    def test_critical_path_excludes_terminal_tasks(self, tmp_path: Path) -> None:
+        """Critical path only includes non-terminal tasks."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        _write_task_file(
+            repo,
+            "task-a",
+            {
+                "id": "task-a",
+                "title": "Complete",
+                "spec_ref": "specs/a.md",
+                "status": "complete",
+                "phase": None,
+                "deps": [],
+                "round": 1,
+                "branch": None,
+                "pr": None,
+            },
+        )
+        _write_task_file(
+            repo,
+            "task-b",
+            {
+                "id": "task-b",
+                "title": "In progress",
+                "spec_ref": "specs/a.md",
+                "status": "in-progress",
+                "phase": "implementer",
+                "deps": ["task-a"],
+                "round": 0,
+                "branch": None,
+                "pr": None,
+            },
+        )
+        _commit_all(repo)
+        client = _make_client(repo)
+        data = client.get("/api/tasks/graph").json()
+
+        # task-a is complete so not on critical path
+        # task-b depends on task-a, but task-a is terminal
+        # so critical path is just task-b (the only non-terminal)
+        assert "task-a" not in data["critical_path"]
+        assert "task-b" in data["critical_path"]
+
+
+class TestProcess:
+    def test_process_returns_pipeline_tree(self, tmp_path: Path) -> None:
+        """Process endpoint preserves pipeline nesting."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        process_dir = repo / ".hyperloop" / "agents" / "process"
+        process_dir.mkdir(parents=True)
+        process_yaml = {
+            "apiVersion": "hyperloop.io/v1",
+            "kind": "Process",
+            "metadata": {"name": "default"},
+            "pipeline": [
+                {"loop": [{"agent": "implementer"}, {"agent": "verifier"}]},
+                {"gate": "pr-require-label"},
+                {"action": "merge-pr"},
+            ],
+            "gates": {"pr-require-label": {"type": "label"}},
+            "actions": {"merge-pr": {"type": "pr-merge"}},
+            "hooks": {"after_reap": [{"type": "process-improver"}]},
+        }
+        (process_dir / "process.yaml").write_text(yaml.dump(process_yaml))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/process")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        steps = data["pipeline_steps"]
+        assert len(steps) == 3
+        assert steps[0]["type"] == "loop"
+        assert len(steps[0]["children"]) == 2
+        assert steps[0]["children"][0] == {"type": "agent", "name": "implementer", "children": None}
+        assert steps[0]["children"][1] == {"type": "agent", "name": "verifier", "children": None}
+        assert steps[1] == {"type": "gate", "name": "pr-require-label", "children": None}
+        assert steps[2] == {"type": "action", "name": "merge-pr", "children": None}
+
+    def test_process_returns_gates_and_actions(self, tmp_path: Path) -> None:
+        """Process endpoint returns gate and action configs."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        process_dir = repo / ".hyperloop" / "agents" / "process"
+        process_dir.mkdir(parents=True)
+        process_yaml = {
+            "apiVersion": "hyperloop.io/v1",
+            "kind": "Process",
+            "metadata": {"name": "default"},
+            "pipeline": [],
+            "gates": {"my-gate": {"type": "label", "required": True}},
+            "actions": {"my-action": {"type": "pr-merge"}},
+        }
+        (process_dir / "process.yaml").write_text(yaml.dump(process_yaml))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        data = client.get("/api/process").json()
+
+        assert data["gates"]["my-gate"]["type"] == "label"
+        assert data["actions"]["my-action"]["type"] == "pr-merge"
+
+    def test_process_reads_learning_overlays(self, tmp_path: Path) -> None:
+        """Process endpoint reads *-overlay.yaml files for process learning."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        process_dir = repo / ".hyperloop" / "agents" / "process"
+        process_dir.mkdir(parents=True)
+        (process_dir / "process.yaml").write_text(yaml.dump({"kind": "Process", "pipeline": []}))
+        (process_dir / "implementer-overlay.yaml").write_text(
+            yaml.dump({"guidelines": "- Do not delete files\n- Run tests"})
+        )
+        (process_dir / "verifier-overlay.yaml").write_text(
+            yaml.dump({"guidelines": "- Run full test suite"})
+        )
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        data = client.get("/api/process").json()
+
+        learning = data["process_learning"]
+        assert "implementer" in learning["patched_agents"]
+        assert "verifier" in learning["patched_agents"]
+        assert "Do not delete files" in learning["guidelines"]["implementer"]
+        assert "full test suite" in learning["guidelines"]["verifier"]
+
+    def test_process_no_learning_when_no_overlays(self, tmp_path: Path) -> None:
+        """Process learning is empty when no overlay files exist."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        process_dir = repo / ".hyperloop" / "agents" / "process"
+        process_dir.mkdir(parents=True)
+        (process_dir / "process.yaml").write_text(yaml.dump({"kind": "Process", "pipeline": []}))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        data = client.get("/api/process").json()
+
+        assert data["process_learning"]["patched_agents"] == []
+        assert data["process_learning"]["guidelines"] == {}
+
+    def test_process_empty_when_no_process_yaml(self, tmp_path: Path) -> None:
+        """Process endpoint returns gracefully when no process.yaml exists."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/process")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["pipeline_steps"] == []
+        assert data["gates"] == {}
+        assert data["actions"] == {}
+        assert data["hooks"] == {}
+
+    def test_process_raw_yaml_present(self, tmp_path: Path) -> None:
+        """Process endpoint includes raw YAML for display."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        process_dir = repo / ".hyperloop" / "agents" / "process"
+        process_dir.mkdir(parents=True)
+        process_yaml = {
+            "kind": "Process",
+            "pipeline": [{"agent": "implementer"}],
+        }
+        (process_dir / "process.yaml").write_text(yaml.dump(process_yaml))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        data = client.get("/api/process").json()
+
+        assert "implementer" in data["pipeline_raw"]
+
+    def test_process_source_file_present(self, tmp_path: Path) -> None:
+        """Process endpoint returns the source file path."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        process_dir = repo / ".hyperloop" / "agents" / "process"
+        process_dir.mkdir(parents=True)
+        (process_dir / "process.yaml").write_text(yaml.dump({"kind": "Process", "pipeline": []}))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        data = client.get("/api/process").json()
+
+        assert "process.yaml" in data["source_file"]

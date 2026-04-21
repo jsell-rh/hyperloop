@@ -75,3 +75,63 @@ export interface Summary {
   specs_total: number
   specs_complete: number
 }
+
+// ---------------------------------------------------------------------------
+// Graph types
+// ---------------------------------------------------------------------------
+
+export interface GraphNode {
+  id: string
+  title: string
+  status: 'not-started' | 'in-progress' | 'complete' | 'failed'
+  phase: string | null
+  spec_ref: string
+}
+
+export interface GraphEdge {
+  from_id: string
+  to_id: string
+}
+
+export interface GraphData {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  critical_path: string[]
+}
+
+// ---------------------------------------------------------------------------
+// Process types
+// ---------------------------------------------------------------------------
+
+export interface PipelineTreeStep {
+  type: string
+  name: string | null
+  children: PipelineTreeStep[] | null
+}
+
+export interface ProcessLearning {
+  patched_agents: string[]
+  guidelines: Record<string, string>
+}
+
+export interface ProcessData {
+  pipeline_steps: PipelineTreeStep[]
+  pipeline_raw: string
+  gates: Record<string, unknown>
+  actions: Record<string, unknown>
+  hooks: Record<string, unknown>
+  process_learning: ProcessLearning
+  source_file: string
+  base_ref: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Health types
+// ---------------------------------------------------------------------------
+
+export interface HealthData {
+  status: string
+  repo_path: string
+  state_store: string
+  spec_source: string
+}

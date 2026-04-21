@@ -6,6 +6,9 @@ import type {
   Summary,
   PipelineStepInfo,
   ReconstructedPrompt,
+  GraphData,
+  ProcessData,
+  HealthData,
 } from '~/types'
 
 const API_BASE = '/api'
@@ -32,6 +35,15 @@ export function useApi() {
   const fetchTaskPrompt = (taskId: string) =>
     $fetch<ReconstructedPrompt[]>(`${API_BASE}/tasks/${taskId}/prompt`)
 
+  const fetchGraph = () =>
+    $fetch<GraphData>(`${API_BASE}/tasks/graph`)
+
+  const fetchProcess = () =>
+    $fetch<ProcessData>(`${API_BASE}/process`)
+
+  const fetchHealth = () =>
+    $fetch<HealthData>(`${API_BASE}/health`)
+
   return {
     fetchSpecs,
     fetchSpec,
@@ -40,5 +52,8 @@ export function useApi() {
     fetchSummary,
     fetchPipeline,
     fetchTaskPrompt,
+    fetchGraph,
+    fetchProcess,
+    fetchHealth,
   }
 }

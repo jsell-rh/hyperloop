@@ -104,3 +104,66 @@ class HealthResponse(BaseModel):
     repo_path: str
     state_store: str
     spec_source: str
+
+
+# ---------------------------------------------------------------------------
+# Graph models
+# ---------------------------------------------------------------------------
+
+
+class GraphNode(BaseModel):
+    """A task node in the dependency graph."""
+
+    id: str
+    title: str
+    status: str
+    phase: str | None
+    spec_ref: str
+
+
+class GraphEdge(BaseModel):
+    """A directed edge in the dependency graph."""
+
+    from_id: str
+    to_id: str
+
+
+class GraphResponse(BaseModel):
+    """Full dependency graph with critical path."""
+
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+    critical_path: list[str]
+
+
+# ---------------------------------------------------------------------------
+# Process models
+# ---------------------------------------------------------------------------
+
+
+class PipelineTreeStep(BaseModel):
+    """A step in the pipeline tree (preserving nesting)."""
+
+    type: str
+    name: str | None = None
+    children: list[PipelineTreeStep] | None = None
+
+
+class ProcessLearning(BaseModel):
+    """Process-improver learning state."""
+
+    patched_agents: list[str]
+    guidelines: dict[str, str]
+
+
+class ProcessResponse(BaseModel):
+    """Full process definition with learning state."""
+
+    pipeline_steps: list[PipelineTreeStep]
+    pipeline_raw: str
+    gates: dict[str, object]
+    actions: dict[str, object]
+    hooks: dict[str, object]
+    process_learning: ProcessLearning
+    source_file: str
+    base_ref: str | None

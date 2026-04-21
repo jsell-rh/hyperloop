@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import type { SpecSummary, Summary } from '~/types'
+import type { SpecSummary, Summary, GraphData } from '~/types'
 
-const { fetchSpecs, fetchSummary } = useApi()
+const { fetchSpecs, fetchSummary, fetchGraph } = useApi()
 
 const { data: specs } = useAsyncData<SpecSummary[]>(
   'specs',
@@ -13,6 +13,12 @@ const { data: summary } = useAsyncData<Summary>(
   'summary',
   () => fetchSummary(),
   { server: false, default: () => ({ total: 0, not_started: 0, in_progress: 0, complete: 0, failed: 0, specs_total: 0, specs_complete: 0 }) },
+)
+
+const { data: graph } = useAsyncData<GraphData>(
+  'graph',
+  () => fetchGraph(),
+  { server: false, default: () => ({ nodes: [], edges: [], critical_path: [] }) },
 )
 
 // Sort specs: in-progress first, then not-started, then complete, then all-failed
@@ -37,6 +43,7 @@ onMounted(() => {
     await Promise.all([
       refreshNuxtData('specs'),
       refreshNuxtData('summary'),
+      refreshNuxtData('graph'),
     ])
   }, 10_000)
 })
@@ -78,5 +85,16 @@ onUnmounted(() => {
     >
       No specs found. The orchestrator may not have written state yet.
     </p>
+
+    <!-- Dependency Graph -->
+    <div
+      v-if="graph && graph.nodes.length > 0"
+      class="mt-8 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5 shadow-sm"
+    >
+      <h2 class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-4">
+        Dependency Graph
+      </h2>
+      <DependencyGraph :graph="graph" />
+    </div>
   </div>
 </template>
