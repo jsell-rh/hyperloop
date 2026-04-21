@@ -212,6 +212,7 @@ while true:
     3. ADVANCE   — advance existing work through pipeline steps
     4. SPAWN     — decide what to spawn, spawn workers
     persist state
+    sync with remote (pull then push — ensures trunk is current before workers branch)
     if no gaps remain → halt
     otherwise → sleep and repeat
 ```
@@ -308,11 +309,13 @@ class StateStore(Protocol):
     def store_review(self, task_id: str, round: int, role: str, verdict: str, detail: str) -> None: ...
     def get_findings(self, task_id: str) -> str: ...
     def persist(self, message: str) -> None: ...
+    def sync(self) -> None: ...
 ```
 
 The port for durable reconciliation state. State must be:
 
 - **Durable** — survives orchestrator crashes
+- **Shared** — synced with remote so workers branch from current trunk
 - **Auditable** — review history is queryable across time
 
 ### GatePort
@@ -518,6 +521,9 @@ Implements `StateStore` using files in `.hyperloop/state/` committed to the repo
 - Tasks live at `.hyperloop/state/tasks/task-{id}.md` — YAML frontmatter
 - Reviews live at `.hyperloop/state/reviews/task-{id}-round-{n}.md` — YAML frontmatter + body
 - `persist()` → `git add .hyperloop/state/ && git commit`
+- `sync()` → `git pull --rebase origin && git push origin` (best-effort, no-op without a remote)
+
+Sync runs once per cycle after persist, before workers spawn. This ensures workers branch from a trunk that includes the latest task files — without sync, worker PRs would include orchestrator state changes in their diffs.
 
 State files are committed to trunk. This provides full git-history auditability but creates merge conflicts when worker branches carry stale copies. The `PRMergeAction` adapter auto-resolves these: tasks/ take trunk version, reviews/ take branch version.
 

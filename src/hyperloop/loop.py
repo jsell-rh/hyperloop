@@ -299,8 +299,9 @@ class Orchestrator:
         # ==== PHASE 4: SPAWN ====
         to_spawn = self._spawn(cycle_num, executor)
 
-        # ---- Persist state -------
+        # ---- Persist + sync ------
         self._state.persist("orchestrator: cycle update")
+        self._state.sync()
 
         # ---- Execute spawns ------
         self._execute_spawns(to_spawn, cycle_num)

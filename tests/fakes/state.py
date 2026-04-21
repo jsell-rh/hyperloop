@@ -178,3 +178,6 @@ class InMemoryStateStore:
     def persist(self, message: str) -> None:
         """Record the persist message (no-op for in-memory, but stores for test assertions)."""
         self.committed_messages.append(message)
+
+    def sync(self) -> None:
+        """No-op for in-memory store — no remote to sync with."""

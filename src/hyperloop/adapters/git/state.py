@@ -305,7 +305,20 @@ class GitStateStore:
 
         self._git("add", "-A")
         with contextlib.suppress(subprocess.CalledProcessError):
-            # Nothing to commit → git returns exit code 1. This is normal
-            # after serial agents (process-improver, PM) that commit their
-            # own changes before the orchestrator's cycle-update commit.
             self._git("commit", "--no-verify", "-m", message)
+
+    def sync(self) -> None:
+        """Pull from remote, then push local commits. Best-effort on both."""
+        remotes = self._git("remote")
+        if not remotes:
+            return
+        subprocess.run(
+            ["git", "-C", str(self._repo), "pull", "--rebase", "--no-verify", "origin"],
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(self._repo), "push", "origin"],
+            capture_output=True,
+            text=True,
+        )

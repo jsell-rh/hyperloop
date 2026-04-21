@@ -82,3 +82,7 @@ class StateStore(Protocol):
     def persist(self, message: str) -> None:
         """Persist all pending state changes."""
         ...
+
+    def sync(self) -> None:
+        """Sync state with remote (pull then push). Called once per cycle boundary."""
+        ...
