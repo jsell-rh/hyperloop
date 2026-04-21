@@ -115,8 +115,10 @@ class Orchestrator:
         self._spawn_task_failures: dict[str, int] = {}
         # Notification deduplication: task_ids that have been notified for gate_blocked
         self._notified_gates: set[str] = set()
-        # Halt reason set during collect phase
+        # Halt reason set during advance phase
         self._halt_reason: str | None = None
+        # Reaped worker metadata: populated by _collect, consumed by _advance
+        self._reaped_workers: dict[str, tuple[WorkerHandle, PipelinePosition, float]] = {}
         # Track whether any task has failed since the last intake run
         self._has_failures_since_intake: bool = False
 
@@ -245,7 +247,7 @@ class Orchestrator:
         )
 
         # ==== PHASE 1: COLLECT ====
-        reaped_results = self._collect(cycle_num, executor)
+        reaped_results = self._collect(cycle_num)
 
         # Track failures for intake re-trigger
         if any(r.verdict == Verdict.FAIL for r in reaped_results.values()):
@@ -256,17 +258,11 @@ class Orchestrator:
             for hook in self._hooks:
                 hook.after_reap(results=reaped_results, cycle=cycle_num)
 
-        # Check for halt from COLLECT (pipeline failures)
-        halt_reason = self._check_halt_from_results(cycle_num)
-        if halt_reason is not None:
-            self._state.persist("orchestrator: halt")
-            return halt_reason
-
         # ==== PHASE 2: INTAKE ====
         self._run_intake()
 
         # ==== PHASE 3: ADVANCE ====
-        halt_reason = self._advance(cycle_num, executor)
+        halt_reason = self._advance(cycle_num, executor, reaped_results)
         if halt_reason is not None:
             self._state.persist("orchestrator: halt")
             return halt_reason
@@ -291,24 +287,103 @@ class Orchestrator:
     def _collect(
         self,
         cycle_num: int,
-        executor: PipelineExecutor,
     ) -> dict[str, WorkerResult]:
-        """Reap finished workers. Returns dict of task_id -> WorkerResult."""
+        """Reap finished workers. Returns dict of task_id -> WorkerResult.
+
+        Stores reaped worker metadata in ``_reaped_workers`` for processing
+        by ``_advance``.  Does NOT process results through the pipeline.
+        """
         world = self._build_world()
         actions = decide(world, self._max_workers, self._max_task_rounds)
 
         reaped_results: dict[str, WorkerResult] = {}
+        self._reaped_workers: dict[str, tuple[WorkerHandle, PipelinePosition, float]] = {}
+
         for act in actions:
             if isinstance(act, ReapWorker):
                 task_id = act.task_id
                 if task_id in self._workers:
-                    handle, _pos, _spawn_time = self._workers[task_id]
+                    handle, pos, spawn_time = self._workers[task_id]
                     result = self._runtime.reap(handle)
                     reaped_results[task_id] = result
+                    self._reaped_workers[task_id] = (handle, pos, spawn_time)
+                    # Remove from active workers
+                    del self._workers[task_id]
 
-        # Process reaped results through pipeline
+        return reaped_results
+
+    def _check_halt_from_results(self) -> str | None:
+        """Check if any task was marked FAILED during advance -> halt."""
+        if self._halt_reason is not None:
+            reason = self._halt_reason
+            self._halt_reason = None
+            return reason
+        return None
+
+    # -----------------------------------------------------------------------
+    # PHASE 3: ADVANCE -- process results, gates, and actions
+    # -----------------------------------------------------------------------
+
+    def _advance(
+        self,
+        cycle_num: int,
+        executor: PipelineExecutor,
+        reaped_results: dict[str, WorkerResult],
+    ) -> str | None:
+        """Advance tasks: process reaped results, then gates/actions.
+
+        Returns halt reason or None.
+        """
+        # -- Step 1: Process reaped results through the pipeline ----------------
+        self._process_reaped_results(cycle_num, executor, reaped_results)
+
+        halt = self._check_halt_from_results()
+        if halt is not None:
+            return halt
+
+        # -- Step 2: Advance tasks at gate and action steps ---------------------
+        all_tasks = self._state.get_world().tasks
+
+        for task in all_tasks.values():
+            if task.status != TaskStatus.IN_PROGRESS:
+                continue
+            if task.phase is None:
+                continue
+            if task.id in self._workers:
+                continue  # Worker running, don't advance
+
+            pos = self._find_position_for_step(executor, str(task.phase))
+            if pos is None:
+                continue
+
+            step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
+
+            # -- Gate step --
+            if isinstance(step, GateStep):
+                halt = self._advance_gate(task, step, pos, executor, cycle_num)
+                if halt is not None:
+                    return halt
+
+            # -- Action step --
+            elif isinstance(step, ActionStep):
+                halt = self._advance_action(task, step, pos, executor, cycle_num)
+                if halt is not None:
+                    return halt
+
+        return None
+
+    def _process_reaped_results(
+        self,
+        cycle_num: int,
+        executor: PipelineExecutor,
+        reaped_results: dict[str, WorkerResult],
+    ) -> None:
+        """Feed reaped results to the pipeline executor and update task state."""
         for task_id, result in reaped_results.items():
-            _handle, position, spawn_time = self._workers.pop(task_id)
+            worker_info = self._reaped_workers.get(task_id)
+            if worker_info is None:
+                continue
+            _handle, position, spawn_time = worker_info
             task = self._state.get_task(task_id)
 
             self._probe.worker_reaped(
@@ -452,60 +527,6 @@ class Orchestrator:
                     round=task.round,
                     cycle=cycle_num,
                 )
-
-        return reaped_results
-
-    def _check_halt_from_results(
-        self,
-        cycle_num: int,
-    ) -> str | None:
-        """Check if any task was marked FAILED during collect -> halt."""
-        # Track halt reasons set during _collect
-        if self._halt_reason is not None:
-            reason = self._halt_reason
-            self._halt_reason = None
-            return reason
-        return None
-
-    # -----------------------------------------------------------------------
-    # PHASE 3: ADVANCE -- advance tasks through gates and actions
-    # -----------------------------------------------------------------------
-
-    def _advance(
-        self,
-        cycle_num: int,
-        executor: PipelineExecutor,
-    ) -> str | None:
-        """Advance tasks through gates and actions. Returns halt reason or None."""
-        all_tasks = self._state.get_world().tasks
-
-        for task in all_tasks.values():
-            if task.status != TaskStatus.IN_PROGRESS:
-                continue
-            if task.phase is None:
-                continue
-            if task.id in self._workers:
-                continue  # Worker running, don't advance
-
-            pos = self._find_position_for_step(executor, str(task.phase))
-            if pos is None:
-                continue
-
-            step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
-
-            # -- Gate step --
-            if isinstance(step, GateStep):
-                halt = self._advance_gate(task, step, pos, executor, cycle_num)
-                if halt is not None:
-                    return halt
-
-            # -- Action step --
-            elif isinstance(step, ActionStep):
-                halt = self._advance_action(task, step, pos, executor, cycle_num)
-                if halt is not None:
-                    return halt
-
-        return None
 
     def _advance_gate(
         self,
