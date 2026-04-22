@@ -300,7 +300,7 @@ const stepDurations = computed<StepDuration[]>(() => {
           class="text-center"
           :style="{ flex: seg.steps.length }"
         >
-          <span class="text-[8px] text-gray-400 dark:text-gray-500">&#x21bb; loop</span>
+          <span class="text-[8px] text-gray-400 dark:text-gray-500">&#x21bb; loop{{ task.round > 0 ? ` (${task.round + 1} iterations)` : '' }}</span>
         </div>
         <div v-else :style="{ flex: seg.steps.length }" />
       </template>
