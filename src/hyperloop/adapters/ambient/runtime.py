@@ -210,7 +210,8 @@ class AmbientRuntime:
         """Collect result from a finished session.
 
         Reads verdict from .hyperloop/worker-result.yaml on the fetched
-        branch ref. Falls back to PASS if no verdict file exists.
+        branch ref. Falls back to FAIL if no verdict file exists and
+        the session ended in failure, PASS otherwise.
         The verdict file is stripped from the branch later by rebase_branch.
         """
         from hyperloop.adapters.verdict import read_verdict_from_ref
@@ -232,10 +233,18 @@ class AmbientRuntime:
         result = read_verdict_from_ref(self._repo_path, f"origin/{branch}")
 
         if result is None:
-            result = WorkerResult(
-                verdict=Verdict.PASS,
-                detail="Agent completed",
-            )
+            with self._lock:
+                status = self._completion.get(session_id, "")
+            if status == "failed":
+                result = WorkerResult(
+                    verdict=Verdict.FAIL,
+                    detail="Agent session failed without writing verdict",
+                )
+            else:
+                result = WorkerResult(
+                    verdict=Verdict.PASS,
+                    detail="Agent completed",
+                )
 
         # Stop session and clean up
         self._stop_session(session_id)
