@@ -67,14 +67,18 @@ function onWheel(e: WheelEvent): void {
   panY.value = mouseY - graphY * scale.value
 }
 
+let didPan = false
+
 function onMouseDown(e: MouseEvent): void {
   if (e.button !== 0) return
   isPanning.value = true
+  didPan = false
   panStart = { x: e.clientX - panX.value, y: e.clientY - panY.value }
 }
 
 function onMouseMove(e: MouseEvent): void {
   if (!isPanning.value) return
+  didPan = true
   panX.value = e.clientX - panStart.x
   panY.value = e.clientY - panStart.y
 }
@@ -482,6 +486,7 @@ function updateTooltipPosition(event: MouseEvent): void {
 // Navigation
 // ---------------------------------------------------------------------------
 const handleNodeClick = (nodeId: string): void => {
+  if (didPan) return
   navigateTo(`/tasks/${nodeId}`)
 }
 
