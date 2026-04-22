@@ -158,11 +158,10 @@ This file is the **runtime-agnostic** verdict channel. Both the SDK runtime (rea
 
 **Collision avoidance:** The orchestrator stores reviews at `.hyperloop/state/reviews/` on trunk. Workers write to `.hyperloop/worker-result.yaml` on their branch. These paths never overlap, so rebasing the branch onto trunk cannot introduce a stale verdict.
 
-**Cleanup after reap:** The orchestrator removes `worker-result.yaml` from the branch immediately after reading it (git rm + commit + push). This prevents the file from leaking to trunk via squash merge. Three layers enforce this:
+**Cleanup:** The verdict file is stripped from the branch during `rebase_branch`, which runs before both spawning and merging. After rebasing onto trunk, `_remove_verdict_file` deletes the file and commits before pushing. This ensures the file never reaches trunk via squash merge, without polluting the branch with add/delete commit churn (which breaks rebase replay). Two layers enforce this:
 
-1. **Primary — clean after reap:** Both runtimes delete the file from the branch immediately after reading.
-2. **Secondary — clean before merge:** `PRMergeAction` verifies the file is absent before merging. If present, removes it.
-3. **Tertiary — clean during rebase:** `_resolve_rebase_state_conflicts` deletes `worker-result.yaml` if it appears during rebase, since trunk should never contain it.
+1. **Primary — clean during rebase:** `rebase_branch` removes the verdict file after rebase, before push. This runs before every spawn and before every merge.
+2. **Secondary — clean during conflict resolution:** `_resolve_rebase_state_conflicts` deletes `worker-result.yaml` if it appears as a conflict during rebase, since trunk should never contain it.
 
 ### Task Proposal
 
