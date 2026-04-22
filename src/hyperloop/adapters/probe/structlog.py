@@ -145,7 +145,7 @@ class StructlogProbe:
         section_sources: list[str] = []
         if isinstance(sections, (tuple, list)):
             section_sources = [
-                str(getattr(s, "source", str(s)))
+                str(getattr(s, "source", str(s)))  # type: ignore[arg-type]
                 for s in sections  # type: ignore[union-attr]
             ]
         kw_out = {
