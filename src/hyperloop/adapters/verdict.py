@@ -55,43 +55,6 @@ def read_verdict_from_ref(repo_path: str, ref: str) -> WorkerResult | None:
     return _parse_verdict(result.stdout)
 
 
-def clean_verdict_from_branch(worktree_path: str) -> None:
-    """Remove the verdict file from the branch (git rm + commit + push).
-
-    Best-effort — failures are swallowed. The secondary (pre-merge) and
-    tertiary (rebase) cleanup layers provide backup.
-    """
-    path = os.path.join(worktree_path, VERDICT_FILE)
-    if not os.path.isfile(path):
-        return
-
-    try:
-        subprocess.run(
-            ["git", "-C", worktree_path, "rm", "-f", VERDICT_FILE],
-            capture_output=True,
-        )
-        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-        env["GIT_EDITOR"] = "true"
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                worktree_path,
-                "commit",
-                "-m",
-                "orchestrator: clean worker verdict",
-            ],
-            capture_output=True,
-            env=env,
-        )
-        subprocess.run(
-            ["git", "-C", worktree_path, "push", "--force-with-lease"],
-            capture_output=True,
-        )
-    except Exception:
-        pass
-
-
 def _parse_verdict(content: str) -> WorkerResult | None:
     """Parse YAML frontmatter + body from verdict file content."""
     match = re.match(r"^---\n(.*?\n)---\n(.*)", content, re.DOTALL)

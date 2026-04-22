@@ -130,11 +130,11 @@ class AgentSdkRuntime:
     def reap(self, handle: WorkerHandle) -> WorkerResult:
         """Collect the result from a completed SDK agent.
 
-        Reads verdict from .hyperloop/worker-result.yaml in the worktree,
-        removes the file from the branch, then cleans up the worktree.
+        Reads verdict from .hyperloop/worker-result.yaml in the worktree.
         Falls back to SDK ResultMessage if no verdict file exists.
+        The verdict file is stripped from the branch later by rebase_branch.
         """
-        from hyperloop.adapters.verdict import clean_verdict_from_branch, read_verdict_file
+        from hyperloop.adapters.verdict import read_verdict_file
 
         task_id = handle.task_id
         worktree_path = self._worktrees.get(task_id)
@@ -142,14 +142,9 @@ class AgentSdkRuntime:
         if worktree_path is None:
             worktree_path = os.path.join(self._worktree_base, task_id)
 
-        # Primary: read verdict file
         result = read_verdict_file(worktree_path)
 
-        if result is not None:
-            # Clean the verdict file from the branch before worktree cleanup
-            clean_verdict_from_branch(worktree_path)
-        else:
-            # Fallback: use SDK future result (agent may have crashed before writing)
+        if result is None:
             future = self._futures.get(task_id)
             if future is not None and future.done() and future.exception() is None:
                 result = future.result()
