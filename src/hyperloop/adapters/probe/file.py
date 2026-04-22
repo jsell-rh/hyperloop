@@ -151,8 +151,7 @@ class FileProbe:
     # ------------------------------------------------------------------
 
     def prompt_composed(self, **kw: object) -> None:
-        lightweight = {k: v for k, v in kw.items() if k not in ("prompt_text", "sections")}
-        self._write("prompt_composed", **lightweight)
+        self._write("prompt_composed", **kw)
 
     # ------------------------------------------------------------------
     # Git remote operations
