@@ -137,6 +137,33 @@ class WorkerResult:
     detail: str             # free-text summary from the worker
 ```
 
+#### Verdict file transport
+
+Workers report their verdict by writing a single file to the worktree:
+
+```
+.hyperloop/worker-result.yaml
+```
+
+Format — YAML frontmatter + free-text body:
+
+```yaml
+---
+verdict: pass          # or fail
+---
+All tests pass. Implementation matches spec.
+```
+
+This file is the **runtime-agnostic** verdict channel. Both the SDK runtime (reads from worktree filesystem) and the Ambient runtime (reads from fetched branch ref via `git show`) use the same path and format.
+
+**Collision avoidance:** The orchestrator stores reviews at `.hyperloop/state/reviews/` on trunk. Workers write to `.hyperloop/worker-result.yaml` on their branch. These paths never overlap, so rebasing the branch onto trunk cannot introduce a stale verdict.
+
+**Cleanup after reap:** The orchestrator removes `worker-result.yaml` from the branch immediately after reading it (git rm + commit + push). This prevents the file from leaking to trunk via squash merge. Three layers enforce this:
+
+1. **Primary — clean after reap:** Both runtimes delete the file from the branch immediately after reading.
+2. **Secondary — clean before merge:** `PRMergeAction` verifies the file is absent before merging. If present, removes it.
+3. **Tertiary — clean during rebase:** `_resolve_rebase_state_conflicts` deletes `worker-result.yaml` if it appears during rebase, since trunk should never contain it.
+
 ### Task Proposal
 
 Value object produced by the PM agent during intake:
@@ -219,7 +246,7 @@ while true:
 
 ### COLLECT
 
-Poll every running worker. If done, reap its `WorkerResult`. Build a map of `task_id → WorkerResult`.
+Poll every running worker. If done, reap its `WorkerResult` by reading `.hyperloop/worker-result.yaml` from the worktree/branch, then removing the file from the branch. Build a map of `task_id → WorkerResult`.
 
 If any results were reaped and cycle hooks are configured, call each hook's `after_reap(results)`. This runs BEFORE INTAKE, ADVANCE, and SPAWN — guideline changes from the process-improver are visible to workers spawned in the same cycle.
 
@@ -529,7 +556,7 @@ Implements `StateStore` using files in `.hyperloop/state/` committed to the repo
 
 Sync runs once per cycle after persist, before workers spawn. This ensures workers branch from a trunk that includes the latest task files — without sync, worker PRs would include orchestrator state changes in their diffs.
 
-State files are committed to trunk. This provides full git-history auditability but creates merge conflicts when worker branches carry stale copies. The `PRMergeAction` adapter auto-resolves these: tasks/ take trunk version, reviews/ take branch version.
+State files are committed to trunk. This provides full git-history auditability but creates merge conflicts when worker branches carry stale copies. The `PRMergeAction` adapter auto-resolves these: tasks/ take trunk version, reviews/ take branch version. `.hyperloop/worker-result.yaml` is deleted during rebase if present — it should never exist on trunk.
 
 ### AgentSdkRuntime
 
@@ -537,7 +564,7 @@ Implements `Runtime` using the Claude Agent SDK with local git worktrees:
 
 - `spawn()` → creates a git worktree on the task's branch, starts a Claude agent session in it
 - Workers are isolated: each has its own worktree, own branch, own working directory
-- Worker results are read from review files on the branch after the agent completes
+- `reap()` → reads `.hyperloop/worker-result.yaml` from the worktree filesystem, removes it from the branch (commit + push), then cleans up the worktree. Falls back to the SDK `ResultMessage` if no verdict file exists (agent crashed before writing it).
 
 ### PRMergeAction
 
@@ -545,7 +572,7 @@ Implements `ActionPort` for `merge-pr` using the `gh` CLI:
 
 - Checks PR state (OPEN/CLOSED/MERGED) before operating
 - Recreates PRs if closed or stale-merged
-- Rebases the branch onto trunk, auto-resolving `.hyperloop/state/` file conflicts
+- Rebases the branch onto trunk, auto-resolving `.hyperloop/state/` file conflicts and deleting `.hyperloop/worker-result.yaml` if present
 - Polls GitHub `mergeable` status after rebase (avoids race condition)
 - Squash-merges with trailers preserved
 

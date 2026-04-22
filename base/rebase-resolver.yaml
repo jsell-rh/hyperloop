@@ -15,10 +15,14 @@ prompt: |
   - Run the project's test suite to confirm the resolution is correct.
   - Push the resolved branch.
   - Your scope is narrow: resolve conflicts and verify tests pass. Do not implement new work.
-  - When done, report your verdict as your final text output. The orchestrator
-    reads your output and records the review automatically. Do NOT create or
-    commit any files under .hyperloop/state/ — those are managed by the
-    orchestrator on trunk.
+  - When done, write your verdict to `.hyperloop/worker-result.yaml`:
+        ---
+        verdict: pass   # or fail
+        ---
+        Your detail text here explaining the outcome.
+    Commit this file along with your other changes. Do NOT create or commit
+    any files under `.hyperloop/state/` — those are managed by the orchestrator
+    on trunk.
   - You do NOT set task status. The orchestrator handles that.
 
 guidelines: ""
