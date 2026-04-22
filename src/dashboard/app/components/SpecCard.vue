@@ -9,6 +9,21 @@ const emit = defineEmits<{
   hover: [specRef: string | null]
 }>()
 
+const DISCRETE_THRESHOLD = 12
+
+const useDiscrete = computed(() => props.spec.tasks_total > 0 && props.spec.tasks_total <= DISCRETE_THRESHOLD)
+
+const segments = computed(() => {
+  const s = props.spec
+  const items: { status: string }[] = []
+  for (let i = 0; i < s.tasks_complete; i++) items.push({ status: 'complete' })
+  for (let i = 0; i < s.tasks_failed; i++) items.push({ status: 'failed' })
+  for (let i = 0; i < s.tasks_in_progress; i++) items.push({ status: 'in-progress' })
+  const notStarted = s.tasks_total - s.tasks_complete - s.tasks_failed - s.tasks_in_progress
+  for (let i = 0; i < notStarted; i++) items.push({ status: 'not-started' })
+  return items
+})
+
 const completePercent = computed(() => {
   if (props.spec.tasks_total === 0) return 0
   return (props.spec.tasks_complete / props.spec.tasks_total) * 100
@@ -58,13 +73,30 @@ const isBlocked = computed(() => {
       {{ spec.spec_ref }}
     </p>
 
-    <!-- Stacked progress bar -->
+    <!-- Progress bar -->
     <div class="mt-4">
       <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
         <span>Progress</span>
         <span>{{ spec.tasks_complete }}/{{ spec.tasks_total }}</span>
       </div>
-      <div class="h-2 w-full rounded-full bg-gray-100 dark:bg-gray-800 flex overflow-hidden">
+
+      <!-- Discrete segments (≤12 tasks) -->
+      <div v-if="useDiscrete" class="flex gap-1 h-2">
+        <div
+          v-for="(seg, i) in segments"
+          :key="i"
+          class="flex-1 rounded-full transition-all"
+          :class="{
+            'bg-green-500 dark:bg-green-400': seg.status === 'complete',
+            'bg-red-500 dark:bg-red-400': seg.status === 'failed',
+            'bg-blue-500 dark:bg-blue-400 progress-bar-shimmer': seg.status === 'in-progress',
+            'bg-gray-200 dark:bg-gray-700': seg.status === 'not-started',
+          }"
+        />
+      </div>
+
+      <!-- Continuous bar (>12 tasks) -->
+      <div v-else class="h-2 w-full rounded-full bg-gray-100 dark:bg-gray-800 flex overflow-hidden">
         <div
           v-if="completePercent > 0"
           class="h-2 rounded-full bg-green-500 dark:bg-green-400 transition-all"
