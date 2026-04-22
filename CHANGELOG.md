@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.27.1 (2026-04-22)
+
+### Bug Fixes
+
+- Remove instruction to commit review files from base agent prompts
+  ([`719d44f`](https://github.com/jsell-rh/hyperloop/commit/719d44f403f9c0ce574a9019ced5cfd93009c576))
+
+
 ## v0.27.0 (2026-04-22)
 
 ### Bug Fixes
