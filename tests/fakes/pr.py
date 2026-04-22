@@ -45,6 +45,7 @@ class FakePRManager:
         self._prs: dict[str, _PRRecord] = {}
         self._pr_counter: int = 0
         self._merge_fails: set[str] = set()
+        self._merge_only_fails: set[str] = set()
         self._rebase_fails: set[str] = set()
 
         # Recording for assertions
@@ -55,8 +56,12 @@ class FakePRManager:
     # -- Configuration helpers (for tests) ------------------------------------
 
     def set_merge_fails(self, pr_url: str) -> None:
-        """Pre-configure merge() to return False for this PR URL."""
+        """Pre-configure merge() and wait_mergeable() to return False for this PR URL."""
         self._merge_fails.add(pr_url)
+
+    def set_merge_only_fails(self, pr_url: str) -> None:
+        """Pre-configure merge() to return False, but wait_mergeable() still succeeds."""
+        self._merge_only_fails.add(pr_url)
 
     def set_rebase_fails(self, branch: str) -> None:
         """Pre-configure rebase_branch() to return False for this branch."""
@@ -150,9 +155,10 @@ class FakePRManager:
     def merge(self, pr_url: str, task_id: str, spec_ref: str) -> bool:
         """Squash-merge a PR, preserving trailers. Returns True on success.
 
-        If merge conflict (pre-configured via set_merge_fails), returns False.
+        If merge conflict (pre-configured via set_merge_fails or
+        set_merge_only_fails), returns False.
         """
-        if pr_url in self._merge_fails:
+        if pr_url in self._merge_fails or pr_url in self._merge_only_fails:
             return False
         self._prs[pr_url].state = "MERGED"
         self.merged.append(pr_url)

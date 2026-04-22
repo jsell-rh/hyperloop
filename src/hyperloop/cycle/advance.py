@@ -71,6 +71,7 @@ class TaskTransition:
     round: int | None = None
     review: ReviewRecord | None = None
     pr_url: str | None = None
+    reset_branch: bool = False
 
 
 @dataclass(frozen=True)
@@ -564,6 +565,44 @@ def _advance_action(
             attempts=attempts,
             detail=result.detail,
         )
+
+        # Detect rebase/conflict errors — these indicate a poisoned branch
+        detail_lower = result.detail.lower()
+        is_rebase_error = "rebase" in detail_lower or "conflict" in detail_lower
+
+        if is_rebase_error:
+            # Branch is poisoned — reset task to start fresh
+            detail = (
+                f"Branch reset: {max_action_attempts} consecutive rebase/merge failures. "
+                f"The branch likely has state files in its commit history that cause "
+                f"permanent conflicts. Task reset to not-started for a fresh attempt."
+            )
+            probe.task_reset(
+                task_id=task.id,
+                spec_ref=task.spec_ref,
+                reason=detail,
+                prior_round=task.round,
+                cycle=cycle,
+            )
+            return _StepResult(
+                transitions=[
+                    TaskTransition(
+                        task_id=task.id,
+                        status=TaskStatus.NOT_STARTED,
+                        phase=None,
+                        round=0,
+                        review=ReviewRecord(
+                            round=task.round,
+                            role="orchestrator",
+                            verdict="fail",
+                            detail=detail,
+                        ),
+                        reset_branch=True,
+                    )
+                ]
+            )
+
+        # Non-rebase error — loop back to implementer as before
         detail = f"Action error after {max_action_attempts} attempts: {result.detail}"
         return _StepResult(
             transitions=[

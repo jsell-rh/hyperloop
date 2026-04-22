@@ -66,6 +66,9 @@ class RecordingProbe:
     def task_failed(self, **kw: object) -> None:
         self._record("task_failed", **kw)
 
+    def task_reset(self, **kw: object) -> None:
+        self._record("task_reset", **kw)
+
     def gate_checked(self, **kw: object) -> None:
         self._record("gate_checked", **kw)
 

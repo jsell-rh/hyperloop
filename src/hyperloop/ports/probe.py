@@ -173,6 +173,18 @@ class OrchestratorProbe(Protocol):
         """Task reached terminal failure (max_task_rounds or pipeline failure)."""
         ...
 
+    def task_reset(
+        self,
+        *,
+        task_id: str,
+        spec_ref: str,
+        reason: str,
+        prior_round: int,
+        cycle: int,
+    ) -> None:
+        """Task was reset to not-started due to a poisoned branch."""
+        ...
+
     # ------------------------------------------------------------------
     # Pipeline: gates, merges, conflicts
     # ------------------------------------------------------------------

@@ -275,6 +275,16 @@ class GitStateStore:
         fm["spec_ref"] = spec_ref
         self._write_task_file(task_id, fm)
 
+    def reset_task(self, task_id: str) -> None:
+        """Reset a task to not-started with cleared branch, PR, and round."""
+        fm = self._read_task_file(task_id)
+        fm["status"] = "not-started"
+        fm["phase"] = None
+        fm["round"] = 0
+        fm["branch"] = None
+        fm["pr"] = None
+        self._write_task_file(task_id, fm)
+
     def add_task(self, task: Task) -> None:
         """Add a new task to the store."""
         fm: dict[str, object] = {

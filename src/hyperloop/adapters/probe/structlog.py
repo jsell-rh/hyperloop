@@ -80,6 +80,9 @@ class StructlogProbe:
     def task_failed(self, **kw: object) -> None:
         self._log.error("task_failed", **kw)
 
+    def task_reset(self, **kw: object) -> None:
+        self._log.warning("task_reset", **kw)
+
     # ------------------------------------------------------------------
     # Pipeline: gates, merges, conflicts
     # ------------------------------------------------------------------

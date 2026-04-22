@@ -289,6 +289,50 @@ class TestReadFileContract:
         assert state_store.read_file("does-not-exist.txt") is None
 
 
+class TestResetTaskContract:
+    """reset_task returns task to initial state."""
+
+    def test_reset_clears_status_phase_round_branch_pr(
+        self, state_store: InMemoryStateStore | GitStateStore
+    ) -> None:
+        # Move the task to an advanced state
+        state_store.transition_task(
+            "task-001", TaskStatus.IN_PROGRESS, Phase("implementer"), round=5
+        )
+        state_store.set_task_branch("task-001", "hyperloop/task-001")
+        state_store.set_task_pr("task-001", "https://github.com/org/repo/pull/42")
+
+        # Verify advanced state
+        task = state_store.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.round == 5
+        assert task.branch == "hyperloop/task-001"
+        assert task.pr == "https://github.com/org/repo/pull/42"
+
+        # Reset
+        state_store.reset_task("task-001")
+
+        # Verify reset state
+        task = state_store.get_task("task-001")
+        assert task.status == TaskStatus.NOT_STARTED
+        assert task.phase is None
+        assert task.round == 0
+        assert task.branch is None
+        assert task.pr is None
+
+    def test_reset_preserves_identity_fields(
+        self, state_store: InMemoryStateStore | GitStateStore
+    ) -> None:
+        state_store.transition_task("task-001", TaskStatus.IN_PROGRESS, Phase("verifier"), round=3)
+        state_store.reset_task("task-001")
+
+        task = state_store.get_task("task-001")
+        assert task.id == "task-001"
+        assert task.title == "Implement widget"
+        assert task.spec_ref == "specs/widget.md"
+        assert task.deps == ("task-004",)
+
+
 class TestPersistContract:
     """persist does not raise."""
 

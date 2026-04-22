@@ -243,7 +243,14 @@ class Orchestrator:
             cycle=cycle_num,
         )
         for t in advanced.transitions:
-            self._state.transition_task(t.task_id, t.status, t.phase, t.round)
+            if t.reset_branch:
+                # Poisoned branch — delete remote branch and reset task
+                task = self._state.get_task(t.task_id)
+                if task.branch is not None:
+                    self._delete_remote_branch(task.branch)
+                self._state.reset_task(t.task_id)
+            else:
+                self._state.transition_task(t.task_id, t.status, t.phase, t.round)
             if t.review is not None:
                 self._state.store_review(
                     t.task_id, t.review.round, t.review.role, t.review.verdict, t.review.detail
@@ -403,6 +410,18 @@ class Orchestrator:
             cycle=cycle,
         )
         return composed.text
+
+    def _delete_remote_branch(self, branch: str) -> None:
+        """Best-effort delete of a remote branch. Failures are swallowed."""
+        import contextlib
+        import subprocess
+
+        with contextlib.suppress(Exception):
+            subprocess.run(
+                ["git", "push", "origin", "--delete", branch],
+                capture_output=True,
+                text=True,
+            )
 
     def _check_convergence(self) -> str | None:
         """Check if all tasks are complete/failed."""

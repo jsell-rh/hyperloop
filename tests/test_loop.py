@@ -1339,8 +1339,13 @@ class TestMaxActionAttempts:
         ),
     )
 
-    def test_rebase_failure_exceeds_max_attempts_loops_task_back(self) -> None:
-        """After max_action_attempts consecutive rebase failures, task loops back."""
+    def test_rebase_failure_exceeds_max_attempts_resets_task(self) -> None:
+        """After max_action_attempts consecutive rebase failures, task is reset.
+
+        The reset happens mid-cycle (in ADVANCE), and then SPAWN picks it up
+        immediately, so the task ends the cycle as IN_PROGRESS with a fresh
+        branch and round 0.
+        """
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
@@ -1368,7 +1373,7 @@ class TestMaxActionAttempts:
             max_action_attempts=3,
         )
 
-        # First two failures: task stays IN_PROGRESS
+        # First two failures: task stays IN_PROGRESS at merge-pr
         for _ in range(2):
             orch.run_cycle()
             task = state.get_task("task-001")
@@ -1382,12 +1387,16 @@ class TestMaxActionAttempts:
                 # Manually transition back to merge-pr for next attempt
                 state.transition_task("task-001", TaskStatus.IN_PROGRESS, phase=Phase("merge-pr"))
 
-        # Third failure: should exceed max_action_attempts -> loop back
+        # Third failure: rebase error -> task reset then re-spawned in same cycle
         orch.run_cycle()
         task = state.get_task("task-001")
+        # Task was reset to NOT_STARTED then immediately re-spawned
         assert task.status == TaskStatus.IN_PROGRESS
-        assert task.round == 1  # round incremented
-        assert task.phase == Phase("implementer")  # looped back to start
+        assert task.round == 0  # round reset to 0
+        assert task.phase == Phase("implementer")  # fresh start from pipeline top
+        # Old branch/PR were cleared; new branch assigned
+        assert task.branch is not None
+        assert task.pr is None
 
     def test_successful_merge_resets_rebase_counter(self) -> None:
         """A successful merge resets the rebase attempt counter for a task."""
@@ -1424,3 +1433,229 @@ class TestMaxActionAttempts:
 
         # The counter should be reset (no external way to verify directly,
         # but the task completed successfully — that's the behavior we want)
+
+
+class TestPoisonedBranchReset:
+    """When a branch is poisoned (rebase loops), the task is reset to NOT_STARTED."""
+
+    MERGE_PROCESS = Process(
+        name="merge-process",
+        pipeline=(
+            LoopStep(
+                steps=(
+                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
+                ),
+            ),
+            ActionStep(action="merge-pr"),
+        ),
+    )
+
+    def test_rebase_error_resets_task(self) -> None:
+        """After max_action_attempts rebase errors, task is reset and re-spawned.
+
+        The reset sets status=NOT_STARTED, round=0, branch=None, pr=None.
+        The SPAWN phase in the same cycle then picks it up immediately.
+        """
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+        probe = RecordingProbe()
+
+        pr_url = pr_mgr.create_draft(
+            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
+        )
+        pr_mgr.set_rebase_fails("hyperloop/task-001")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="hyperloop/task-001",
+                round=5,
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            process=self.MERGE_PROCESS,
+            pr_manager=pr_mgr,
+            max_action_attempts=3,
+            probe=probe,
+        )
+
+        # Run 3 cycles to exhaust max_action_attempts
+        for _ in range(3):
+            orch.run_cycle()
+
+        task = state.get_task("task-001")
+        # Task was reset then re-spawned in the same cycle
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.round == 0  # round was reset to 0
+        assert task.phase == Phase("implementer")  # fresh start
+        assert task.pr is None  # PR was cleared
+        # New branch was assigned (old one was cleared)
+        assert task.branch is not None
+
+    def test_rebase_error_fires_task_reset_probe(self) -> None:
+        """The task_reset probe event fires when a branch is reset."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+        probe = RecordingProbe()
+
+        pr_url = pr_mgr.create_draft(
+            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
+        )
+        pr_mgr.set_rebase_fails("hyperloop/task-001")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="hyperloop/task-001",
+                round=3,
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            process=self.MERGE_PROCESS,
+            pr_manager=pr_mgr,
+            max_action_attempts=3,
+            probe=probe,
+        )
+
+        for _ in range(3):
+            orch.run_cycle()
+
+        reset_calls = probe.of_method("task_reset")
+        assert len(reset_calls) == 1
+        assert reset_calls[0]["task_id"] == "task-001"
+        assert reset_calls[0]["prior_round"] == 3
+        assert "rebase" in str(reset_calls[0]["reason"]).lower()
+
+    def test_rebase_error_stores_review(self) -> None:
+        """A review record is stored documenting the branch reset."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr_url = pr_mgr.create_draft(
+            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
+        )
+        pr_mgr.set_rebase_fails("hyperloop/task-001")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="hyperloop/task-001",
+                round=2,
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            process=self.MERGE_PROCESS,
+            pr_manager=pr_mgr,
+            max_action_attempts=3,
+        )
+
+        for _ in range(3):
+            orch.run_cycle()
+
+        findings = state.get_findings("task-001")
+        assert "Branch reset" in findings
+        assert "rebase" in findings.lower()
+
+    def test_non_rebase_error_loops_back(self) -> None:
+        """Non-rebase errors (e.g. merge failed) still loop back to implementer."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr_url = pr_mgr.create_draft(
+            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
+        )
+        # set_merge_only_fails causes merge() to return False but
+        # wait_mergeable() still succeeds, producing "Merge failed" detail
+        # which has no "rebase" or "conflict" keywords
+        pr_mgr.set_merge_only_fails(pr_url)
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="hyperloop/task-001",
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            process=self.MERGE_PROCESS,
+            pr_manager=pr_mgr,
+            max_action_attempts=3,
+        )
+
+        for _ in range(3):
+            orch.run_cycle()
+
+        task = state.get_task("task-001")
+        # Non-rebase error: loops back to implementer instead of resetting
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.phase == Phase("implementer")
+        assert task.round == 1
+
+    def test_reset_task_is_immediately_re_spawned(self) -> None:
+        """After reset, the task is immediately re-spawned in the same cycle."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        pr_url = pr_mgr.create_draft(
+            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
+        )
+        pr_mgr.set_rebase_fails("hyperloop/task-001")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge-pr"),
+                branch="hyperloop/task-001",
+            )
+        )
+        state.set_task_pr("task-001", pr_url)
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            process=self.MERGE_PROCESS,
+            pr_manager=pr_mgr,
+            max_action_attempts=3,
+        )
+
+        # Exhaust attempts -> reset and re-spawn in same cycle
+        for _ in range(3):
+            orch.run_cycle()
+
+        task = state.get_task("task-001")
+        # Task was reset then immediately picked up by SPAWN
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.phase == Phase("implementer")
+        assert task.round == 0
+        assert task.branch is not None  # New branch assigned
+        assert task.pr is None  # PR was cleared

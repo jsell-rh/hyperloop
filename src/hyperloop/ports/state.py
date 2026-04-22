@@ -83,6 +83,14 @@ class StateStore(Protocol):
         """Persist all pending state changes."""
         ...
 
+    def reset_task(self, task_id: str) -> None:
+        """Reset a task to not-started with cleared branch, PR, and round.
+
+        Used when a branch is poisoned (e.g. unrebaseable due to state file
+        history) and the task needs a fresh start.
+        """
+        ...
+
     def sync(self) -> None:
         """Sync state with remote (pull then push). Called once per cycle boundary."""
         ...

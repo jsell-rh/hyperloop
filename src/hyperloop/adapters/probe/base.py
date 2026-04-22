@@ -49,6 +49,9 @@ class NullProbe:
     def task_failed(self, **_: object) -> None:
         pass
 
+    def task_reset(self, **_: object) -> None:
+        pass
+
     def gate_checked(self, **_: object) -> None:
         pass
 
@@ -141,6 +144,9 @@ class MultiProbe:
 
     def task_failed(self, **kw: object) -> None:
         self._call("task_failed", **kw)
+
+    def task_reset(self, **kw: object) -> None:
+        self._call("task_reset", **kw)
 
     def gate_checked(self, **kw: object) -> None:
         self._call("gate_checked", **kw)

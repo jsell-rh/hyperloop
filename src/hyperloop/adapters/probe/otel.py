@@ -331,6 +331,21 @@ class OtelProbe:
         except Exception:
             _log.exception("otel: task_failed failed")
 
+    def task_reset(
+        self,
+        *,
+        task_id: str,
+        **_kw: object,
+    ) -> None:
+        try:
+            if self._run_span is not None:
+                self._run_span.add_event(
+                    "task_reset",
+                    attributes={"hyperloop.task_id": task_id},
+                )
+        except Exception:
+            _log.exception("otel: task_reset failed")
+
     # ------------------------------------------------------------------
     # Pipeline: gates, merges, conflicts
     # ------------------------------------------------------------------

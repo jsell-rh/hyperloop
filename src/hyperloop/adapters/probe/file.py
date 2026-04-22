@@ -103,6 +103,9 @@ class FileProbe:
     def task_failed(self, **kw: object) -> None:
         self._write("task_failed", **kw)
 
+    def task_reset(self, **kw: object) -> None:
+        self._write("task_reset", **kw)
+
     # ------------------------------------------------------------------
     # Pipeline: gates, merges, conflicts
     # ------------------------------------------------------------------

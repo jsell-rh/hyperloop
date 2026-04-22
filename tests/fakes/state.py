@@ -175,6 +175,21 @@ class InMemoryStateStore:
         """Read a file from the in-memory filesystem. Returns None if not found."""
         return self._files.get(path)
 
+    def reset_task(self, task_id: str) -> None:
+        """Reset a task to not-started with cleared branch, PR, and round."""
+        old = self._tasks[task_id]
+        self._tasks[task_id] = Task(
+            id=old.id,
+            title=old.title,
+            spec_ref=old.spec_ref,
+            status=TaskStatus.NOT_STARTED,
+            phase=None,
+            deps=old.deps,
+            round=0,
+            branch=None,
+            pr=None,
+        )
+
     def persist(self, message: str) -> None:
         """Record the persist message (no-op for in-memory, but stores for test assertions)."""
         self.committed_messages.append(message)

@@ -141,6 +141,14 @@ class MatrixProbe:
         body = f"\u274c {task_id} \u00b7 FAILED\n{reason}"
         self._send(body, task_id=task_id)
 
+    def task_reset(self, **kw: object) -> None:
+        task_id = str(kw.get("task_id", ""))
+        reason = str(kw.get("reason", ""))
+        prior_round = kw.get("prior_round", 0)
+
+        body = f"⚠️ {task_id} · RESET (was at round {prior_round})\n{reason}"
+        self._send(body, task_id=task_id)
+
     def merge_attempted(self, **kw: object) -> None:
         task_id = str(kw.get("task_id", ""))
         outcome = str(kw.get("outcome", ""))
