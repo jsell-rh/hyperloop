@@ -223,6 +223,41 @@ class CycleDetail(BaseModel):
     phases: CyclePhases
 
 
+class WorkerHistoryEntry(BaseModel):
+    """A worker execution in a task's history."""
+
+    role: str
+    round: int
+    started_at: str
+    duration_s: float
+    verdict: str | None
+
+
+class TaskInFlight(BaseModel):
+    """An in-progress task with its worker journey."""
+
+    task_id: str
+    title: str
+    status: str
+    phase: str | None
+    round: int
+    spec_ref: str
+    current_worker: ActiveWorker | None
+    worker_history: list[WorkerHistoryEntry]
+
+
+class FlatEvent(BaseModel):
+    """A single non-empty event extracted from a cycle."""
+
+    timestamp: str
+    cycle: int
+    event_type: str
+    task_id: str | None
+    detail: str
+    verdict: str | None
+    duration_s: float | None
+
+
 class ActivityResponse(BaseModel):
     """Response for the activity endpoint."""
 
@@ -231,6 +266,8 @@ class ActivityResponse(BaseModel):
     active_workers: list[ActiveWorker]
     cycles: list[CycleDetail]
     enabled: bool
+    tasks_in_flight: list[TaskInFlight]
+    flattened_events: list[FlatEvent]
 
 
 class PipelineTreeStep(BaseModel):

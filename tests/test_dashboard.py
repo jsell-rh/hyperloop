@@ -583,6 +583,8 @@ class TestActivity:
         assert data["current_cycle"] == 0
         assert data["cycles"] == []
         assert data["active_workers"] == []
+        assert data["tasks_in_flight"] == []
+        assert data["flattened_events"] == []
 
     def test_activity_with_events(self, tmp_path: Path) -> None:
         """Parses JSONL events and returns grouped cycles."""
@@ -672,6 +674,111 @@ class TestActivity:
         # Worker is still active (spawned but not reaped)
         assert len(data["active_workers"]) == 1
         assert data["active_workers"][0]["task_id"] == "task-001"
+        # Flattened events: worker_spawned + task_advanced (not cycle bookkeeping)
+        assert len(data["flattened_events"]) == 2
+        event_types = [e["event_type"] for e in data["flattened_events"]]
+        assert "worker_spawned" in event_types
+        assert "task_advanced" in event_types
+        # tasks_in_flight: no task files in this repo, so empty
+        assert data["tasks_in_flight"] == []
+
+    def test_activity_tasks_in_flight(self, tmp_path: Path) -> None:
+        """Returns in-flight tasks with worker history."""
+        import json
+        from datetime import UTC, datetime
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        # Write an in-progress task
+        _write_task_file(
+            repo,
+            "task-001",
+            {
+                "id": "task-001",
+                "title": "Build widget",
+                "spec_ref": "specs/widget.md@abc123",
+                "status": "in-progress",
+                "phase": "implementer",
+                "deps": [],
+                "round": 2,
+                "branch": "hyperloop/task-001",
+                "pr": None,
+            },
+        )
+
+        # Write events with a reaped worker and an active worker
+        events_dir = tmp_path / "cache"
+        events_dir.mkdir()
+        events_path = events_dir / "events.jsonl"
+
+        now = datetime.now(UTC).isoformat()
+        events = [
+            {
+                "ts": now,
+                "event": "cycle_started",
+                "cycle": 1,
+            },
+            {
+                "ts": now,
+                "event": "worker_spawned",
+                "task_id": "task-001",
+                "role": "implementer",
+                "round": 1,
+                "cycle": 1,
+                "spec_ref": "specs/widget.md",
+            },
+            {
+                "ts": now,
+                "event": "worker_reaped",
+                "task_id": "task-001",
+                "role": "implementer",
+                "round": 1,
+                "cycle": 2,
+                "verdict": "fail",
+                "duration_s": 120.5,
+            },
+            {
+                "ts": now,
+                "event": "worker_spawned",
+                "task_id": "task-001",
+                "role": "implementer",
+                "round": 2,
+                "cycle": 3,
+                "spec_ref": "specs/widget.md",
+            },
+        ]
+        with open(events_path, "w") as f:
+            for ev in events:
+                f.write(json.dumps(ev) + "\n")
+
+        pointer_dir = repo / ".hyperloop"
+        pointer_dir.mkdir(parents=True, exist_ok=True)
+        (pointer_dir / ".dashboard-events-path").write_text(str(events_path))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/activity")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        # Should have one in-flight task
+        assert len(data["tasks_in_flight"]) == 1
+        task = data["tasks_in_flight"][0]
+        assert task["task_id"] == "task-001"
+        assert task["title"] == "Build widget"
+        assert task["phase"] == "implementer"
+        assert task["round"] == 2
+        assert task["spec_ref"] == "specs/widget.md"
+        # Should have one history entry (the reaped worker)
+        assert len(task["worker_history"]) == 1
+        assert task["worker_history"][0]["role"] == "implementer"
+        assert task["worker_history"][0]["verdict"] == "fail"
+        assert task["worker_history"][0]["duration_s"] == 120.5
+        # Should have a current worker (the second spawn, not yet reaped)
+        assert task["current_worker"] is not None
+        assert task["current_worker"]["role"] == "implementer"
 
     def test_file_probe_writes_events(self, tmp_path: Path) -> None:
         """FileProbe writes JSONL events to disk."""

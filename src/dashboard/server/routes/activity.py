@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from dashboard.server.deps import get_repo_path
+from dashboard.server.deps import get_repo_path, get_state
 from dashboard.server.models import (
     ActiveWorker,
     ActivityResponse,
@@ -18,11 +18,14 @@ from dashboard.server.models import (
     CollectPhase,
     CycleDetail,
     CyclePhases,
+    FlatEvent,
     IntakePhase,
     PhaseTransition,
     ReapedWorker,
     SpawnedWorker,
     SpawnPhase,
+    TaskInFlight,
+    WorkerHistoryEntry,
 )
 
 router = APIRouter()
@@ -169,22 +172,26 @@ def _build_cycle_detail(cycle_num: int, evts: list[dict[str, Any]]) -> CycleDeta
 
 
 def _derive_active_workers(events: list[dict[str, Any]]) -> list[ActiveWorker]:
-    """Find workers with worker_spawned but no worker_reaped."""
-    spawned: dict[str, dict[str, Any]] = {}
-    reaped: set[str] = set()
+    """Find workers with worker_spawned but no subsequent worker_reaped.
+
+    Processes events in chronological order so that a respawn after a reap
+    correctly marks the worker as active again.
+    """
+    # Track the latest state per task_id: either a spawn event or None (reaped)
+    latest: dict[str, dict[str, Any] | None] = {}
 
     for ev in events:
         event_type = ev.get("event")
         task_id = str(ev.get("task_id", ""))
         if event_type == "worker_spawned" and task_id:
-            spawned[task_id] = ev
+            latest[task_id] = ev
         elif event_type == "worker_reaped" and task_id:
-            reaped.add(task_id)
+            latest[task_id] = None
 
     now = datetime.now(UTC)
     active: list[ActiveWorker] = []
-    for task_id, ev in spawned.items():
-        if task_id not in reaped:
+    for task_id, ev in latest.items():
+        if ev is not None:
             started_at = str(ev.get("ts", ""))
             duration = 0.0
             if started_at:
@@ -239,6 +246,158 @@ def _derive_status(events: list[dict[str, Any]]) -> str:
     return "running"
 
 
+def _build_tasks_in_flight(
+    events: list[dict[str, Any]],
+    active_workers: list[ActiveWorker],
+) -> list[TaskInFlight]:
+    """Build in-flight task cards from state store and event log."""
+    try:
+        state = get_state()
+        world = state.get_world()
+    except Exception:
+        return []
+
+    active_by_task: dict[str, ActiveWorker] = {w.task_id: w for w in active_workers}
+
+    in_flight: list[TaskInFlight] = []
+    for task in world.tasks.values():
+        if task.status.value not in ("in_progress",):
+            continue
+
+        # Build worker history from events
+        history: list[WorkerHistoryEntry] = []
+        for ev in events:
+            if ev.get("event") == "worker_reaped" and ev.get("task_id") == task.id:
+                history.append(
+                    WorkerHistoryEntry(
+                        role=str(ev.get("role", "")),
+                        round=int(ev.get("round", 0)),
+                        started_at=str(ev.get("ts", "")),
+                        duration_s=float(ev.get("duration_s", 0.0)),
+                        verdict=ev.get("verdict"),
+                    )
+                )
+
+        # Strip @version from spec_ref for display
+        spec_ref = task.spec_ref.split("@")[0] if "@" in task.spec_ref else task.spec_ref
+
+        in_flight.append(
+            TaskInFlight(
+                task_id=task.id,
+                title=task.title,
+                status="in-progress",
+                phase=str(task.phase) if task.phase is not None else None,
+                round=task.round,
+                spec_ref=spec_ref,
+                current_worker=active_by_task.get(task.id),
+                worker_history=history,
+            )
+        )
+
+    # Sort by task ID for stable ordering
+    in_flight.sort(key=lambda t: t.task_id)
+    return in_flight
+
+
+def _build_flattened_events(events: list[dict[str, Any]]) -> list[FlatEvent]:
+    """Extract non-empty events from raw events into a flat list."""
+    flat: list[FlatEvent] = []
+
+    for ev in events:
+        event_type = ev.get("event", "")
+        ts = str(ev.get("ts", ""))
+        cycle = int(ev.get("cycle", 0))
+        task_id = ev.get("task_id")
+        if isinstance(task_id, str) and task_id:
+            pass
+        else:
+            task_id = None
+
+        if event_type == "worker_spawned":
+            role = ev.get("role", "")
+            flat.append(
+                FlatEvent(
+                    timestamp=ts,
+                    cycle=cycle,
+                    event_type="worker_spawned",
+                    task_id=task_id,
+                    detail=f"Spawned {role} for {task_id}",
+                    verdict=None,
+                    duration_s=None,
+                )
+            )
+        elif event_type == "worker_reaped":
+            role = ev.get("role", "")
+            verdict = ev.get("verdict")
+            duration = ev.get("duration_s")
+            dur_str = ""
+            if duration is not None:
+                dur_f = float(duration)
+                if dur_f < 60:
+                    dur_str = f"{dur_f:.0f}s"
+                else:
+                    mins = int(dur_f // 60)
+                    secs = int(dur_f % 60)
+                    dur_str = f"{mins}m {secs}s"
+            flat.append(
+                FlatEvent(
+                    timestamp=ts,
+                    cycle=cycle,
+                    event_type="worker_reaped",
+                    task_id=task_id,
+                    detail=f"Reaped {role} for {task_id} ({verdict}, {dur_str})",
+                    verdict=str(verdict) if verdict else None,
+                    duration_s=float(duration) if duration is not None else None,
+                )
+            )
+        elif event_type == "task_advanced":
+            from_phase = ev.get("from_phase") or "start"
+            to_phase = ev.get("to_phase") or "end"
+            flat.append(
+                FlatEvent(
+                    timestamp=ts,
+                    cycle=cycle,
+                    event_type="task_advanced",
+                    task_id=task_id,
+                    detail=f"{task_id}: {from_phase} → {to_phase}",
+                    verdict=None,
+                    duration_s=None,
+                )
+            )
+        elif event_type == "intake_ran":
+            created = ev.get("created_tasks")
+            detail = "Intake: ran PM"
+            if created is not None:
+                detail = f"Intake: created {created} tasks"
+            flat.append(
+                FlatEvent(
+                    timestamp=ts,
+                    cycle=cycle,
+                    event_type="intake_ran",
+                    task_id=None,
+                    detail=detail,
+                    verdict=None,
+                    duration_s=None,
+                )
+            )
+        elif event_type == "process_improver_ran":
+            flat.append(
+                FlatEvent(
+                    timestamp=ts,
+                    cycle=cycle,
+                    event_type="process_improver_ran",
+                    task_id=None,
+                    detail="Process improver ran",
+                    verdict=None,
+                    duration_s=None,
+                )
+            )
+
+    # Reverse chronological order (most recent first)
+    flat.reverse()
+    return flat
+
+
 @router.get("/api/activity")
 def get_activity(
     since_cycle: int | None = None,
@@ -253,6 +412,8 @@ def get_activity(
             active_workers=[],
             cycles=[],
             enabled=False,
+            tasks_in_flight=[],
+            flattened_events=[],
         )
 
     events = _parse_events(events_path)
@@ -263,12 +424,16 @@ def get_activity(
             active_workers=[],
             cycles=[],
             enabled=False,
+            tasks_in_flight=[],
+            flattened_events=[],
         )
 
     cycles = _group_by_cycle(events, since_cycle, limit)
     active_workers = _derive_active_workers(events)
     current_cycle = _derive_current_cycle(events)
     status = _derive_status(events)
+    tasks_in_flight = _build_tasks_in_flight(events, active_workers)
+    flattened_events = _build_flattened_events(events)
 
     return ActivityResponse(
         current_cycle=current_cycle,
@@ -276,4 +441,6 @@ def get_activity(
         active_workers=active_workers,
         cycles=cycles,
         enabled=True,
+        tasks_in_flight=tasks_in_flight,
+        flattened_events=flattened_events,
     )

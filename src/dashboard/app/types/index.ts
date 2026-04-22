@@ -197,12 +197,43 @@ export interface CycleDetail {
   phases: CyclePhases
 }
 
+export interface WorkerHistoryEntry {
+  role: string
+  round: number
+  started_at: string
+  duration_s: number
+  verdict: string | null
+}
+
+export interface TaskInFlight {
+  task_id: string
+  title: string
+  status: string
+  phase: string | null
+  round: number
+  spec_ref: string
+  current_worker: ActiveWorker | null
+  worker_history: WorkerHistoryEntry[]
+}
+
+export interface FlatEvent {
+  timestamp: string
+  cycle: number
+  event_type: string
+  task_id: string | null
+  detail: string
+  verdict: string | null
+  duration_s: number | null
+}
+
 export interface ActivityResponse {
   current_cycle: number
   orchestrator_status: string
   active_workers: ActiveWorker[]
   cycles: CycleDetail[]
   enabled: boolean
+  tasks_in_flight: TaskInFlight[]
+  flattened_events: FlatEvent[]
 }
 
 // ---------------------------------------------------------------------------
