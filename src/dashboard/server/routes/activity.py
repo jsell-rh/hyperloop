@@ -31,14 +31,22 @@ _STALE_THRESHOLD_S = 120.0
 
 
 def _find_events_path(repo_path: Path) -> Path | None:
-    """Read the pointer file to find the JSONL events path."""
+    """Find the JSONL events file in the cache directory."""
+    import hashlib
+
+    repo_hash = hashlib.md5(str(repo_path).encode()).hexdigest()[:8]
+    events_path = Path.home() / ".cache" / "hyperloop" / repo_hash / "events.jsonl"
+    if events_path.exists():
+        return events_path
+
+    # Legacy: check pointer file in repo (older versions wrote it there)
     pointer = repo_path / ".hyperloop" / ".dashboard-events-path"
-    if not pointer.exists():
-        return None
-    text = pointer.read_text().strip()
-    if not text:
-        return None
-    return Path(text)
+    if pointer.exists():
+        text = pointer.read_text().strip()
+        if text:
+            return Path(text)
+
+    return None
 
 
 def _parse_events(events_path: Path) -> list[dict[str, Any]]:

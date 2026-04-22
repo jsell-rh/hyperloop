@@ -394,9 +394,9 @@ def run(
             probe = _MultiProbe((*probe._probes, file_probe))
 
         # Write a pointer file so the dashboard knows where events are
-        pointer_path = repo_path / ".hyperloop" / ".dashboard-events-path"
-        pointer_path.parent.mkdir(parents=True, exist_ok=True)
-        pointer_path.write_text(str(events_path))
+        # Lives in the cache dir, not the repo, to avoid polluting git
+        pointer_path = events_path.parent / "repo-path"
+        pointer_path.write_text(str(repo_path))
 
     if cfg.runtime == "ambient":
         if cfg.ambient is None:
