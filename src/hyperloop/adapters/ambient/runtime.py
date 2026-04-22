@@ -5,8 +5,7 @@ gets a session created via ``acpctl create session`` with ``--repo-url``
 so the agent gets the repo cloned into its workspace.
 
 Turn completion is detected via AG-UI Server-Sent Events streamed from
-``acpctl session events``.  Results are collected by ``git fetch`` + review
-file parsing from the remote ref.
+``acpctl session events``.
 
 No Ambient agents or inbox — sessions carry the full composed prompt directly.
 """
@@ -15,14 +14,12 @@ from __future__ import annotations
 
 import atexit
 import json
-import re
 import subprocess
 import threading
 import time
 from typing import TYPE_CHECKING, cast
 
 import structlog
-import yaml
 
 from hyperloop.domain.model import Verdict, WorkerHandle, WorkerResult
 
@@ -209,13 +206,7 @@ class AmbientRuntime:
         return "failed"
 
     def reap(self, handle: WorkerHandle) -> WorkerResult:
-        """Collect result from a finished session.
-
-        1. Git fetch branch with exponential backoff.
-        2. Read review file from remote ref.
-        3. Stop session.
-        4. Clean up.
-        """
+        """Collect result from a finished session."""
         task_id = handle.task_id
         session_id = handle.session_id or ""
         branch = self._branches.get(task_id, task_id)
@@ -230,13 +221,10 @@ class AmbientRuntime:
                 detail="branch not fetchable after push",
             )
 
-        # Read review from remote ref
-        result = self._read_review_from_ref(f"origin/{branch}", task_id)
-        if result is None:
-            result = WorkerResult(
-                verdict=Verdict.PASS,
-                detail="Agent completed",
-            )
+        result = WorkerResult(
+            verdict=Verdict.PASS,
+            detail="Agent completed",
+        )
 
         # Stop session and clean up
         self._stop_session(session_id)
@@ -531,66 +519,6 @@ class AmbientRuntime:
             except subprocess.CalledProcessError:
                 time.sleep(delay)
         return False
-
-    def _read_review_from_ref(self, ref: str, task_id: str) -> WorkerResult | None:
-        """Read and parse a review file from a git ref (e.g. origin/branch).
-
-        Uses ``git ls-tree`` to find review files and ``git show`` to read them.
-        """
-        try:
-            ls_result = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    self._repo_path,
-                    "ls-tree",
-                    "--name-only",
-                    ref,
-                    ".hyperloop/state/reviews/",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError:
-            return None
-
-        # Find matching review files for this task
-        prefix = f"{task_id}-round-"
-        matches = sorted(
-            name
-            for name in ls_result.stdout.strip().splitlines()
-            if name.split("/")[-1].startswith(prefix)
-        )
-        if not matches:
-            return None
-
-        review_path = matches[-1]
-        try:
-            show_result = subprocess.run(
-                ["git", "-C", self._repo_path, "show", f"{ref}:{review_path}"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError:
-            return None
-
-        content = show_result.stdout
-        match = re.match(r"^---\n(.*?\n)---\n(.*)", content, re.DOTALL)
-        if match is None:
-            return None
-
-        fm_raw = yaml.safe_load(match.group(1))
-        if not isinstance(fm_raw, dict):
-            return None
-
-        fm = cast("dict[str, object]", fm_raw)
-        body = match.group(2)
-        return WorkerResult(
-            verdict=Verdict(str(fm["verdict"])),
-            detail=body.strip(),
-        )
 
     def _stop_session(self, session_id: str) -> None:
         """Stop an Ambient session (best-effort)."""

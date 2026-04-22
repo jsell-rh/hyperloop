@@ -268,8 +268,8 @@ class TestPoll:
 class TestReap:
     """reap fetches branch and reads review file."""
 
-    def test_reap_fetches_branch_reads_review(self, tmp_path: Path, acpctl_log: Path) -> None:
-        """Set up a git repo with a remote that has a review file."""
+    def test_reap_ignores_review_files_on_branch(self, tmp_path: Path, acpctl_log: Path) -> None:
+        """Review files on the branch are ignored — verdict comes from SDK, not files."""
         remote = tmp_path / "remote"
         remote.mkdir()
         env = {
@@ -286,7 +286,6 @@ class TestReap:
             capture_output=True,
             env=env,
         )
-        # Create branch with review file
         subprocess.run(
             ["git", "-C", str(remote), "checkout", "-b", "feat/task-001"],
             check=True,
@@ -311,11 +310,9 @@ class TestReap:
             capture_output=True,
         )
 
-        # Clone it
         local = tmp_path / "local"
         subprocess.run(["git", "clone", str(remote), str(local)], check=True, capture_output=True)
 
-        # Fake acpctl for this test
         behaviour = textwrap.dedent("""\
             cmd = args[0] if args else ""
 
@@ -337,16 +334,15 @@ class TestReap:
         rt = _make_runtime(acpctl_path, str(local), acpctl_log)
         handle = rt.spawn("task-001", "implementer", "Work.", "feat/task-001")
 
-        # Wait for SSE to finish
         time.sleep(0.5)
         assert rt.poll(handle) == "done"
 
         result = rt.reap(handle)
-        assert result.verdict == Verdict.FAIL
-        assert "Two issues found" in result.detail
+        assert result.verdict == Verdict.PASS
+        assert result.detail == "Agent completed"
 
-    def test_reap_falls_back_when_no_review(self, tmp_path: Path, acpctl_log: Path) -> None:
-        """When no review file exists, reap returns PASS fallback."""
+    def test_reap_returns_pass_when_no_review(self, tmp_path: Path, acpctl_log: Path) -> None:
+        """When no review file exists, reap returns PASS."""
         remote = tmp_path / "remote"
         remote.mkdir()
         env = {
