@@ -2,6 +2,20 @@
 
 <!-- version list -->
 
+## v0.26.0 (2026-04-22)
+
+### Bug Fixes
+
+- Dep graph — mini pipeline bar, fixed-width tooltip, pipeline steps prop
+  ([`c1b5cd0`](https://github.com/jsell-rh/hyperloop/commit/c1b5cd0a9270c2a255bcdd15723974f315da66d8))
+
+- Dep graph — remove icons/bars, phase pill, tooltip clamping, contrast
+  ([`1659e71`](https://github.com/jsell-rh/hyperloop/commit/1659e717ff16fec221289a66d2afbdd339484e1f))
+
+- Dep graph — text overflow, round badge, bar hover tooltips, bar animation
+  ([`e39da9c`](https://github.com/jsell-rh/hyperloop/commit/e39da9c6e16e019f0d2be77afa01c67fe859231e))
+
+
 ## v0.25.1 (2026-04-21)
 
 
