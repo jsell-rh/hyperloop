@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.27.0 (2026-04-22)
+
+### Bug Fixes
+
+- Show loop iteration count on pipeline bracket
+  ([`9999011`](https://github.com/jsell-rh/hyperloop/commit/99990117830fe432ebaa762e0da89b6d112aa01c))
+
+
 ## v0.26.1 (2026-04-22)
 
 
