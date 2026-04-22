@@ -49,11 +49,13 @@ class AgentSdkRuntime:
         worktree_base: str | None = None,
         model: str | None = None,
         probe: OrchestratorProbe | None = None,
+        serial_timeout: float = 3600.0,
     ) -> None:
         self._repo_path = repo_path
         self._worktree_base = worktree_base or f"{repo_path}/worktrees/workers"
         self._model = model
         self._probe = probe
+        self._serial_timeout = serial_timeout
         self._worktrees: dict[str, str] = {}  # task_id -> worktree_path
         self._futures: dict[str, concurrent.futures.Future[WorkerResult]] = {}
 
@@ -215,7 +217,7 @@ class AgentSdkRuntime:
         )
 
         try:
-            future.result(timeout=600)
+            future.result(timeout=self._serial_timeout)
             log.info("sdk_serial_completed", role=role)
             return True
         except concurrent.futures.TimeoutError:

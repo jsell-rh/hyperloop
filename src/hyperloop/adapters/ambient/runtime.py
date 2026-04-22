@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 _BACKOFF_SCHEDULE: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0)
-_SERIAL_TIMEOUT_S: float = 600.0
+_SERIAL_TIMEOUT_S: float = 3600.0
 
 
 class AmbientRuntime:
