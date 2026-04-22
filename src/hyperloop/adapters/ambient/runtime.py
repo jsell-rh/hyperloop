@@ -5,7 +5,8 @@ gets a session created via ``acpctl create session`` with ``--repo-url``
 so the agent gets the repo cloned into its workspace.
 
 Turn completion is detected via AG-UI Server-Sent Events streamed from
-``acpctl session events``.
+``acpctl session events``.  Verdict is read from ``.hyperloop/worker-result.yaml``
+on the fetched branch ref (runtime-agnostic file transport).
 
 No Ambient agents or inbox — sessions carry the full composed prompt directly.
 """
@@ -206,7 +207,14 @@ class AmbientRuntime:
         return "failed"
 
     def reap(self, handle: WorkerHandle) -> WorkerResult:
-        """Collect result from a finished session."""
+        """Collect result from a finished session.
+
+        Reads verdict from .hyperloop/worker-result.yaml on the fetched
+        branch ref, removes the file via a temp worktree, then stops the
+        session. Falls back to PASS if no verdict file exists.
+        """
+        from hyperloop.adapters.verdict import read_verdict_from_ref
+
         task_id = handle.task_id
         session_id = handle.session_id or ""
         branch = self._branches.get(task_id, task_id)
@@ -221,16 +229,68 @@ class AmbientRuntime:
                 detail="branch not fetchable after push",
             )
 
-        result = WorkerResult(
-            verdict=Verdict.PASS,
-            detail="Agent completed",
-        )
+        # Read verdict from fetched ref
+        result = read_verdict_from_ref(self._repo_path, f"origin/{branch}")
+
+        if result is not None:
+            self._clean_verdict_from_remote_branch(branch)
+        else:
+            result = WorkerResult(
+                verdict=Verdict.PASS,
+                detail="Agent completed",
+            )
 
         # Stop session and clean up
         self._stop_session(session_id)
         self._cleanup(task_id, session_id)
 
         return result
+
+    def _clean_verdict_from_remote_branch(self, branch: str) -> None:
+        """Remove the verdict file from a remote branch via a temp worktree."""
+        import tempfile
+
+        from hyperloop.adapters.verdict import VERDICT_FILE
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="hyperloop-verdict-") as tmpdir:
+                subprocess.run(
+                    ["git", "-C", self._repo_path, "worktree", "add", tmpdir, branch],
+                    capture_output=True,
+                    check=True,
+                )
+                try:
+                    verdict_path = f"{tmpdir}/{VERDICT_FILE}"
+                    import os
+
+                    if not os.path.isfile(verdict_path):
+                        return
+                    subprocess.run(
+                        ["git", "-C", tmpdir, "rm", "-f", VERDICT_FILE],
+                        capture_output=True,
+                    )
+                    subprocess.run(
+                        [
+                            "git",
+                            "-C",
+                            tmpdir,
+                            "commit",
+                            "-m",
+                            "orchestrator: clean worker verdict",
+                        ],
+                        capture_output=True,
+                    )
+                    subprocess.run(
+                        ["git", "-C", tmpdir, "push", "--force-with-lease"],
+                        capture_output=True,
+                    )
+                finally:
+                    subprocess.run(
+                        ["git", "-C", self._repo_path, "worktree", "remove", "--force", tmpdir],
+                        capture_output=True,
+                    )
+        except Exception:
+            pass
 
     def cancel(self, handle: WorkerHandle) -> None:
         """Stop a running session and clean up."""

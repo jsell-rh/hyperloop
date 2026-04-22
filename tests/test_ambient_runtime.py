@@ -268,8 +268,8 @@ class TestPoll:
 class TestReap:
     """reap fetches branch and reads review file."""
 
-    def test_reap_ignores_review_files_on_branch(self, tmp_path: Path, acpctl_log: Path) -> None:
-        """Review files on the branch are ignored — verdict comes from SDK, not files."""
+    def test_reap_reads_verdict_file_from_branch(self, tmp_path: Path, acpctl_log: Path) -> None:
+        """Verdict is read from .hyperloop/worker-result.yaml on the branch."""
         remote = tmp_path / "remote"
         remote.mkdir()
         env = {
@@ -291,15 +291,14 @@ class TestReap:
             check=True,
             capture_output=True,
         )
-        reviews_dir = remote / ".hyperloop" / "state" / "reviews"
-        reviews_dir.mkdir(parents=True)
-        (reviews_dir / "task-001-round-0.md").write_text(
-            "---\ntask_id: task-001\nround: 0\nrole: verifier\n"
-            "verdict: fail\n---\nTwo issues found.\n"
+        verdict_dir = remote / ".hyperloop"
+        verdict_dir.mkdir(parents=True)
+        (verdict_dir / "worker-result.yaml").write_text(
+            "---\nverdict: fail\n---\nTwo issues found.\n"
         )
         subprocess.run(["git", "-C", str(remote), "add", "."], check=True, capture_output=True)
         subprocess.run(
-            ["git", "-C", str(remote), "commit", "-m", "review"],
+            ["git", "-C", str(remote), "commit", "-m", "verdict"],
             check=True,
             capture_output=True,
             env=env,
@@ -338,8 +337,8 @@ class TestReap:
         assert rt.poll(handle) == "done"
 
         result = rt.reap(handle)
-        assert result.verdict == Verdict.PASS
-        assert result.detail == "Agent completed"
+        assert result.verdict == Verdict.FAIL
+        assert "Two issues found" in result.detail
 
     def test_reap_returns_pass_when_no_review(self, tmp_path: Path, acpctl_log: Path) -> None:
         """When no review file exists, reap returns PASS."""

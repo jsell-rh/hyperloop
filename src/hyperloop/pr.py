@@ -370,6 +370,9 @@ class PRManager:
                     )
                     return False
 
+                # Remove stale verdict file if present (secondary cleanup)
+                _remove_verdict_file(tmpdir)
+
                 # Push the rebased branch
                 push = subprocess.run(
                     ["git", "-C", tmpdir, "push", "--force-with-lease", "origin", branch],
@@ -396,6 +399,36 @@ class PRManager:
                     capture_output=True,
                     text=True,
                 )
+
+
+def _remove_verdict_file(tmpdir: str) -> None:
+    """Remove .hyperloop/worker-result.yaml from a worktree if present.
+
+    Best-effort — if the file doesn't exist or removal fails, silently
+    continues. The commit is only created if the file was actually removed.
+    """
+    from hyperloop.adapters.verdict import VERDICT_FILE
+
+    verdict_path = os.path.join(tmpdir, VERDICT_FILE)
+    if not os.path.isfile(verdict_path):
+        return
+
+    subprocess.run(
+        ["git", "-C", tmpdir, "rm", "-f", VERDICT_FILE],
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            tmpdir,
+            "commit",
+            "-m",
+            "orchestrator: clean worker verdict",
+        ],
+        capture_output=True,
+        env={**os.environ, "GIT_EDITOR": "true"},
+    )
 
 
 def _pr_body(task_id: str, spec_ref: str, has_gate: bool) -> str:
@@ -436,17 +469,27 @@ def _pr_body(task_id: str, spec_ref: str, has_gate: bool) -> str:
     return "\n".join(lines)
 
 
+def _is_auto_resolvable(path: str) -> bool:
+    """Check if a conflicting file can be auto-resolved."""
+    from hyperloop.adapters.verdict import VERDICT_FILE
+
+    return path.startswith(".hyperloop/state/") or path == VERDICT_FILE
+
+
 def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
-    """Auto-resolve .hyperloop/state/ conflicts during rebase, then continue.
+    """Auto-resolve .hyperloop/state/ and verdict file conflicts during rebase.
 
     State file ownership:
       - tasks/   → take ours (main/trunk, the rebase target)
       - reviews/ → take theirs (worker commit being replayed)
+      - worker-result.yaml → delete (should never exist on trunk)
 
-    If non-state conflicts exist, returns False (caller should abort).
+    If non-resolvable conflicts exist, returns False (caller should abort).
     May loop through multiple conflicting commits (rebase --continue
     can hit the next conflict).
     """
+    from hyperloop.adapters.verdict import VERDICT_FILE
+
     max_rounds = 20  # Safety limit — a rebase shouldn't have 20+ conflicts
     for _ in range(max_rounds):
         # Get list of unmerged (conflicting) files
@@ -459,17 +502,26 @@ def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
         if not conflicted:
             return True  # No more conflicts — rebase is done
 
-        # Check if ALL conflicts are in .hyperloop/state/
-        non_state = [f for f in conflicted if not f.startswith(".hyperloop/state/")]
-        if non_state:
+        non_resolvable = [f for f in conflicted if not _is_auto_resolvable(f)]
+        if non_resolvable:
             return False  # Real conflicts — caller should abort
 
-        # Resolve state files
+        # Resolve each file
         for f in conflicted:
-            if f.startswith(".hyperloop/state/tasks/"):
+            if f == VERDICT_FILE:
+                # Verdict file should never be on trunk — delete it
+                subprocess.run(
+                    ["git", "-C", tmpdir, "rm", "-f", "--", f],
+                    capture_output=True,
+                )
+            elif f.startswith(".hyperloop/state/tasks/"):
                 # Orchestrator owns task files — take trunk version
                 subprocess.run(
                     ["git", "-C", tmpdir, "checkout", "--ours", "--", f],
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "-C", tmpdir, "add", f],
                     capture_output=True,
                 )
             else:
@@ -478,10 +530,10 @@ def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
                     ["git", "-C", tmpdir, "checkout", "--theirs", "--", f],
                     capture_output=True,
                 )
-            subprocess.run(
-                ["git", "-C", tmpdir, "add", f],
-                capture_output=True,
-            )
+                subprocess.run(
+                    ["git", "-C", tmpdir, "add", f],
+                    capture_output=True,
+                )
 
         # Continue the rebase — may hit another conflict on the next commit
         cont = subprocess.run(
