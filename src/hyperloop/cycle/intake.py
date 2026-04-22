@@ -37,7 +37,7 @@ class IntakeResult:
 
 def _unprocessed_specs(state: StateStore) -> list[str]:
     """Return spec file paths that have no corresponding task."""
-    all_specs = state.list_files("specs/*.md")
+    all_specs = state.list_files("specs/**/*.spec.md")
     world = state.get_world()
     covered_refs = {task.spec_ref.split("@")[0] for task in world.tasks.values()}
     return [s for s in all_specs if s not in covered_refs]

@@ -53,7 +53,7 @@ BASE_DIR = Path(__file__).parent.parent / "base"
 def _task(
     task_id: str = "task-001",
     status: TaskStatus = TaskStatus.NOT_STARTED,
-    spec_ref: str = "specs/widget.md",
+    spec_ref: str = "specs/widget.spec.md",
     deps: tuple[str, ...] = (),
     phase: Phase | None = None,
     round: int = 0,
@@ -104,18 +104,18 @@ class TestUnprocessedSpecs:
     def test_spec_with_no_task_is_unprocessed(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/widget.md", "Widget spec content")
+        state.set_file("specs/widget.spec.md", "Widget spec content")
 
         orch = _make_orchestrator(state, runtime)
         unprocessed = orch._unprocessed_specs()
 
-        assert unprocessed == ["specs/widget.md"]
+        assert unprocessed == ["specs/widget.spec.md"]
 
     def test_spec_with_matching_task_is_not_unprocessed(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/widget.md", "Widget spec content")
-        state.add_task(_task(spec_ref="specs/widget.md"))
+        state.set_file("specs/widget.spec.md", "Widget spec content")
+        state.add_task(_task(spec_ref="specs/widget.spec.md"))
 
         orch = _make_orchestrator(state, runtime)
         unprocessed = orch._unprocessed_specs()
@@ -125,15 +125,15 @@ class TestUnprocessedSpecs:
     def test_multiple_specs_mixed_coverage(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/widget.md", "Widget spec")
-        state.set_file("specs/api.md", "API spec")
-        state.set_file("specs/auth.md", "Auth spec")
-        state.add_task(_task(task_id="task-001", spec_ref="specs/widget.md"))
+        state.set_file("specs/widget.spec.md", "Widget spec")
+        state.set_file("specs/api.spec.md", "API spec")
+        state.set_file("specs/auth.spec.md", "Auth spec")
+        state.add_task(_task(task_id="task-001", spec_ref="specs/widget.spec.md"))
 
         orch = _make_orchestrator(state, runtime)
         unprocessed = orch._unprocessed_specs()
 
-        assert unprocessed == ["specs/api.md", "specs/auth.md"]
+        assert unprocessed == ["specs/api.spec.md", "specs/auth.spec.md"]
 
     def test_no_specs_returns_empty(self) -> None:
         state = InMemoryStateStore()
@@ -144,20 +144,18 @@ class TestUnprocessedSpecs:
 
         assert unprocessed == []
 
-    def test_subdirectory_files_not_counted_as_specs(self) -> None:
-        """Files in specs/tasks/, specs/reviews/, etc. are not top-level specs."""
+    def test_nested_spec_files_are_found(self) -> None:
+        """Spec files in subdirectories (specs/iam/*.spec.md) are detected."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        # Only specs/*.md should be counted, not specs/tasks/*.md
-        state.set_file("specs/widget.md", "Widget spec")
-        state.set_file("specs/tasks/task-001.md", "Task file")
+        state.set_file("specs/widget.spec.md", "Widget spec")
+        state.set_file("specs/iam/tenants.spec.md", "Tenants spec")
+        state.set_file("specs/tasks/task-001.md", "Not a spec file")
 
         orch = _make_orchestrator(state, runtime)
         unprocessed = orch._unprocessed_specs()
 
-        # specs/tasks/task-001.md should NOT appear — the glob specs/*.md
-        # does not match subdirectories
-        assert unprocessed == ["specs/widget.md"]
+        assert unprocessed == ["specs/iam/tenants.spec.md", "specs/widget.spec.md"]
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +228,7 @@ class TestPMIntake:
     def test_intake_runs_pm_when_unprocessed_specs_exist(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/widget.md", "Widget spec content")
+        state.set_file("specs/widget.spec.md", "Widget spec content")
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, composer=composer)
@@ -239,13 +237,13 @@ class TestPMIntake:
 
         pm_runs = [r for r in runtime.serial_runs if r.role == "pm"]
         assert len(pm_runs) == 1
-        assert "specs/widget.md" in pm_runs[0].prompt
+        assert "specs/widget.spec.md" in pm_runs[0].prompt
 
     def test_intake_skips_when_all_specs_covered(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/widget.md", "Widget spec content")
-        state.add_task(_task(spec_ref="specs/widget.md"))
+        state.set_file("specs/widget.spec.md", "Widget spec content")
+        state.add_task(_task(spec_ref="specs/widget.spec.md"))
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, composer=composer)
@@ -259,7 +257,7 @@ class TestPMIntake:
         """Without a composer, intake is a no-op."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/widget.md", "Widget spec content")
+        state.set_file("specs/widget.spec.md", "Widget spec content")
 
         orch = _make_orchestrator(state, runtime, composer=None)
 
@@ -270,10 +268,10 @@ class TestPMIntake:
     def test_intake_lists_all_unprocessed_specs_in_prompt(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/api.md", "API spec")
-        state.set_file("specs/auth.md", "Auth spec")
-        state.set_file("specs/widget.md", "Widget spec")
-        state.add_task(_task(spec_ref="specs/widget.md"))
+        state.set_file("specs/api.spec.md", "API spec")
+        state.set_file("specs/auth.spec.md", "Auth spec")
+        state.set_file("specs/widget.spec.md", "Widget spec")
+        state.add_task(_task(spec_ref="specs/widget.spec.md"))
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, composer=composer)
@@ -283,16 +281,16 @@ class TestPMIntake:
         pm_runs = [r for r in runtime.serial_runs if r.role == "pm"]
         assert len(pm_runs) == 1
         prompt = pm_runs[0].prompt
-        assert "specs/api.md" in prompt
-        assert "specs/auth.md" in prompt
-        assert "specs/widget.md" not in prompt  # already covered
+        assert "specs/api.spec.md" in prompt
+        assert "specs/auth.spec.md" in prompt
+        assert "specs/widget.spec.md" not in prompt  # already covered
 
     def test_intake_retriggers_on_task_failure(self) -> None:
         """Intake fires when a task fails, even if all specs are covered."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/widget.md", "Widget spec content")
-        state.add_task(_task(spec_ref="specs/widget.md"))
+        state.set_file("specs/widget.spec.md", "Widget spec content")
+        state.add_task(_task(spec_ref="specs/widget.spec.md"))
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, composer=composer, max_task_rounds=50)
@@ -320,8 +318,8 @@ class TestPMIntake:
         """The failure flag is reset after intake runs, preventing duplicate runs."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/widget.md", "Widget spec content")
-        state.add_task(_task(spec_ref="specs/widget.md"))
+        state.set_file("specs/widget.spec.md", "Widget spec content")
+        state.add_task(_task(spec_ref="specs/widget.spec.md"))
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, composer=composer, max_task_rounds=50)
@@ -363,7 +361,7 @@ class TestSpecRefPinning:
         """Tasks created by the PM agent have @sha appended to spec_ref."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/widget.md", "Widget spec content")
+        state.set_file("specs/widget.spec.md", "Widget spec content")
 
         spec_source = FakeSpecSource()
         spec_source.set_version("abc123")
@@ -371,7 +369,7 @@ class TestSpecRefPinning:
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
 
         def create_task_during_intake(prompt: str) -> bool:
-            state.add_task(_task(task_id="task-new", spec_ref="specs/widget.md"))
+            state.add_task(_task(task_id="task-new", spec_ref="specs/widget.spec.md"))
             return True
 
         runtime.set_serial_callback("pm", create_task_during_intake)
@@ -380,13 +378,13 @@ class TestSpecRefPinning:
         orch.run_cycle()
 
         task = state.get_task("task-new")
-        assert task.spec_ref == "specs/widget.md@abc123"
+        assert task.spec_ref == "specs/widget.spec.md@abc123"
 
     def test_existing_tasks_not_re_pinned(self) -> None:
         """Tasks that existed before intake are not modified."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/new.md", "New spec")
+        state.set_file("specs/new.spec.md", "New spec")
         state.add_task(_task(task_id="task-old", spec_ref="specs/old.md@oldsha"))
 
         spec_source = FakeSpecSource()
@@ -404,7 +402,7 @@ class TestSpecRefPinning:
         """If PM writes spec_ref with @sha already, don't append again."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/widget.md", "Widget spec")
+        state.set_file("specs/widget.spec.md", "Widget spec")
 
         spec_source = FakeSpecSource()
         spec_source.set_version("abc123")
@@ -412,7 +410,9 @@ class TestSpecRefPinning:
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
 
         def create_pinned_task(prompt: str) -> bool:
-            state.add_task(_task(task_id="task-pre-pinned", spec_ref="specs/widget.md@already"))
+            state.add_task(
+                _task(task_id="task-pre-pinned", spec_ref="specs/widget.spec.md@already")
+            )
             return True
 
         runtime.set_serial_callback("pm", create_pinned_task)
@@ -421,18 +421,18 @@ class TestSpecRefPinning:
         orch.run_cycle()
 
         task = state.get_task("task-pre-pinned")
-        assert task.spec_ref == "specs/widget.md@already"
+        assert task.spec_ref == "specs/widget.spec.md@already"
 
     def test_no_pinning_without_spec_source(self) -> None:
         """Without a spec_source, spec_ref stays bare (no crash)."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/widget.md", "Widget spec")
+        state.set_file("specs/widget.spec.md", "Widget spec")
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
 
         def create_task(prompt: str) -> bool:
-            state.add_task(_task(task_id="task-bare", spec_ref="specs/widget.md"))
+            state.add_task(_task(task_id="task-bare", spec_ref="specs/widget.spec.md"))
             return True
 
         runtime.set_serial_callback("pm", create_task)
@@ -441,14 +441,14 @@ class TestSpecRefPinning:
         orch.run_cycle()
 
         task = state.get_task("task-bare")
-        assert task.spec_ref == "specs/widget.md"
+        assert task.spec_ref == "specs/widget.spec.md"
 
     def test_unprocessed_specs_recognizes_pinned_refs(self) -> None:
-        """A task with spec_ref 'specs/widget.md@sha' covers 'specs/widget.md'."""
+        """A task with spec_ref 'specs/widget.spec.md@sha' covers 'specs/widget.spec.md'."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.set_file("specs/widget.md", "Widget spec")
-        state.add_task(_task(spec_ref="specs/widget.md@abc123"))
+        state.set_file("specs/widget.spec.md", "Widget spec")
+        state.add_task(_task(spec_ref="specs/widget.spec.md@abc123"))
 
         orch = _make_orchestrator(state, runtime)
         unprocessed = orch._unprocessed_specs()
@@ -468,7 +468,7 @@ class TestProcessImprover:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task())
-        state.set_file("specs/widget.md", "Widget spec")
+        state.set_file("specs/widget.spec.md", "Widget spec")
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, composer=composer, max_task_rounds=50)
@@ -494,7 +494,7 @@ class TestProcessImprover:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task())
-        state.set_file("specs/widget.md", "Widget spec")
+        state.set_file("specs/widget.spec.md", "Widget spec")
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
         orch = _make_orchestrator(state, runtime, composer=composer)
@@ -586,19 +586,19 @@ class TestInMemoryListFiles:
 
     def test_matches_top_level_specs(self) -> None:
         state = InMemoryStateStore()
-        state.set_file("specs/widget.md", "content")
-        state.set_file("specs/api.md", "content")
+        state.set_file("specs/widget.spec.md", "content")
+        state.set_file("specs/api.spec.md", "content")
 
         result = state.list_files("specs/*.md")
-        assert result == ["specs/api.md", "specs/widget.md"]
+        assert result == ["specs/api.spec.md", "specs/widget.spec.md"]
 
     def test_does_not_match_subdirectory_files(self) -> None:
         state = InMemoryStateStore()
-        state.set_file("specs/widget.md", "content")
+        state.set_file("specs/widget.spec.md", "content")
         state.set_file("specs/tasks/task-001.md", "content")
 
         result = state.list_files("specs/*.md")
-        assert result == ["specs/widget.md"]
+        assert result == ["specs/widget.spec.md"]
 
     def test_empty_store_returns_empty_list(self) -> None:
         state = InMemoryStateStore()

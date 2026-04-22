@@ -164,12 +164,19 @@ class InMemoryStateStore:
     def list_files(self, pattern: str) -> list[str]:
         """List file paths matching a glob pattern against in-memory files.
 
-        Uses PurePosixPath.match to respect directory boundaries (``*`` does
-        not cross ``/``), consistent with pathlib.Path.glob behaviour.
+        Uses pathlib.Path.glob semantics: ``*`` does not cross ``/``,
+        ``**`` matches zero or more directories.
         """
-        from pathlib import PurePosixPath
+        import tempfile
+        from pathlib import Path
 
-        return sorted(p for p in self._files if PurePosixPath(p).match(pattern))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            for p in self._files:
+                fp = root / p
+                fp.parent.mkdir(parents=True, exist_ok=True)
+                fp.touch()
+            return sorted(str(p.relative_to(root)) for p in root.glob(pattern) if p.is_file())
 
     def read_file(self, path: str) -> str | None:
         """Read a file from the in-memory filesystem. Returns None if not found."""
