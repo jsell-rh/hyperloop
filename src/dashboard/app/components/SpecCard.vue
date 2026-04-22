@@ -5,6 +5,10 @@ const props = defineProps<{
   spec: SpecSummary
 }>()
 
+const emit = defineEmits<{
+  hover: [specRef: string | null]
+}>()
+
 const completePercent = computed(() => {
   if (props.spec.tasks_total === 0) return 0
   return (props.spec.tasks_complete / props.spec.tasks_total) * 100
@@ -33,6 +37,8 @@ const isBlocked = computed(() => {
   <NuxtLink
     :to="specPath"
     class="block rounded-lg bg-white dark:bg-gray-900 p-5 transition-all duration-200 hover:shadow-card-hover hover:-translate-y-px"
+    @mouseenter="emit('hover', spec.spec_ref)"
+    @mouseleave="emit('hover', null)"
     :class="isBlocked
       ? 'ring-1 ring-red-200 dark:ring-red-800/50 bg-red-50/30 dark:bg-red-950/10 shadow-card dark:shadow-none'
       : 'shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none'"

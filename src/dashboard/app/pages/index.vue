@@ -92,6 +92,9 @@ useHead({ title: computed(() => {
   return 'Hyperloop Dashboard'
 }) })
 
+// Spec hover → graph highlight
+const hoveredSpecRef = ref<string | null>(null)
+
 // Collapsible dependency graph (A4)
 const graphExpanded = ref(false)
 
@@ -164,6 +167,7 @@ onUnmounted(() => {
         v-for="spec in sortedSpecs"
         :key="spec.spec_ref"
         :spec="spec"
+        @hover="hoveredSpecRef = $event"
       />
     </div>
 
@@ -229,7 +233,7 @@ onUnmounted(() => {
       </button>
       <Transition name="expand">
         <div v-if="graphExpanded" class="px-5 pb-5">
-          <DependencyGraph :graph="graph" :pipeline-steps="pipelineSteps ?? undefined" />
+          <DependencyGraph :graph="graph" :pipeline-steps="pipelineSteps ?? undefined" :highlight-spec-ref="hoveredSpecRef" />
         </div>
       </Transition>
     </div>

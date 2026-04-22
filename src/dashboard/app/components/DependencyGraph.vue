@@ -9,6 +9,7 @@ interface PipelineStepInfo {
 const props = defineProps<{
   graph: GraphData
   pipelineSteps?: PipelineStepInfo[]
+  highlightSpecRef?: string | null
 }>()
 
 // ---------------------------------------------------------------------------
@@ -240,8 +241,9 @@ function getNodeOpacity(status: string): number {
   return 1
 }
 
-function getNodeFilter(status: string, isHovered: boolean): string | undefined {
+function getNodeFilter(status: string, isHovered: boolean, nodeId: string): string | undefined {
   if (isHovered) return 'url(#hover-glow)'
+  if (isNodeHighlightedBySpec(nodeId)) return 'url(#hover-glow)'
   if (status === 'in-progress') return 'url(#in-progress-glow)'
   if (status === 'failed') return 'url(#failed-glow)'
   return undefined
@@ -363,6 +365,20 @@ const descendantMap = computed(() => {
   return map
 })
 
+// Build a lookup from node id to spec_ref for spec highlighting
+const nodeSpecMap = computed(() => {
+  const map = new Map<string, string>()
+  for (const n of props.graph.nodes) {
+    map.set(n.id, n.spec_ref.split('@')[0])
+  }
+  return map
+})
+
+function isNodeHighlightedBySpec(nodeId: string): boolean {
+  if (!props.highlightSpecRef) return false
+  return nodeSpecMap.value.get(nodeId) === props.highlightSpecRef
+}
+
 function isRelated(nodeId: string): boolean {
   if (!activeNodeId.value) return true
   if (nodeId === activeNodeId.value) return true
@@ -372,10 +388,19 @@ function isRelated(nodeId: string): boolean {
 }
 
 function getNodeDimOpacity(nodeId: string, status: string): number {
-  if (!activeNodeId.value) return getNodeOpacity(status)
-  if (isRelated(nodeId)) return getNodeOpacity(status)
-  if (status === 'complete') return 0.08
-  return 0.15
+  // Node hover takes precedence over spec highlight
+  if (activeNodeId.value) {
+    if (isRelated(nodeId)) return getNodeOpacity(status)
+    if (status === 'complete') return 0.08
+    return 0.15
+  }
+  // Spec card hover
+  if (props.highlightSpecRef) {
+    if (isNodeHighlightedBySpec(nodeId)) return 1
+    if (status === 'complete') return 0.08
+    return 0.15
+  }
+  return getNodeOpacity(status)
 }
 
 function isEdgeRelated(edge: LayoutEdge): boolean {
@@ -383,10 +408,21 @@ function isEdgeRelated(edge: LayoutEdge): boolean {
   return isRelated(edge.fromId) && isRelated(edge.toId)
 }
 
+function isEdgeHighlightedBySpec(edge: LayoutEdge): boolean {
+  if (!props.highlightSpecRef) return false
+  return isNodeHighlightedBySpec(edge.fromId) && isNodeHighlightedBySpec(edge.toId)
+}
+
 function getEdgeDimOpacity(edge: LayoutEdge): number {
-  if (!activeNodeId.value) return getEdgeOpacity(edge.sourceStatus)
-  if (isEdgeRelated(edge)) return getEdgeOpacity(edge.sourceStatus)
-  return 0.05
+  if (activeNodeId.value) {
+    if (isEdgeRelated(edge)) return getEdgeOpacity(edge.sourceStatus)
+    return 0.05
+  }
+  if (props.highlightSpecRef) {
+    if (isEdgeHighlightedBySpec(edge)) return getEdgeOpacity(edge.sourceStatus)
+    return 0.05
+  }
+  return getEdgeOpacity(edge.sourceStatus)
 }
 
 // ---------------------------------------------------------------------------
@@ -1038,7 +1074,7 @@ onUnmounted(() => {
             :stroke="getNodeStroke(node.status)"
             :stroke-width="activeNodeId === node.id ? 3 : getNodeStrokeWidth(node.status)"
             :stroke-dasharray="getNodeStrokeDash(node.status)"
-            :filter="getNodeFilter(node.status, activeNodeId === node.id)"
+            :filter="getNodeFilter(node.status, activeNodeId === node.id, node.id)"
             class="graph-node-rect"
             :class="{
               'animate-badge-pulse-urgent': node.status === 'in-progress' && node.round >= 2,
