@@ -3,12 +3,37 @@
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import yaml
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def _extract_agent(raw: object) -> tuple[str, dict[str, str]] | None:
+    """Extract agent name and template from a raw YAML document.
+
+    Returns (name, {"prompt": ..., "guidelines": ...}) or None if not an Agent doc.
+    """
+    if not isinstance(raw, dict):
+        return None
+    doc = cast("dict[str, object]", raw)
+    if doc.get("kind") != "Agent":
+        return None
+    metadata = doc.get("metadata")
+    name = ""
+    if isinstance(metadata, dict):
+        meta = cast("dict[str, object]", metadata)
+        name = str(meta.get("name", ""))
+    if not name:
+        name = str(doc.get("name", ""))
+    if not name:
+        return None
+    return name, {
+        "prompt": str(doc.get("prompt", "")),
+        "guidelines": str(doc.get("guidelines", "")).strip(),
+    }
 
 
 def load_agent_templates(repo_path: Path) -> dict[str, dict[str, str]]:
@@ -31,19 +56,12 @@ def load_agent_templates(repo_path: Path) -> dict[str, dict[str, str]]:
             timeout=120,
         )
         if result.returncode == 0 and result.stdout.strip():
-            for doc in yaml.safe_load_all(result.stdout):
-                if not isinstance(doc, dict) or doc.get("kind") != "Agent":
+            for raw_doc in yaml.safe_load_all(result.stdout):
+                extracted = _extract_agent(raw_doc)
+                if extracted is None:
                     continue
-                metadata = doc.get("metadata", {})
-                name = metadata.get("name", "") if isinstance(metadata, dict) else ""
-                if not name:
-                    name = str(doc.get("name", ""))
-                if not name:
-                    continue
-                templates[name] = {
-                    "prompt": str(doc.get("prompt", "")),
-                    "guidelines": str(doc.get("guidelines", "")).strip(),
-                }
+                name, tmpl = extracted
+                templates[name] = tmpl
             if templates:
                 return templates
 
@@ -57,19 +75,12 @@ def load_agent_templates(repo_path: Path) -> dict[str, dict[str, str]]:
             continue
         try:
             with open(yaml_file) as f:
-                doc = yaml.safe_load(f)
+                raw_doc = yaml.safe_load(f)
         except (yaml.YAMLError, OSError):
             continue
-        if not isinstance(doc, dict) or doc.get("kind") != "Agent":
+        extracted = _extract_agent(raw_doc)
+        if extracted is None:
             continue
-        metadata = doc.get("metadata", {})
-        name = metadata.get("name", "") if isinstance(metadata, dict) else ""
-        if not name:
-            name = str(doc.get("name", ""))
-        if not name:
-            continue
-        templates[name] = {
-            "prompt": str(doc.get("prompt", "")),
-            "guidelines": str(doc.get("guidelines", "")).strip(),
-        }
+        name, tmpl = extracted
+        templates[name] = tmpl
     return templates

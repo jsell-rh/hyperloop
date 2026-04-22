@@ -7,6 +7,7 @@ FakePRManager (tests/fakes/pr.py) for testing without a real GitHub repo.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from typing import TYPE_CHECKING
@@ -487,7 +488,7 @@ def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
             ["git", "-C", tmpdir, "rebase", "--continue"],
             capture_output=True,
             text=True,
-            env={**subprocess.os.environ, "GIT_EDITOR": "true"},
+            env={**os.environ, "GIT_EDITOR": "true"},
         )
         if cont.returncode == 0:
             return True  # Rebase completed successfully

@@ -143,8 +143,11 @@ class StructlogProbe:
     def prompt_composed(self, **kw: object) -> None:
         sections = kw.pop("sections", ())
         section_sources: list[str] = []
-        if isinstance(sections, tuple):
-            section_sources = [getattr(s, "source", str(s)) for s in sections]
+        if isinstance(sections, (tuple, list)):
+            section_sources = [
+                str(getattr(s, "source", str(s)))
+                for s in sections  # type: ignore[union-attr]
+            ]
         kw_out = {
             **kw,
             "section_count": len(section_sources),

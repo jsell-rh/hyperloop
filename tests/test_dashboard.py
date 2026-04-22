@@ -10,10 +10,10 @@ import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
+import yaml
 
 if TYPE_CHECKING:
     from pathlib import Path
-import yaml
 from fastapi.testclient import TestClient
 
 from dashboard.server import deps
@@ -43,7 +43,7 @@ def _init_git_repo(path: Path) -> None:
     )
 
 
-def _write_task_file(repo: Path, task_id: str, fm: dict) -> None:
+def _write_task_file(repo: Path, task_id: str, fm: dict[str, object]) -> None:
     """Write a task file with YAML frontmatter."""
     tasks_dir = repo / ".hyperloop" / "state" / "tasks"
     tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -91,7 +91,7 @@ def _make_client(repo: Path) -> TestClient:
 
 
 @pytest.fixture
-def seeded_repo(tmp_path):
+def seeded_repo(tmp_path: Path) -> Path:
     """Create a temp git repo with two tasks and one spec."""
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -134,7 +134,7 @@ def seeded_repo(tmp_path):
 
 
 class TestHealth:
-    def test_health_returns_ok(self, seeded_repo):
+    def test_health_returns_ok(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
         resp = client.get("/api/health")
         assert resp.status_code == 200
@@ -146,7 +146,7 @@ class TestHealth:
 
 
 class TestTasks:
-    def test_list_all_tasks(self, seeded_repo):
+    def test_list_all_tasks(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
         resp = client.get("/api/tasks")
         assert resp.status_code == 200
@@ -155,7 +155,7 @@ class TestTasks:
         ids = {t["id"] for t in data}
         assert ids == {"task-001", "task-002"}
 
-    def test_filter_by_status(self, seeded_repo):
+    def test_filter_by_status(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
         resp = client.get("/api/tasks", params={"status": "in-progress"})
         assert resp.status_code == 200
@@ -163,14 +163,14 @@ class TestTasks:
         assert len(data) == 1
         assert data[0]["id"] == "task-001"
 
-    def test_filter_by_spec_ref(self, seeded_repo):
+    def test_filter_by_spec_ref(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
         resp = client.get("/api/tasks", params={"spec_ref": "specs/widget.md"})
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 2
 
-    def test_task_detail(self, seeded_repo):
+    def test_task_detail(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
         resp = client.get("/api/tasks/task-001")
         assert resp.status_code == 200
@@ -186,7 +186,7 @@ class TestTasks:
         assert review["verdict"] == "fail"
         assert "null check" in review["detail"]
 
-    def test_task_detail_with_deps(self, seeded_repo):
+    def test_task_detail_with_deps(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
         resp = client.get("/api/tasks/task-002")
         assert resp.status_code == 200
@@ -194,7 +194,7 @@ class TestTasks:
         assert data["deps"] == ["task-001"]
         assert data["reviews"] == []
 
-    def test_task_detail_deps_detail(self, seeded_repo):
+    def test_task_detail_deps_detail(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
         resp = client.get("/api/tasks/task-002")
         assert resp.status_code == 200
@@ -205,21 +205,21 @@ class TestTasks:
         assert deps_detail[0]["title"] == "Build widget"
         assert deps_detail[0]["status"] == "in-progress"
 
-    def test_task_detail_no_deps_has_empty_detail(self, seeded_repo):
+    def test_task_detail_no_deps_has_empty_detail(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
         resp = client.get("/api/tasks/task-001")
         assert resp.status_code == 200
         data = resp.json()
         assert data["deps_detail"] == []
 
-    def test_task_not_found(self, seeded_repo):
+    def test_task_not_found(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
         resp = client.get("/api/tasks/task-999")
         assert resp.status_code == 404
 
 
 class TestSpecs:
-    def test_list_specs(self, seeded_repo):
+    def test_list_specs(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
         resp = client.get("/api/specs")
         assert resp.status_code == 200
@@ -233,7 +233,7 @@ class TestSpecs:
         assert widget_spec["tasks_complete"] == 0
         assert widget_spec["tasks_failed"] == 0
 
-    def test_spec_detail(self, seeded_repo):
+    def test_spec_detail(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
         resp = client.get("/api/specs/specs/widget.md")
         assert resp.status_code == 200
@@ -242,14 +242,14 @@ class TestSpecs:
         assert "Widget Feature" in data["content"]
         assert len(data["tasks"]) == 2
 
-    def test_spec_not_found(self, seeded_repo):
+    def test_spec_not_found(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
         resp = client.get("/api/specs/specs/nonexistent.md")
         assert resp.status_code == 404
 
 
 class TestSummary:
-    def test_summary_counts(self, seeded_repo):
+    def test_summary_counts(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
         resp = client.get("/api/summary")
         assert resp.status_code == 200
@@ -264,7 +264,7 @@ class TestSummary:
 
 
 class TestEmptyRepo:
-    def test_empty_repo_endpoints(self, tmp_path):
+    def test_empty_repo_endpoints(self, tmp_path: Path) -> None:
         """All endpoints return gracefully on a repo with no tasks."""
         repo = tmp_path / "empty"
         repo.mkdir()
@@ -281,7 +281,7 @@ class TestEmptyRepo:
 
 
 class TestPipeline:
-    def test_pipeline_returns_steps(self, tmp_path):
+    def test_pipeline_returns_steps(self, tmp_path: Path) -> None:
         """Pipeline endpoint returns flattened steps from process.yaml."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -313,7 +313,7 @@ class TestPipeline:
         assert data[2] == {"name": "pr-require-label", "type": "gate", "in_loop": False}
         assert data[3] == {"name": "merge-pr", "type": "action", "in_loop": False}
 
-    def test_pipeline_empty_when_no_process(self, tmp_path):
+    def test_pipeline_empty_when_no_process(self, tmp_path: Path) -> None:
         """Pipeline endpoint returns empty list when no process.yaml exists."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -326,7 +326,7 @@ class TestPipeline:
 
 
 class TestPromptReconstruction:
-    def test_prompt_returns_sections(self, tmp_path):
+    def test_prompt_returns_sections(self, tmp_path: Path) -> None:
         """Prompt endpoint returns reconstructed prompt sections for a task."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -381,7 +381,7 @@ class TestPromptReconstruction:
         prompt_section = next(s for s in sections if s["label"] == "prompt")
         assert "task-001" in prompt_section["content"]
 
-    def test_prompt_empty_when_no_templates(self, tmp_path):
+    def test_prompt_empty_when_no_templates(self, tmp_path: Path) -> None:
         """Prompt endpoint returns empty list when no agent templates exist."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -409,7 +409,7 @@ class TestPromptReconstruction:
         assert resp.status_code == 200
         assert resp.json() == []
 
-    def test_prompt_not_found_for_missing_task(self, tmp_path):
+    def test_prompt_not_found_for_missing_task(self, tmp_path: Path) -> None:
         """Prompt endpoint returns 404 for unknown task."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -420,7 +420,9 @@ class TestPromptReconstruction:
 
 
 class TestCompleteSpec:
-    def test_spec_complete_when_all_terminal_with_at_least_one_complete(self, tmp_path):
+    def test_spec_complete_when_all_terminal_with_at_least_one_complete(
+        self, tmp_path: Path
+    ) -> None:
         """A spec is complete when all tasks are terminal and at least one is complete."""
         repo = tmp_path / "repo"
         repo.mkdir()
@@ -913,7 +915,7 @@ class TestProcess:
 
         process_dir = repo / ".hyperloop" / "agents" / "process"
         process_dir.mkdir(parents=True)
-        process_yaml = {
+        process_yaml: dict[str, object] = {
             "apiVersion": "hyperloop.io/v1",
             "kind": "Process",
             "metadata": {"name": "default"},

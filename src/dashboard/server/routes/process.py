@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import yaml
 from fastapi import APIRouter
@@ -49,12 +49,14 @@ def _find_and_read_process_yaml(repo_path: Path) -> dict[str, object]:
         return {}
 
     for doc in docs:
-        if isinstance(doc, dict) and doc.get("kind") == "Process":
-            return doc  # type: ignore[return-value]
+        if isinstance(doc, dict):
+            typed_doc = cast("dict[str, object]", doc)
+            if typed_doc.get("kind") == "Process":
+                return typed_doc
 
     # If no Process kind found, return the first doc if it's a dict
     if docs and isinstance(docs[0], dict):
-        return docs[0]
+        return cast("dict[str, object]", docs[0])
 
     return {}
 
@@ -68,7 +70,7 @@ def _parse_pipeline_tree(steps: list[object]) -> list[PipelineTreeStep]:
     for raw_step in steps:
         if not isinstance(raw_step, dict):
             continue
-        step: dict[str, object] = raw_step
+        step = cast("dict[str, object]", raw_step)
         if "agent" in step:
             result.append(PipelineTreeStep(type="agent", name=str(step["agent"])))
         elif "gate" in step:
@@ -79,7 +81,7 @@ def _parse_pipeline_tree(steps: list[object]) -> list[PipelineTreeStep]:
             children = step["loop"]
             child_steps: list[PipelineTreeStep] = []
             if isinstance(children, list):
-                child_steps = _parse_pipeline_tree(children)
+                child_steps = _parse_pipeline_tree(cast("list[object]", children))
             result.append(PipelineTreeStep(type="loop", children=child_steps))
     return result
 
@@ -105,10 +107,11 @@ def _read_process_learning(repo_path: Path) -> ProcessLearning:
             continue
         if not isinstance(doc, dict):
             continue
+        typed_doc = cast("dict[str, object]", doc)
 
         # Extract agent name from filename (e.g., "implementer-overlay.yaml" -> "implementer")
         agent_name = overlay_file.stem.replace("-overlay", "")
-        agent_guidelines = doc.get("guidelines", "")
+        agent_guidelines = typed_doc.get("guidelines", "")
         if isinstance(agent_guidelines, str) and agent_guidelines.strip():
             patched_agents.append(agent_name)
             guidelines[agent_name] = agent_guidelines.strip()
@@ -133,12 +136,14 @@ def _read_kustomization_refs(repo_path: Path) -> dict[str, str | None]:
             continue
         if not isinstance(doc, dict):
             continue
+        typed_doc = cast("dict[str, object]", doc)
 
         # Look for resources or bases entries with remote refs
-        resources = doc.get("resources", [])
+        resources = typed_doc.get("resources", [])
         if isinstance(resources, list) and resources:
             # The first resource is typically the base ref
-            return {"base_ref": str(resources[0])}
+            res_list = cast("list[object]", resources)
+            return {"base_ref": str(res_list[0])}
 
     return {"base_ref": None}
 
@@ -153,7 +158,7 @@ def get_process() -> ProcessResponse:
     # Parse pipeline tree
     pipeline_raw_list = process_yaml.get("pipeline", [])
     pipeline_steps = _parse_pipeline_tree(
-        pipeline_raw_list if isinstance(pipeline_raw_list, list) else []
+        cast("list[object]", pipeline_raw_list) if isinstance(pipeline_raw_list, list) else []
     )
 
     # Raw YAML for display
@@ -167,9 +172,9 @@ def get_process() -> ProcessResponse:
     actions_raw = process_yaml.get("actions", {})
     hooks_raw = process_yaml.get("hooks", {})
 
-    gates: dict[str, object] = gates_raw if isinstance(gates_raw, dict) else {}
-    actions: dict[str, object] = actions_raw if isinstance(actions_raw, dict) else {}
-    hooks: dict[str, object] = hooks_raw if isinstance(hooks_raw, dict) else {}
+    gates = cast("dict[str, object]", gates_raw) if isinstance(gates_raw, dict) else {}
+    actions = cast("dict[str, object]", actions_raw) if isinstance(actions_raw, dict) else {}
+    hooks = cast("dict[str, object]", hooks_raw) if isinstance(hooks_raw, dict) else {}
 
     # Process learning
     process_learning = _read_process_learning(repo_path)

@@ -24,6 +24,8 @@ from hyperloop.domain.pipeline import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from hyperloop.domain.model import PipelineStep, Task
     from hyperloop.domain.pipeline import PipelineExecutor
     from hyperloop.ports.runtime import Runtime, WorkerPollStatus
@@ -133,7 +135,7 @@ def collect_steps_of_type(steps: tuple[PipelineStep, ...], step_type: type) -> l
 
 
 def build_world(
-    workers: dict[str, tuple[object, PipelinePosition, float]],
+    workers: Mapping[str, tuple[object, PipelinePosition, float]],
     state: StateStore,
     runtime: Runtime,
 ) -> World:

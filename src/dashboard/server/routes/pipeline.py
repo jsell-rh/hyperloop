@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import yaml
 from fastapi import APIRouter
@@ -28,7 +28,7 @@ def _flatten_steps(steps: list[object], *, in_loop: bool = False) -> list[Pipeli
     for raw_step in steps:
         if not isinstance(raw_step, dict):
             continue
-        step: dict[str, object] = raw_step
+        step = cast("dict[str, object]", raw_step)
         if "agent" in step:
             result.append(PipelineStepInfo(name=str(step["agent"]), type="agent", in_loop=in_loop))
         elif "gate" in step:
@@ -40,7 +40,7 @@ def _flatten_steps(steps: list[object], *, in_loop: bool = False) -> list[Pipeli
         elif "loop" in step:
             children = step["loop"]
             if isinstance(children, list):
-                result.extend(_flatten_steps(children, in_loop=True))
+                result.extend(_flatten_steps(cast("list[object]", children), in_loop=True))
     return result
 
 
@@ -61,10 +61,12 @@ def _load_pipeline_steps(repo_path: Path) -> list[PipelineStepInfo]:
             with open(path) as f:
                 docs = list(yaml.safe_load_all(f))
             for doc in docs:
-                if isinstance(doc, dict) and doc.get("kind") == "Process":
-                    pipeline_raw = doc.get("pipeline")
-                    if isinstance(pipeline_raw, list):
-                        return _flatten_steps(pipeline_raw)
+                if isinstance(doc, dict):
+                    typed_doc = cast("dict[str, object]", doc)
+                    if typed_doc.get("kind") == "Process":
+                        pipeline_raw = typed_doc.get("pipeline")
+                        if isinstance(pipeline_raw, list):
+                            return _flatten_steps(cast("list[object]", pipeline_raw))
     return []
 
 

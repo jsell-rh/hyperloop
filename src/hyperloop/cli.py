@@ -460,10 +460,9 @@ def run(
 
     # Build hooks
     hooks: list[CycleHook] = []
-    if composer is not None:
-        from hyperloop.adapters.hook.process_improver import ProcessImproverHook
+    from hyperloop.adapters.hook.process_improver import ProcessImproverHook
 
-        hooks.append(ProcessImproverHook(runtime, composer, probe))
+    hooks.append(ProcessImproverHook(runtime, composer, probe))
 
     # Build spec source
     from hyperloop.adapters.git.spec_source import GitSpecSource

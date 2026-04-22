@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import yaml
 from fastapi import APIRouter
@@ -35,12 +35,16 @@ def _read_process_overlays(repo_path: Path) -> dict[str, dict[str, str]]:
             continue
         if not isinstance(doc, dict):
             continue
-        metadata = doc.get("metadata", {})
-        name = metadata.get("name", "") if isinstance(metadata, dict) else ""
+        typed_doc = cast("dict[str, object]", doc)
+        metadata = typed_doc.get("metadata")
+        name = ""
+        if isinstance(metadata, dict):
+            meta = cast("dict[str, object]", metadata)
+            name = str(meta.get("name", ""))
         if not name:
             # Fall back to deriving name from filename
             name = f.stem.replace("-overlay", "")
-        guidelines = doc.get("guidelines", "")
+        guidelines = typed_doc.get("guidelines", "")
         if name and isinstance(guidelines, str) and guidelines.strip():
             overlays[name] = {
                 "guidelines": guidelines.strip(),

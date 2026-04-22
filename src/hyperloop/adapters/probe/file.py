@@ -13,17 +13,20 @@ if TYPE_CHECKING:
 def _serialize(v: object) -> object:
     """Convert a value to a JSON-safe type."""
     if isinstance(v, tuple):
-        return [_serialize(item) for item in v]
+        return [_serialize(item) for item in v]  # type: ignore[arg-type]
     if isinstance(v, (str, int, float, bool)) or v is None:
         return v
     if isinstance(v, list):
-        return [_serialize(item) for item in v]
+        return [_serialize(item) for item in v]  # type: ignore[arg-type]
     if isinstance(v, dict):
-        return {str(k): _serialize(val) for k, val in v.items()}
+        return {str(k): _serialize(val) for k, val in v.items()}  # type: ignore[union-attr]
     if hasattr(v, "__dataclass_fields__"):
         import dataclasses
 
-        return {k: _serialize(val) for k, val in dataclasses.asdict(v).items()}
+        return {
+            k: _serialize(val)
+            for k, val in dataclasses.asdict(v).items()  # type: ignore[arg-type]
+        }
     return str(v)
 
 

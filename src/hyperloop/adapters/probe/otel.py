@@ -415,6 +415,9 @@ class OtelProbe:
     # Prompt composition
     # ------------------------------------------------------------------
 
+    def spawn_failed(self, **_kw: object) -> None:
+        pass
+
     def prompt_composed(self, **_kw: object) -> None:
         pass
 

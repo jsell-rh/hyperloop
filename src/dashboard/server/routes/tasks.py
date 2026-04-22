@@ -22,6 +22,7 @@ from dashboard.server.models import (
 from dashboard.server.reviews import read_reviews
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 router = APIRouter()
@@ -91,7 +92,7 @@ def list_tasks(
     return [_task_to_summary(t) for t in tasks]
 
 
-def _compute_critical_path(tasks: dict[str, object]) -> list[str]:
+def _compute_critical_path(tasks: Mapping[str, object]) -> list[str]:
     """Find the longest chain of non-terminal tasks using DFS.
 
     Builds an adjacency list (dep -> dependents) and finds the longest

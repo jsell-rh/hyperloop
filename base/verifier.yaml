@@ -16,16 +16,10 @@ prompt: |
   - Run any check scripts in .hyperloop/checks/.
   - Verify commit trailers (Spec-Ref, Task-Ref) are present.
   - Be specific in findings. Each finding should be actionable by the implementer.
-  - When done, write your verdict to .hyperloop/state/reviews/{task_id}-round-{round}.md:
-      ---
-      task_id: {task_id}
-      round: {round}
-      role: verifier
-      verdict: pass
-      ---
-      All checks pass.
-    If issues are found, set verdict to "fail" and list issues in the body.
-  - Commit the review file along with your changes.
+  - When done, report your verdict as your final text output. The orchestrator
+    reads your output and records the review automatically. Do NOT create or
+    commit any files under .hyperloop/state/ — those are managed by the
+    orchestrator on trunk.
   - You do NOT set task status. The orchestrator handles that.
 
 guidelines: ""

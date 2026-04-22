@@ -8,6 +8,10 @@ captures calls for test assertions.
 from __future__ import annotations
 
 import inspect
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from hyperloop.adapters.probe import MultiProbe, NullProbe
 from hyperloop.adapters.probe.file import FileProbe
@@ -98,7 +102,7 @@ class TestMultiProbe:
 class TestFileProbe:
     """FileProbe implements all protocol methods and writes JSONL."""
 
-    def test_has_every_protocol_method(self, tmp_path) -> None:
+    def test_has_every_protocol_method(self, tmp_path: Path) -> None:
         """FileProbe must implement every method from OrchestratorProbe."""
         probe = FileProbe(tmp_path / "events.jsonl")
         for method_name in _probe_methods():

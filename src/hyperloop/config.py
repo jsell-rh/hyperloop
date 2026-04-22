@@ -201,8 +201,9 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
     # dashboard section
     dashboard = raw.get("dashboard")
     if isinstance(dashboard, dict):
-        flat["dashboard_enabled"] = dashboard.get("enabled", False)
-        flat["dashboard_events_limit"] = dashboard.get("events_limit", 1000)
+        dash = cast("dict[str, object]", dashboard)
+        flat["dashboard_enabled"] = dash.get("enabled", False)
+        flat["dashboard_events_limit"] = dash.get("events_limit", 1000)
 
     return flat
 

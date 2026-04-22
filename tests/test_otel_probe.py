@@ -266,7 +266,8 @@ class TestMetricsRecorded:
         )
 
         metrics_data = reader.get_metrics_data()
-        metric_names = set()
+        assert metrics_data is not None
+        metric_names: set[str] = set()
         for resource_metrics in metrics_data.resource_metrics:
             for scope_metrics in resource_metrics.scope_metrics:
                 for metric in scope_metrics.metrics:
@@ -286,7 +287,8 @@ class TestMetricsRecorded:
         )
 
         metrics_data = reader.get_metrics_data()
-        metric_names = set()
+        assert metrics_data is not None
+        metric_names: set[str] = set()
         for resource_metrics in metrics_data.resource_metrics:
             for scope_metrics in resource_metrics.scope_metrics:
                 for metric in scope_metrics.metrics:
@@ -306,7 +308,8 @@ class TestMetricsRecorded:
         )
 
         metrics_data = reader.get_metrics_data()
-        metric_names = set()
+        assert metrics_data is not None
+        metric_names: set[str] = set()
         for resource_metrics in metrics_data.resource_metrics:
             for scope_metrics in resource_metrics.scope_metrics:
                 for metric in scope_metrics.metrics:
@@ -338,7 +341,8 @@ class TestMetricsRecorded:
         )
 
         metrics_data = reader.get_metrics_data()
-        metric_names = set()
+        assert metrics_data is not None
+        metric_names: set[str] = set()
         for resource_metrics in metrics_data.resource_metrics:
             for scope_metrics in resource_metrics.scope_metrics:
                 for metric in scope_metrics.metrics:

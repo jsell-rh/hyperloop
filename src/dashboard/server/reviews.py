@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import yaml
 
@@ -37,12 +37,14 @@ def read_reviews(repo_path: Path, task_id: str) -> list[Review]:
             continue
         if not isinstance(fm, dict):
             continue
+        fm_dict = cast("dict[str, object]", fm)
         body = match.group(2).strip()
+        round_val = fm_dict.get("round", 0)
         results.append(
             Review(
-                round=int(fm.get("round", 0)),
-                role=str(fm.get("role", "")),
-                verdict=str(fm.get("verdict", "")),
+                round=int(round_val) if isinstance(round_val, (int, str, float)) else 0,
+                role=str(fm_dict.get("role", "")),
+                verdict=str(fm_dict.get("verdict", "")),
                 detail=body,
             )
         )
