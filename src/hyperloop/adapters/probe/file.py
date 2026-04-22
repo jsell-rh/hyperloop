@@ -13,11 +13,17 @@ if TYPE_CHECKING:
 def _serialize(v: object) -> object:
     """Convert a value to a JSON-safe type."""
     if isinstance(v, tuple):
-        return list(v)
+        return [_serialize(item) for item in v]
     if isinstance(v, (str, int, float, bool)) or v is None:
         return v
     if isinstance(v, list):
         return [_serialize(item) for item in v]
+    if isinstance(v, dict):
+        return {str(k): _serialize(val) for k, val in v.items()}
+    if hasattr(v, "__dataclass_fields__"):
+        import dataclasses
+
+        return {k: _serialize(val) for k, val in dataclasses.asdict(v).items()}
     return str(v)
 
 
@@ -145,7 +151,8 @@ class FileProbe:
     # ------------------------------------------------------------------
 
     def prompt_composed(self, **kw: object) -> None:
-        self._write("prompt_composed", **kw)
+        lightweight = {k: v for k, v in kw.items() if k not in ("prompt_text", "sections")}
+        self._write("prompt_composed", **lightweight)
 
     # ------------------------------------------------------------------
     # Git remote operations
