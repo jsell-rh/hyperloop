@@ -1008,7 +1008,13 @@ onUnmounted(() => {
           v-for="node in layout.nodes"
           :key="node.id"
           class="graph-node"
-          :style="{ animationDelay: getNodeAnimDelay(node) }"
+          :style="{
+            animationDelay: getNodeAnimDelay(node),
+            transform: activeNodeId === node.id
+              ? `translate(${node.x + NODE_WIDTH/2}px, ${node.y + node.height/2}px) scale(1.03) translate(${-(node.x + NODE_WIDTH/2)}px, ${-(node.y + node.height/2)}px)`
+              : `translate(0,0) scale(1)`,
+            transformOrigin: '0 0',
+          }"
           :opacity="getNodeDimOpacity(node.id, node.status)"
           tabindex="0"
           role="link"
@@ -1035,7 +1041,6 @@ onUnmounted(() => {
             :filter="getNodeFilter(node.status, activeNodeId === node.id)"
             class="graph-node-rect"
             :class="{ 'animate-badge-pulse': node.status === 'in-progress' }"
-            :style="(activeNodeId === node.id) ? 'transform: scale(1.03); transform-origin: ' + (node.x + NODE_WIDTH/2) + 'px ' + (node.y + node.height/2) + 'px' : undefined"
           />
 
           <!-- Title: 13px, font-weight 600, centered, clipped to node bounds -->
@@ -1219,8 +1224,11 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.graph-node {
+  transition: transform 200ms ease, opacity 150ms ease;
+}
 .graph-node-rect {
-  transition: filter 150ms ease, stroke-width 150ms ease, transform 150ms ease;
+  transition: filter 150ms ease, stroke-width 150ms ease;
 }
 .graph-pan-group {
   transition: transform 0ms;
@@ -1255,6 +1263,7 @@ onUnmounted(() => {
   }
   .graph-node {
     animation: none;
+    transition: none;
   }
   .graph-node-rect {
     transition: none;
