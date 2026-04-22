@@ -858,11 +858,6 @@ watch(() => props.graph, () => {
   nextTick(() => fitToView())
 })
 
-// viewBox
-const viewBox = computed(() => {
-  return `0 0 ${layout.value.width} ${layout.value.height}`
-})
-
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
@@ -899,7 +894,8 @@ onUnmounted(() => {
   <div
     v-else
     ref="containerRef"
-    class="relative overflow-hidden rounded-lg max-h-[min(60vh,600px)]"
+    class="relative overflow-hidden rounded-lg"
+    :style="{ height: `clamp(200px, ${layout.height + 40}px, min(60vh, 600px))` }"
     :class="isPanning ? 'cursor-grabbing' : 'cursor-grab'"
     @wheel.prevent="onWheel"
     @mousedown="onMouseDown"
@@ -910,10 +906,9 @@ onUnmounted(() => {
     @touchend="onTouchEnd"
   >
     <svg
-      :viewBox="viewBox"
-      :width="layout.width"
-      :height="layout.height"
-      class="select-none"
+      width="100%"
+      height="100%"
+      class="select-none block"
       role="img"
       :aria-label="`Dependency graph showing ${layout.nodes.length} tasks and their relationships`"
     >
