@@ -22,7 +22,7 @@ defineProps<{
       {{ task.phase ?? '--' }}
     </span>
     <span class="text-xs text-gray-500 dark:text-gray-400 min-w-[40px] text-right">
-      R{{ task.round }}
+      Round {{ task.round }}
     </span>
     <span class="min-w-[40px] text-right">
       <a

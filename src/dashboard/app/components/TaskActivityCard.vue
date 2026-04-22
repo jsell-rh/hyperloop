@@ -209,7 +209,7 @@ const stepDurations = computed<StepDuration[]>(() => {
         class="flex-shrink-0 ml-3 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full"
         :class="roundBadgeColor"
       >
-        R{{ task.round }}
+        Round {{ task.round }}
       </span>
     </div>
 
