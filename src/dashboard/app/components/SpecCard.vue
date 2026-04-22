@@ -72,6 +72,7 @@ const isBlocked = computed(() => {
         <div
           v-if="inProgressPercent > 0"
           class="h-2 rounded-full bg-blue-500 dark:bg-blue-400 transition-all"
+          :class="{ 'progress-bar-shimmer': spec.tasks_in_progress > 0 }"
           :style="{ width: `${inProgressPercent}%` }"
         />
       </div>

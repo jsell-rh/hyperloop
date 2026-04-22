@@ -270,6 +270,25 @@ class ActivityResponse(BaseModel):
     flattened_events: list[FlatEvent]
 
 
+class WorkerHeartbeat(BaseModel):
+    """Per-worker heartbeat data from recent worker_message events."""
+
+    task_id: str
+    role: str
+    last_message_at: str
+    last_message_type: str
+    last_tool_name: str | None
+    message_count_since: int
+    seconds_since_last: float
+
+
+class HeartbeatResponse(BaseModel):
+    """Response for the worker heartbeat endpoint."""
+
+    heartbeats: list[WorkerHeartbeat]
+    server_time: str
+
+
 class PipelineTreeStep(BaseModel):
     """A step in the pipeline tree (preserving nesting)."""
 

@@ -1040,7 +1040,10 @@ onUnmounted(() => {
             :stroke-dasharray="getNodeStrokeDash(node.status)"
             :filter="getNodeFilter(node.status, activeNodeId === node.id)"
             class="graph-node-rect"
-            :class="{ 'animate-badge-pulse': node.status === 'in-progress' }"
+            :class="{
+              'animate-badge-pulse-urgent': node.status === 'in-progress' && node.round >= 2,
+              'animate-badge-pulse': node.status === 'in-progress' && node.round < 2,
+            }"
           />
 
           <!-- Title: 13px, font-weight 600, centered, clipped to node bounds -->

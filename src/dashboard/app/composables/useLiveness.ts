@@ -3,12 +3,17 @@ type LivenessStatus = 'live' | 'stale' | 'disconnected'
 const lastFetchTime = ref<number>(0)
 const lastUpdatedText = ref<string>('--')
 const status = ref<LivenessStatus>('disconnected')
+const workersActive = ref(false)
 
 let tickTimer: ReturnType<typeof setInterval> | null = null
 let activeListeners = 0
 
 function markFetched(): void {
   lastFetchTime.value = Date.now()
+}
+
+function setWorkersActive(active: boolean): void {
+  workersActive.value = active
 }
 
 function tick(): void {
@@ -39,8 +44,10 @@ function tick(): void {
 
 export function useLiveness(): {
   markFetched: () => void
+  setWorkersActive: (active: boolean) => void
   lastUpdatedText: Readonly<Ref<string>>
   status: Readonly<Ref<LivenessStatus>>
+  workersActive: Readonly<Ref<boolean>>
 } {
   onMounted(() => {
     activeListeners++
@@ -60,7 +67,9 @@ export function useLiveness(): {
 
   return {
     markFetched,
+    setWorkersActive,
     lastUpdatedText: readonly(lastUpdatedText),
     status: readonly(status),
+    workersActive: readonly(workersActive),
   }
 }

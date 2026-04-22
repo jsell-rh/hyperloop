@@ -12,6 +12,7 @@ import type {
   AgentDefinition,
   CheckScript,
   ActivityResponse,
+  HeartbeatResponse,
 } from '~/types'
 
 const API_BASE = '/api'
@@ -56,6 +57,9 @@ export function useApi() {
   const fetchActivity = (params?: { since_cycle?: number; limit?: number }) =>
     $fetch<ActivityResponse>(`${API_BASE}/activity`, { params })
 
+  const fetchWorkerHeartbeats = (params?: { since?: string }) =>
+    $fetch<HeartbeatResponse>(`${API_BASE}/activity/worker-heartbeats`, { params })
+
   return {
     fetchSpecs,
     fetchSpec,
@@ -70,5 +74,6 @@ export function useApi() {
     fetchAgents,
     fetchChecks,
     fetchActivity,
+    fetchWorkerHeartbeats,
   }
 }

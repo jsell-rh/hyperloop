@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import type { ActivityResponse, FlatEvent, TaskInFlight, PipelineStepInfo, CycleDetail } from '~/types'
+import type { ActivityResponse, FlatEvent, TaskInFlight, PipelineStepInfo, CycleDetail, WorkerHeartbeat } from '~/types'
 
-const { fetchActivity, fetchPipeline } = useApi()
-const { markFetched } = useLiveness()
+const { fetchActivity, fetchPipeline, fetchWorkerHeartbeats } = useApi()
+const { markFetched, setWorkersActive } = useLiveness()
 
 const data = ref<ActivityResponse | null>(null)
 const loadError = ref<string | null>(null)
@@ -26,9 +26,35 @@ async function loadPipeline(): Promise<void> {
   }
 }
 
+// --- Heartbeat polling ---
+const heartbeats = ref<WorkerHeartbeat[]>([])
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+let lastHeartbeatFetch = ''
+
+async function loadHeartbeats(): Promise<void> {
+  if (!data.value || data.value.active_workers.length === 0) {
+    heartbeats.value = []
+    setWorkersActive(false)
+    return
+  }
+  try {
+    const resp = await fetchWorkerHeartbeats({ since: lastHeartbeatFetch || undefined })
+    heartbeats.value = resp.heartbeats
+    lastHeartbeatFetch = resp.server_time
+    setWorkersActive(resp.heartbeats.length > 0)
+  } catch {
+    /* silent */
+  }
+}
+
+function heartbeatForTask(taskId: string): WorkerHeartbeat | null {
+  return heartbeats.value.find((h) => h.task_id === taskId) ?? null
+}
+
 onMounted(() => {
   load()
   loadPipeline()
+  heartbeatTimer = setInterval(loadHeartbeats, 3000)
 })
 
 // Poll every 10s
@@ -38,6 +64,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   if (timer) clearInterval(timer)
+  if (heartbeatTimer) clearInterval(heartbeatTimer)
 })
 
 // Tick for relative timestamps
@@ -327,6 +354,7 @@ function formatCycleDuration(d: number): string {
             :key="t.task_id"
             :task="t"
             :pipeline-steps="pipelineSteps"
+            :heartbeat="heartbeatForTask(t.task_id)"
           />
         </div>
       </div>
@@ -334,7 +362,7 @@ function formatCycleDuration(d: number): string {
       <!-- 4. Recent Events -->
       <div class="mb-8">
         <h2 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Recent Events</h2>
-        <EventStream :events="flattenedEvents" />
+        <EventStream :events="flattenedEvents" :active-heartbeats="heartbeats" />
       </div>
 
       <!-- 5. Raw Cycle Log (collapsed) -->

@@ -237,6 +237,25 @@ export interface ActivityResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Worker heartbeat types
+// ---------------------------------------------------------------------------
+
+export interface WorkerHeartbeat {
+  task_id: string
+  role: string
+  last_message_at: string
+  last_message_type: string
+  last_tool_name: string | null
+  message_count_since: number
+  seconds_since_last: number
+}
+
+export interface HeartbeatResponse {
+  heartbeats: WorkerHeartbeat[]
+  server_time: string
+}
+
+// ---------------------------------------------------------------------------
 // Agents types
 // ---------------------------------------------------------------------------
 

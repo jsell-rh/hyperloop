@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import type { FlatEvent } from '~/types'
+import type { FlatEvent, WorkerHeartbeat } from '~/types'
 
 const props = defineProps<{
   events: FlatEvent[]
+  activeHeartbeats?: WorkerHeartbeat[]
 }>()
 
 const showAll = ref(false)
@@ -43,6 +44,12 @@ function relativeTime(ts: string): string {
   }
 }
 
+function heartbeatAgoText(hb: WorkerHeartbeat): string {
+  const s = Math.round(hb.seconds_since_last)
+  if (s < 60) return `${s}s ago`
+  return `${Math.floor(s / 60)}m ago`
+}
+
 function eventIcon(event: FlatEvent): { symbol: string; colorClass: string } {
   switch (event.event_type) {
     case 'worker_reaped':
@@ -73,6 +80,23 @@ function eventIcon(event: FlatEvent): { symbol: string; colorClass: string } {
     </div>
 
     <div v-else class="space-y-0">
+      <!-- Active worker heartbeat rows -->
+      <div
+        v-for="hb in (activeHeartbeats ?? [])"
+        :key="`hb-${hb.task_id}`"
+        class="flex items-baseline gap-3 py-1.5 border-b border-blue-100 dark:border-blue-900/30 bg-blue-50/50 dark:bg-blue-950/10"
+      >
+        <span class="w-16 flex-shrink-0 text-right text-[11px] text-blue-400 dark:text-blue-500 font-mono tabular-nums">
+          {{ heartbeatAgoText(hb) }}
+        </span>
+        <span class="w-4 flex-shrink-0 text-center text-sm text-blue-400">
+          &#x22EF;
+        </span>
+        <span class="text-xs text-blue-600 dark:text-blue-300 min-w-0">
+          <span class="font-medium">{{ hb.role }}</span> for {{ hb.task_id }}<template v-if="hb.last_tool_name || hb.last_message_type">: <span class="font-mono bg-blue-100 dark:bg-blue-900/30 px-1 rounded text-[10px]">{{ hb.last_tool_name || hb.last_message_type }}</span></template> ({{ hb.message_count_since }} msgs)
+        </span>
+      </div>
+
       <div
         v-for="(event, idx) in visibleEvents"
         :key="idx"

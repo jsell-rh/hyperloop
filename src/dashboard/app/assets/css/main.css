@@ -31,6 +31,64 @@
 @keyframes badge-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.85; } }
 .animate-badge-pulse { animation: badge-pulse 2s ease-in-out infinite; }
 
+/* Urgent badge pulse for in-progress round >= 2 */
+@keyframes badge-pulse-urgent { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+.animate-badge-pulse-urgent { animation: badge-pulse-urgent 1.2s ease-in-out infinite; }
+
+/* Worker heartbeat: active (energetic 1.2s pulse) */
+@keyframes worker-active {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+.animate-worker-active { animation: worker-active 1.2s ease-in-out infinite; }
+
+/* Worker heartbeat: thinking (slow 3s breathe) */
+@keyframes worker-thinking {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.85; }
+}
+.animate-worker-thinking { animation: worker-thinking 3s ease-in-out infinite; }
+
+/* Pipeline segment flash on new heartbeat */
+@keyframes segment-flash {
+  0% { filter: brightness(1); }
+  15% { filter: brightness(1.4); }
+  100% { filter: brightness(1); }
+}
+.segment-flash { animation: segment-flash 400ms ease-out; }
+
+/* NavBar activity ring when workers are active */
+@keyframes nav-activity-ring {
+  0% { transform: scale(1); opacity: 0.35; }
+  100% { transform: scale(2.8); opacity: 0; }
+}
+.nav-dot-ring { position: relative; }
+.nav-dot-ring::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: inherit;
+  animation: nav-activity-ring 3s ease-out infinite;
+  pointer-events: none;
+}
+
+/* SpecCard progress bar shimmer for in-progress segments */
+@keyframes progress-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.progress-bar-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.2) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: progress-shimmer 2s linear infinite;
+}
+
 /* Dependency graph: critical path marching ants flow */
 @keyframes edge-flow {
   from { stroke-dashoffset: 20; }
@@ -46,6 +104,12 @@
 /* Respect prefers-reduced-motion */
 @media (prefers-reduced-motion: reduce) {
   .animate-badge-pulse { animation: none; }
+  .animate-badge-pulse-urgent { animation: none; }
+  .animate-worker-active { animation: none; }
+  .animate-worker-thinking { animation: none; }
+  .segment-flash { animation: none; }
+  .nav-dot-ring::after { animation: none; }
+  .progress-bar-shimmer { animation: none; }
   .critical-edge { animation: none; }
   .graph-node { animation: none; }
 }

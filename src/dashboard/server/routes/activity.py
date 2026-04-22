@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -19,12 +20,14 @@ from dashboard.server.models import (
     CycleDetail,
     CyclePhases,
     FlatEvent,
+    HeartbeatResponse,
     IntakePhase,
     PhaseTransition,
     ReapedWorker,
     SpawnedWorker,
     SpawnPhase,
     TaskInFlight,
+    WorkerHeartbeat,
     WorkerHistoryEntry,
 )
 
@@ -444,3 +447,80 @@ def get_activity(
         tasks_in_flight=tasks_in_flight,
         flattened_events=flattened_events,
     )
+
+
+@router.get("/api/activity/worker-heartbeats")
+def get_worker_heartbeats(since: str | None = None) -> HeartbeatResponse:
+    """Lightweight endpoint for worker liveness animations.
+
+    Reads only the tail of the events JSONL file for speed (sub-50ms target).
+    """
+    events_path = _find_events_path(get_repo_path())
+    if not events_path or not events_path.exists():
+        return HeartbeatResponse(heartbeats=[], server_time=datetime.now(UTC).isoformat())
+
+    # Read only the tail of the file for speed
+    try:
+        content = events_path.read_text()
+        lines = content.strip().splitlines()[-200:]  # last 200 lines
+    except OSError:
+        return HeartbeatResponse(heartbeats=[], server_time=datetime.now(UTC).isoformat())
+
+    since_dt: datetime | None = None
+    if since:
+        with contextlib.suppress(ValueError):
+            since_dt = datetime.fromisoformat(since)
+
+    # Group worker_message events by task_id
+    per_task: dict[str, list[dict[str, Any]]] = {}
+    for line in lines:
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if ev.get("event") != "worker_message":
+            continue
+        task_id = ev.get("task_id", "")
+        if not task_id or task_id.startswith("serial-"):
+            continue
+        ts = ev.get("ts", "")
+        if since_dt and ts:
+            try:
+                if datetime.fromisoformat(ts) <= since_dt:
+                    continue
+            except ValueError:
+                pass
+        per_task.setdefault(task_id, []).append(ev)
+
+    now = datetime.now(UTC)
+    heartbeats: list[WorkerHeartbeat] = []
+    for task_id, messages in per_task.items():
+        if not messages:
+            continue
+        last = messages[-1]
+        last_ts = last.get("ts", "")
+        seconds_since = 0.0
+        if last_ts:
+            with contextlib.suppress(ValueError):
+                seconds_since = (now - datetime.fromisoformat(last_ts)).total_seconds()
+
+        # Determine tool name from message_type and content
+        msg_type = str(last.get("message_type", ""))
+        content = str(last.get("content", ""))
+        tool_name: str | None = None
+        if msg_type == "tool_use":
+            tool_name = content.split()[0] if content else None
+
+        heartbeats.append(
+            WorkerHeartbeat(
+                task_id=task_id,
+                role=str(last.get("role", "")),
+                last_message_at=last_ts,
+                last_message_type=msg_type,
+                last_tool_name=tool_name,
+                message_count_since=len(messages),
+                seconds_since_last=round(seconds_since, 1),
+            )
+        )
+
+    return HeartbeatResponse(heartbeats=heartbeats, server_time=now.isoformat())

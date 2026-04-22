@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const route = useRoute()
-const { markFetched, lastUpdatedText, status } = useLiveness()
+const { markFetched, lastUpdatedText, status, workersActive } = useLiveness()
 
 const navLinks = [
   { label: 'Overview', to: '/' },
@@ -106,7 +106,7 @@ defineExpose({ flashRefreshBar })
       <div class="flex items-center gap-2">
         <span
           class="inline-flex rounded-full h-2 w-2"
-          :class="statusDotColor"
+          :class="[statusDotColor, workersActive ? 'nav-dot-ring' : '']"
         />
         <span class="text-xs text-gray-500 dark:text-gray-400">
           Updated {{ lastUpdatedText }}
