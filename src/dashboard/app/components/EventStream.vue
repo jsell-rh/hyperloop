@@ -79,7 +79,7 @@ function eventIcon(event: FlatEvent): { symbol: string; colorClass: string } {
       No events recorded yet.
     </div>
 
-    <div v-else class="space-y-0">
+    <div v-else class="space-y-0 max-h-[400px] overflow-y-auto">
       <!-- Active worker heartbeat rows -->
       <div
         v-for="hb in (activeHeartbeats ?? [])"

@@ -48,6 +48,7 @@ class PipelineStepInfo(BaseModel):
 
     name: str
     type: str
+    in_loop: bool = False
 
 
 class PromptSectionResponse(BaseModel):

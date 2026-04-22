@@ -308,10 +308,10 @@ class TestPipeline:
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 4
-        assert data[0] == {"name": "implementer", "type": "agent"}
-        assert data[1] == {"name": "verifier", "type": "agent"}
-        assert data[2] == {"name": "pr-require-label", "type": "gate"}
-        assert data[3] == {"name": "merge-pr", "type": "action"}
+        assert data[0] == {"name": "implementer", "type": "agent", "in_loop": True}
+        assert data[1] == {"name": "verifier", "type": "agent", "in_loop": True}
+        assert data[2] == {"name": "pr-require-label", "type": "gate", "in_loop": False}
+        assert data[3] == {"name": "merge-pr", "type": "action", "in_loop": False}
 
     def test_pipeline_empty_when_no_process(self, tmp_path):
         """Pipeline endpoint returns empty list when no process.yaml exists."""

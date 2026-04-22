@@ -16,12 +16,13 @@ if TYPE_CHECKING:
 router = APIRouter()
 
 
-def _flatten_steps(steps: list[object]) -> list[PipelineStepInfo]:
+def _flatten_steps(steps: list[object], *, in_loop: bool = False) -> list[PipelineStepInfo]:
     """Walk a pipeline definition and flatten steps into an ordered list.
 
     Loop steps are recursed into; each child appears in order.  The step
     ``type`` is derived from whichever primitive key (agent/gate/action/loop)
-    is present.
+    is present.  Steps inside a ``loop:`` block are tagged with
+    ``in_loop=True`` so the frontend can visually group them.
     """
     result: list[PipelineStepInfo] = []
     for raw_step in steps:
@@ -29,15 +30,17 @@ def _flatten_steps(steps: list[object]) -> list[PipelineStepInfo]:
             continue
         step: dict[str, object] = raw_step
         if "agent" in step:
-            result.append(PipelineStepInfo(name=str(step["agent"]), type="agent"))
+            result.append(PipelineStepInfo(name=str(step["agent"]), type="agent", in_loop=in_loop))
         elif "gate" in step:
-            result.append(PipelineStepInfo(name=str(step["gate"]), type="gate"))
+            result.append(PipelineStepInfo(name=str(step["gate"]), type="gate", in_loop=in_loop))
         elif "action" in step:
-            result.append(PipelineStepInfo(name=str(step["action"]), type="action"))
+            result.append(
+                PipelineStepInfo(name=str(step["action"]), type="action", in_loop=in_loop)
+            )
         elif "loop" in step:
             children = step["loop"]
             if isinstance(children, list):
-                result.extend(_flatten_steps(children))
+                result.extend(_flatten_steps(children, in_loop=True))
     return result
 
 

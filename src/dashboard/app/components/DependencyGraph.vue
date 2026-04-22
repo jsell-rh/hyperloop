@@ -1075,9 +1075,9 @@ onUnmounted(() => {
           <!-- Round indicator badge (top-right corner, only when round > 0) -->
           <g v-if="node.round > 0">
             <rect
-              :x="node.x + NODE_WIDTH - 52"
+              :x="node.x + NODE_WIDTH - 28"
               :y="node.y + 4"
-              width="48"
+              width="24"
               height="14"
               rx="7"
               :fill="isDark ? 'rgba(251,191,36,0.15)' : 'rgba(245,158,11,0.1)'"
@@ -1085,14 +1085,14 @@ onUnmounted(() => {
               stroke-width="0.5"
             />
             <text
-              :x="node.x + NODE_WIDTH - 28"
+              :x="node.x + NODE_WIDTH - 16"
               :y="node.y + 14"
-              font-size="8"
+              font-size="9"
               font-weight="600"
               text-anchor="middle"
               :fill="isDark ? '#fbbf24' : '#d97706'"
             >
-              Round {{ node.round }}
+              R{{ node.round }}
             </text>
           </g>
 

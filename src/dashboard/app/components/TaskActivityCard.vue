@@ -30,11 +30,11 @@ const stepStatuses = computed(() => {
   let foundCurrent = false
   return steps.map((step) => {
     if (foundCurrent) {
-      return { name: step.name, type: step.type, status: 'pending' as const }
+      return { name: step.name, type: step.type, status: 'pending' as const, in_loop: step.in_loop }
     }
     if (step.name === currentPhase) {
       foundCurrent = true
-      return { name: step.name, type: step.type, status: 'active' as const }
+      return { name: step.name, type: step.type, status: 'active' as const, in_loop: step.in_loop }
     }
     // Before the current phase — it's done.
     // Check if the last history entry for this role was a fail
@@ -45,9 +45,33 @@ const stepStatuses = computed(() => {
       type: step.type,
       status: 'done' as const,
       verdict: verdict as 'pass' | 'fail',
+      in_loop: step.in_loop,
     }
   })
 })
+
+// Segment steps into groups: contiguous in_loop steps form a loop group,
+// non-loop steps are standalone.
+interface StepSegment {
+  type: 'loop' | 'plain'
+  steps: typeof stepStatuses.value
+}
+
+const stepSegments = computed<StepSegment[]>(() => {
+  const segments: StepSegment[] = []
+  let current: StepSegment | null = null
+  for (const step of stepStatuses.value) {
+    const segType = step.in_loop ? 'loop' : 'plain'
+    if (!current || current.type !== segType) {
+      current = { type: segType, steps: [] }
+      segments.push(current)
+    }
+    current.steps.push(step)
+  }
+  return segments
+})
+
+const hasLoopSteps = computed(() => stepStatuses.value.some((s) => s.in_loop))
 
 // Live-ticking timer for the current worker
 const elapsedSeconds = ref(0)
@@ -215,26 +239,71 @@ const stepDurations = computed<StepDuration[]>(() => {
 
     <!-- Pipeline progress bar -->
     <div v-if="stepStatuses.length > 0" class="flex items-center gap-1 mb-1">
-      <div
-        v-for="(step, idx) in stepStatuses"
-        :key="idx"
-        class="flex-1 h-2 rounded-full relative group"
-        :class="[
-          {
-            'bg-green-400 dark:bg-green-500': step.status === 'done' && (step as any).verdict !== 'fail',
-            'bg-red-400 dark:bg-red-500': step.status === 'done' && (step as any).verdict === 'fail',
-            'bg-blue-400 dark:bg-blue-500 animate-badge-pulse': step.status === 'active',
-            'bg-gray-200 dark:bg-gray-700': step.status === 'pending',
-          },
-          step.status === 'active' ? heartbeatAnimClass : '',
-          step.status === 'active' && heartbeatAmberTint ? 'bg-amber-400 dark:bg-amber-500' : '',
-        ]"
-      >
-        <!-- Tooltip -->
-        <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-[10px] rounded bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
-          {{ step.name }} ({{ step.status }})
+      <template v-for="(seg, sIdx) in stepSegments" :key="`seg-${sIdx}`">
+        <!-- Loop group wrapper -->
+        <div
+          v-if="seg.type === 'loop'"
+          class="flex items-center gap-1 flex-1 border border-dashed border-gray-300 dark:border-gray-600 rounded-full px-1 py-0.5 relative"
+          :style="{ flex: seg.steps.length }"
+        >
+          <div
+            v-for="(step, idx) in seg.steps"
+            :key="`loop-${sIdx}-${idx}`"
+            class="flex-1 h-2 rounded-full relative group"
+            :class="[
+              {
+                'bg-green-400 dark:bg-green-500': step.status === 'done' && (step as any).verdict !== 'fail',
+                'bg-red-400 dark:bg-red-500': step.status === 'done' && (step as any).verdict === 'fail',
+                'bg-blue-400 dark:bg-blue-500 animate-badge-pulse': step.status === 'active',
+                'bg-gray-200 dark:bg-gray-700': step.status === 'pending',
+              },
+              step.status === 'active' ? heartbeatAnimClass : '',
+              step.status === 'active' && heartbeatAmberTint ? 'bg-amber-400 dark:bg-amber-500' : '',
+            ]"
+          >
+            <!-- Tooltip -->
+            <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-[10px] rounded bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
+              {{ step.name }} ({{ step.status }})
+            </div>
+          </div>
         </div>
-      </div>
+        <!-- Non-loop steps -->
+        <div
+          v-else
+          v-for="(step, idx) in seg.steps"
+          :key="`plain-${sIdx}-${idx}`"
+          class="flex-1 h-2 rounded-full relative group"
+          :class="[
+            {
+              'bg-green-400 dark:bg-green-500': step.status === 'done' && (step as any).verdict !== 'fail',
+              'bg-red-400 dark:bg-red-500': step.status === 'done' && (step as any).verdict === 'fail',
+              'bg-blue-400 dark:bg-blue-500 animate-badge-pulse': step.status === 'active',
+              'bg-gray-200 dark:bg-gray-700': step.status === 'pending',
+            },
+            step.status === 'active' ? heartbeatAnimClass : '',
+            step.status === 'active' && heartbeatAmberTint ? 'bg-amber-400 dark:bg-amber-500' : '',
+          ]"
+        >
+          <!-- Tooltip -->
+          <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-[10px] rounded bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
+            {{ step.name }} ({{ step.status }})
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Loop label -->
+    <div v-if="hasLoopSteps" class="flex items-center gap-1 mb-0.5">
+      <template v-for="(seg, sIdx) in stepSegments" :key="`looplabel-${sIdx}`">
+        <div
+          v-if="seg.type === 'loop'"
+          class="text-center"
+          :style="{ flex: seg.steps.length }"
+        >
+          <span class="text-[8px] text-gray-400 dark:text-gray-500">&#x21bb; loop</span>
+        </div>
+        <div v-else :style="{ flex: seg.steps.length }" />
+      </template>
     </div>
 
     <!-- Step labels -->

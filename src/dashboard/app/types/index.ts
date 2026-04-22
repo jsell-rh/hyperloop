@@ -59,6 +59,7 @@ export interface PromptSection {
 export interface PipelineStepInfo {
   name: string
   type: string
+  in_loop: boolean
 }
 
 export interface ReconstructedPrompt {
