@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.32.0 (2026-04-23)
+
+### Bug Fixes
+
+- Only re-pin spec SHA on completed tasks when PM creates new work
+  ([`117241a`](https://github.com/jsell-rh/hyperloop/commit/117241a2f133f10032488c0d6e41764f0783fdbe))
+
+
 ## v0.31.2 (2026-04-23)
 
 ### Bug Fixes
