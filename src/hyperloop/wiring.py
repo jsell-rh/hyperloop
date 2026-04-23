@@ -70,6 +70,7 @@ def wire_orchestrator(
         pr_manager = PRManager(
             repo=cfg.repo,
             delete_branch=cfg.delete_branch,
+            base_branch=cfg.base_branch,
         )
 
     # Build gate + action adapters from PRPort

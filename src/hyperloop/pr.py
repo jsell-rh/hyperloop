@@ -27,12 +27,14 @@ class PRManager:
         merge_strategy: str = "squash",
         delete_branch: bool = True,
         has_gate: bool = False,
+        base_branch: str = "main",
         probe: OrchestratorProbe | None = None,
     ) -> None:
         self.repo = repo
         self.merge_strategy = merge_strategy
         self.delete_branch = delete_branch
         self._has_gate = has_gate
+        self._base_branch = base_branch
         self._ensured_labels: set[str] = set()
         self._probe: OrchestratorProbe | None = probe
 
@@ -132,6 +134,8 @@ class PRManager:
                 "--draft",
                 "--head",
                 branch,
+                "--base",
+                self._base_branch,
                 "--title",
                 title,
                 "--body",

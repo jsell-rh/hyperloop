@@ -37,10 +37,12 @@ class FakePRManager:
         repo: str,
         merge_strategy: str = "squash",
         delete_branch: bool = True,
+        base_branch: str = "main",
     ) -> None:
         self.repo = repo
         self.merge_strategy = merge_strategy
         self.delete_branch = delete_branch
+        self._base_branch = base_branch
 
         self._prs: dict[str, _PRRecord] = {}
         self._pr_counter: int = 0
