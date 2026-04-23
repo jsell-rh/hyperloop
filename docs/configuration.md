@@ -209,15 +209,14 @@ pipeline:
   - loop:
       - agent: implementer
       - agent: verifier
-  - action: mark-pr-ready
-  - gate: pr-require-label
-  - action: post-pr-comment
-    args:
-      body: "@coderabbit recheck"
-  - check: pr-feedback-addressed
-    args:
-      require_reviewers: ["coderabbitai"]
-      feedback_from: ["coderabbitai"]
+      - action: mark-pr-ready
+      - action: post-pr-comment
+        args:
+          body: "@coderabbit recheck"
+      - check: pr-review
+        evaluator: pr-reviewer
+        args:
+          require_reviewers: ["coderabbitai"]
   - action: merge-pr
 
 gates:
@@ -236,18 +235,31 @@ hooks:
 | `agent: X` | Spawn a worker agent with X's prompt template | Runtime |
 | `gate: X` | Block until external signal | GatePort adapter |
 | `action: X` | Execute an operation with optional `args:` | ActionPort adapter |
-| `check: X` | Mechanical pass/fail with optional `args:` | CheckPort adapter |
+| `check: X` | Evaluation step with `args:` and optional `evaluator:` | CheckPort adapter + agent |
 | `loop:` | Wrap steps -- on fail restart, on pass continue | Pipeline executor |
 
-### Step Arguments
+### Check Outcomes
 
-`action:` and `check:` steps accept an optional `args:` map passed to the adapter:
+Checks return one of three results:
+
+| Result | Behavior |
+|---|---|
+| **PASS** | Advance to next step (or spawn evaluator agent if set) |
+| **FAIL** | Restart enclosing loop |
+| **WAIT** | Stay at step, re-evaluate next cycle (like a gate) |
+
+### Step Arguments and Evaluator
+
+`action:` and `check:` steps accept an optional `args:` map. `check:` steps also accept `evaluator:` to name an agent role for evaluation:
 
 ```yaml
-- action: post-pr-comment
+- check: pr-review
+  evaluator: pr-reviewer
   args:
-    body: "@coderabbit recheck"
+    require_reviewers: ["coderabbitai"]
 ```
+
+When `evaluator:` is set, the check adapter runs mechanical pre-conditions first. On PASS, the framework spawns the named agent to evaluate. The agent writes a verdict (`pass`/`fail`), and the pipeline executor processes it — PASS advances, FAIL restarts the loop.
 
 ### Framework-Shipped Actions
 
@@ -259,9 +271,9 @@ hooks:
 
 ### Framework-Shipped Checks
 
-| Check | What it does | Args |
+| Check | What it does | Config |
 |---|---|---|
-| `pr-feedback-addressed` | Pass when latest push >= latest comment | `require_reviewers: list[str]` (fail until all posted); `feedback_from: list[str]` (only these authors count as feedback) |
+| `pr-review` | CI pending → WAIT, CI failed → FAIL, reviewers not posted → WAIT, then spawns evaluator agent | `evaluator: pr-reviewer`; `args: {require_reviewers: [str]}` |
 
 ### Gate Types
 

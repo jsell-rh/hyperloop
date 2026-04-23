@@ -184,14 +184,14 @@ pipeline:
   - loop:
       - agent: implementer
       - agent: verifier
-  - action: mark-pr-ready
-  - gate: pr-require-label
-  - action: post-pr-comment
-    args:
-      body: "@coderabbit recheck"
-  - check: pr-feedback-addressed
-    args:
-      require_reviewers: ["coderabbit[bot]"]
+      - action: mark-pr-ready
+      - action: post-pr-comment
+        args:
+          body: "@coderabbit recheck"
+      - check: pr-review
+        evaluator: pr-reviewer
+        args:
+          require_reviewers: ["coderabbitai"]
   - action: merge-pr
 
 gates:
@@ -210,27 +210,38 @@ hooks:
 | `agent: X` | Spawn a worker agent with X's prompt template | Runtime |
 | `gate: X` | Block until external signal | GatePort adapter |
 | `action: X` | Execute an operation (with optional `args:`) | ActionPort adapter |
-| `check: X` | Mechanical pass/fail evaluation (with optional `args:`) | CheckPort adapter |
+| `check: X` | Evaluation step with optional `args:` and `evaluator:` | CheckPort adapter + agent |
 | `loop:` | Wrap steps — on fail restart from top, on pass continue | Pipeline executor (pure logic) |
 
 The pipeline is a state machine. The orchestrator calls `PipelineExecutor.advance(position, result)` and receives back what the next step is. The pipeline executor is a pure function with no I/O.
 
 Actions and checks can appear anywhere in the pipeline, not just at the end. After SUCCESS/pass, the pipeline advances to whatever comes next.
 
-#### Step arguments
+#### Check outcomes
 
-`action:` and `check:` steps accept an optional `args:` map that is passed through to the adapter at execution time. This allows process authors to configure generic framework adapters without writing code:
+Checks return one of three results:
+
+| Result | Pipeline behavior |
+|---|---|
+| **PASS** | Advance to next step (or spawn evaluator agent if set) |
+| **FAIL** | Restart enclosing loop |
+| **WAIT** | Stay at step, re-evaluate next cycle (like a gate) |
+
+#### Step arguments and evaluator
+
+`action:` and `check:` steps accept an optional `args:` map that is passed through to the adapter at execution time. `check:` steps also accept `evaluator:` to name an agent role for evaluation:
 
 ```yaml
 - action: post-pr-comment
   args:
     body: "@coderabbit recheck"
-- check: pr-feedback-addressed
+- check: pr-review
+  evaluator: pr-reviewer
   args:
-    require_reviewers: ["coderabbit[bot]"]
+    require_reviewers: ["coderabbitai"]
 ```
 
-The framework never interprets `args` — it passes the dict verbatim to the adapter. Each adapter defines what keys it accepts.
+The framework never interprets `args` — it passes the dict verbatim to the adapter. When `evaluator` is set, the check adapter handles mechanical pre-conditions (CI, reviewer presence), then the framework spawns the named agent for evaluation. The agent writes a verdict; PASS advances, FAIL restarts the loop.
 
 ### Agent definitions
 
@@ -441,19 +452,24 @@ Adapter boundary:
 ### CheckPort
 
 ```python
+class CheckResult(Enum):
+    PASS = "pass"    # advance to next step (or spawn evaluator)
+    FAIL = "fail"    # restart enclosing loop
+    WAIT = "wait"    # stay at step, re-evaluate next cycle
+
 class CheckPort(Protocol):
-    def evaluate(self, task: Task, check_name: str, args: dict[str, object]) -> bool:
+    def evaluate(self, task: Task, check_name: str, args: dict[str, object]) -> CheckResult:
         """Evaluate a named check for a task. Args come from the process definition."""
         ...
 ```
 
-Checks are mechanical pass/fail evaluations — no agent, no blocking. On pass, the pipeline advances. On fail, the enclosing loop restarts (like an agent fail). If there is no enclosing loop, the pipeline fails.
+Checks return three-valued results. WAIT acts like a gate (blocks without restarting). When a `CheckStep` has an `evaluator` agent, the check adapter handles mechanical pre-conditions, then the framework spawns the agent for evaluation. The agent writes a verdict; PASS advances, FAIL restarts the loop.
 
 Framework-shipped checks:
 
-| Check | What it does | Args |
+| Check | What it does | Config |
 |---|---|---|
-| `pr-feedback-addressed` | All PR feedback addressed (latest push ≥ latest comment) | `require_reviewers: list[str]` — fail until all listed authors have posted; `feedback_from: list[str]` — only count feedback from these authors (prevents self-poisoning from trigger comments) |
+| `pr-review` | CI pending → WAIT, CI failed → FAIL, reviewers not posted → WAIT, then spawns evaluator agent to assess PR feedback | `evaluator: pr-reviewer`; `args: {require_reviewers: list[str]}` |
 
 ### NotificationPort
 

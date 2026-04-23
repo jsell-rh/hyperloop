@@ -66,7 +66,7 @@ Work moves through a pipeline defined in `process.yaml`. Five primitives:
 | `agent: X` | Spawn a worker agent with X's prompt template |
 | `gate: X` | Block until an external signal (e.g. PR label, CI status) |
 | `action: X` | Execute an operation with optional `args:` (e.g. merge PR, mark ready) |
-| `check: X` | Mechanical pass/fail evaluation with optional `args:` (no agent) |
+| `check: X` | Evaluation step (mechanical or agent-backed) with optional `args:` and `evaluator:` |
 | `loop:` | Wrap steps -- on fail restart from top, on pass continue |
 
 Example pipeline:
@@ -76,25 +76,27 @@ pipeline:
   - loop:
       - agent: implementer
       - agent: verifier
-  - action: mark-pr-ready
-  - gate: pr-require-label
-  - action: post-pr-comment
-    args:
-      body: "@coderabbit recheck"
-  - check: pr-feedback-addressed
-    args:
-      require_reviewers: ["coderabbit[bot]"]
+      - action: mark-pr-ready
+      - action: post-pr-comment
+        args:
+          body: "@coderabbit recheck"
+      - check: pr-review
+        evaluator: pr-reviewer
+        args:
+          require_reviewers: ["coderabbitai"]
   - action: merge-pr
 ```
 
+Checks have three outcomes: **PASS** (advance), **FAIL** (restart loop), **WAIT** (stay, re-evaluate next cycle). When `evaluator:` is set, the check spawns an agent to evaluate after mechanical pre-conditions pass.
+
 Framework-shipped actions and checks:
 
-| Step | Type | What it does | Args |
+| Step | Type | What it does | Config |
 |---|---|---|---|
 | `merge-pr` | action | Rebase, wait for mergeable, squash-merge | -- |
 | `mark-pr-ready` | action | Mark a draft PR as ready for review | -- |
-| `post-pr-comment` | action | Post a comment on the task's PR | `body: str` |
-| `pr-feedback-addressed` | check | All PR feedback addressed (push >= latest comment) | `require_reviewers: list[str]`; `feedback_from: list[str]` |
+| `post-pr-comment` | action | Post a comment on the task's PR | `args: {body: str}` |
+| `pr-review` | check | CI + reviewer pre-checks, then agent evaluates PR feedback | `evaluator: pr-reviewer`; `args: {require_reviewers: [str]}` |
 
 ## Project Structure
 
