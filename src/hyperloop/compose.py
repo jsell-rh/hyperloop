@@ -396,7 +396,7 @@ def _parse_steps(steps_raw: object) -> list[PipelineStep]:
         raise ValueError(msg)
 
     result: list[PipelineStep] = []
-    known_primitives = {"agent", "gate", "loop", "action"}
+    known_primitives = {"agent", "gate", "check", "loop", "action"}
 
     for raw_step in cast("list[object]", steps_raw):
         if not isinstance(raw_step, dict):
@@ -411,7 +411,7 @@ def _parse_steps(steps_raw: object) -> list[PipelineStep]:
             unknown = sorted(set(step_dict.keys()) - {"on_pass", "on_fail"})
             msg = (
                 f"Unrecognised pipeline primitive key(s): {unknown!r}. "
-                "Expected one of: agent, gate, loop, action"
+                "Expected one of: agent, gate, check, loop, action"
             )
             raise ValueError(msg)
 
