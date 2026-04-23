@@ -453,7 +453,7 @@ Framework-shipped checks:
 
 | Check | What it does | Args |
 |---|---|---|
-| `pr-feedback-addressed` | All PR feedback addressed (latest push ≥ latest comment) | `require_reviewers: list[str]` (optional) — fail until all listed reviewers have posted |
+| `pr-feedback-addressed` | All PR feedback addressed (latest push ≥ latest comment) | `require_reviewers: list[str]` — fail until all listed authors have posted; `feedback_from: list[str]` — only count feedback from these authors (prevents self-poisoning from trigger comments) |
 
 ### NotificationPort
 

@@ -15,8 +15,13 @@ class PRFeedbackCheck:
     """CheckPort adapter for pr-feedback-addressed.
 
     Compares the timestamp of the latest push to the branch against
-    the timestamps of PR review comments. If any comment is newer
-    than the latest push, the check fails (unaddressed feedback).
+    the timestamps of PR review comments. If any whitelisted comment
+    is newer than the latest push, the check fails (unaddressed feedback).
+
+    Args from process definition:
+        require_reviewers: list[str] — fail until all listed authors have posted.
+        feedback_from: list[str] — only count reviews/comments from these authors.
+            If omitted, all non-bot comments count (legacy behavior).
     """
 
     def __init__(self, repo: str) -> None:
@@ -30,17 +35,26 @@ class PRFeedbackCheck:
         if task.pr is None:
             return True
 
+        # Parse args
         raw_reviewers = args.get("require_reviewers")
+        reviewer_list: list[str] | None = None
         if isinstance(raw_reviewers, list):
             reviewer_list = cast("list[str]", raw_reviewers)
-            if not self._all_reviewers_posted(task.pr, reviewer_list):
-                return False
 
+        raw_feedback = args.get("feedback_from")
+        feedback_from: list[str] | None = None
+        if isinstance(raw_feedback, list):
+            feedback_from = cast("list[str]", raw_feedback)
+
+        if reviewer_list is not None and not self._all_reviewers_posted(task.pr, reviewer_list):
+            return False
+
+        # Timestamp comparison: latest push must be >= latest feedback
         latest_push = self._get_latest_push_time(task.pr)
         if latest_push is None:
             return True
 
-        latest_comment = self._get_latest_comment_time(task.pr)
+        latest_comment = self._get_latest_comment_time(task.pr, feedback_from)
         if latest_comment is None:
             return True
 
@@ -110,8 +124,13 @@ class PRFeedbackCheck:
             return None
         return datetime.fromisoformat(date_str.replace("Z", "+00:00"))
 
-    def _get_latest_comment_time(self, pr_url: str) -> datetime | None:
-        """Get the timestamp of the most recent review comment or review."""
+    def _get_latest_comment_time(
+        self, pr_url: str, feedback_from: list[str] | None
+    ) -> datetime | None:
+        """Get the timestamp of the most recent review/comment from whitelisted authors.
+
+        If feedback_from is None, falls back to legacy behavior (all non-bot comments).
+        """
         result = subprocess.run(
             [
                 "gh",
@@ -133,16 +152,23 @@ class PRFeedbackCheck:
         timestamps: list[datetime] = []
 
         for review in data.get("reviews", []):
+            author = review.get("author", {}).get("login", "")
+            if feedback_from is not None and author not in feedback_from:
+                continue
             submitted = review.get("submittedAt", "")
             if submitted:
                 timestamps.append(datetime.fromisoformat(submitted.replace("Z", "+00:00")))
 
         for comment in data.get("comments", []):
-            created = comment.get("createdAt", "")
-            body = str(comment.get("body", ""))
-            # Skip bot comments (hyperloop's own)
-            if body.startswith("<!--") or not body.strip():
+            author = comment.get("author", {}).get("login", "")
+            if feedback_from is not None and author not in feedback_from:
                 continue
+            # Legacy mode (no whitelist): skip bot comments
+            if feedback_from is None:
+                body = str(comment.get("body", "")).strip()
+                if not body or body.startswith("<!--"):
+                    continue
+            created = comment.get("createdAt", "")
             if created:
                 timestamps.append(datetime.fromisoformat(created.replace("Z", "+00:00")))
 

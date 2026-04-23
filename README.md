@@ -94,7 +94,7 @@ Framework-shipped actions and checks:
 | `merge-pr` | action | Rebase, wait for mergeable, squash-merge | -- |
 | `mark-pr-ready` | action | Mark a draft PR as ready for review | -- |
 | `post-pr-comment` | action | Post a comment on the task's PR | `body: str` |
-| `pr-feedback-addressed` | check | All PR feedback addressed (push >= latest comment) | `require_reviewers: list[str]` |
+| `pr-feedback-addressed` | check | All PR feedback addressed (push >= latest comment) | `require_reviewers: list[str]`; `feedback_from: list[str]` |
 
 ## Project Structure
 

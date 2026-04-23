@@ -216,7 +216,8 @@ pipeline:
       body: "@coderabbit recheck"
   - check: pr-feedback-addressed
     args:
-      require_reviewers: ["coderabbit[bot]"]
+      require_reviewers: ["coderabbitai"]
+      feedback_from: ["coderabbitai"]
   - action: merge-pr
 
 gates:
@@ -260,7 +261,7 @@ hooks:
 
 | Check | What it does | Args |
 |---|---|---|
-| `pr-feedback-addressed` | Pass when latest push >= latest comment | `require_reviewers: list[str]` (optional, fail until all have posted) |
+| `pr-feedback-addressed` | Pass when latest push >= latest comment | `require_reviewers: list[str]` (fail until all posted); `feedback_from: list[str]` (only these authors count as feedback) |
 
 ### Gate Types
 
