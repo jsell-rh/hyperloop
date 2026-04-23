@@ -315,24 +315,25 @@ class Orchestrator:
                 for task in world.tasks.values():
                     if task.id not in result.tasks_before and "@" not in task.spec_ref:
                         self._state.set_spec_ref(task.id, f"{task.spec_ref}@{version}")
-            # Re-pin pre-existing tasks whose specs were modified (prevents re-triggering)
-            modified_specs = {
-                s
-                for s in result.unprocessed_specs
-                if s
-                in {
-                    t.spec_ref.split("@")[0]
-                    for t in world.tasks.values()
-                    if t.id in result.tasks_before
-                }
+            # Re-pin pre-existing tasks whose specs were modified.
+            # Only re-pin if the PM created new tasks for the spec (covering
+            # the delta) OR the task is still in-progress (will see the new
+            # spec when it runs). Complete/failed tasks with no new work keep
+            # their old SHA so intake keeps re-triggering until the PM acts.
+            new_task_specs = {
+                t.spec_ref.split("@")[0]
+                for t in world.tasks.values()
+                if t.id not in result.tasks_before
             }
-            if modified_specs:
-                for task in world.tasks.values():
-                    if task.id not in result.tasks_before:
-                        continue
-                    spec_path = task.spec_ref.split("@")[0]
-                    if spec_path in modified_specs:
-                        self._state.set_spec_ref(task.id, f"{spec_path}@{version}")
+            for task in world.tasks.values():
+                if task.id not in result.tasks_before:
+                    continue
+                spec_path = task.spec_ref.split("@")[0]
+                if spec_path not in set(result.unprocessed_specs):
+                    continue
+                should_repin = task.status == TaskStatus.IN_PROGRESS or spec_path in new_task_specs
+                if should_repin:
+                    self._state.set_spec_ref(task.id, f"{spec_path}@{version}")
         self._probe.intake_ran(
             unprocessed_specs=result.unprocessed_count,
             created_tasks=result.created_count,
