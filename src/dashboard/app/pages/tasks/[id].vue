@@ -216,6 +216,16 @@ onUnmounted(() => {
               </dl>
             </div>
 
+            <!-- PR description -->
+            <div
+              v-if="task.pr_description"
+              class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none"
+            >
+              <h2 class="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">PR Description</h2>
+              <p v-if="task.pr_title" class="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">{{ task.pr_title }}</p>
+              <p class="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-line">{{ task.pr_description }}</p>
+            </div>
+
             <!-- Latest review inline (A3) -->
             <div
               v-if="latestReview"

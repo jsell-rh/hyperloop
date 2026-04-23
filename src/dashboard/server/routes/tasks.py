@@ -47,6 +47,8 @@ def _task_to_summary(task: object) -> TaskSummary:
         branch=task.branch,
         pr=task.pr,
         spec_ref=task.spec_ref,
+        pr_title=task.pr_title,
+        pr_description=task.pr_description,
     )
 
 

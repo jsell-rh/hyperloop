@@ -16,6 +16,8 @@ class TaskSummary(BaseModel):
     branch: str | None
     pr: str | None
     spec_ref: str
+    pr_title: str | None = None
+    pr_description: str | None = None
 
 
 class Review(BaseModel):

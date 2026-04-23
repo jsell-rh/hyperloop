@@ -23,6 +23,8 @@ export interface TaskSummary {
   branch: string | null
   pr: string | null
   spec_ref: string
+  pr_title: string | null
+  pr_description: string | null
 }
 
 export interface DepDetail {
