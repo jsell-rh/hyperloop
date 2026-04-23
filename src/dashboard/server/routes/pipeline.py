@@ -33,6 +33,8 @@ def _flatten_steps(steps: list[object], *, in_loop: bool = False) -> list[Pipeli
             result.append(PipelineStepInfo(name=str(step["agent"]), type="agent", in_loop=in_loop))
         elif "gate" in step:
             result.append(PipelineStepInfo(name=str(step["gate"]), type="gate", in_loop=in_loop))
+        elif "check" in step:
+            result.append(PipelineStepInfo(name=str(step["check"]), type="check", in_loop=in_loop))
         elif "action" in step:
             result.append(
                 PipelineStepInfo(name=str(step["action"]), type="action", in_loop=in_loop)

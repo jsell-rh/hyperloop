@@ -75,6 +75,8 @@ def _parse_pipeline_tree(steps: list[object]) -> list[PipelineTreeStep]:
             result.append(PipelineTreeStep(type="agent", name=str(step["agent"])))
         elif "gate" in step:
             result.append(PipelineTreeStep(type="gate", name=str(step["gate"])))
+        elif "check" in step:
+            result.append(PipelineTreeStep(type="check", name=str(step["check"])))
         elif "action" in step:
             result.append(PipelineTreeStep(type="action", name=str(step["action"])))
         elif "loop" in step:
