@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.34.0 (2026-04-23)
+
+### Features
+
+- Add args to action/check steps, extract mark-pr-ready from gate
+  ([`e92530f`](https://github.com/jsell-rh/hyperloop/commit/e92530f663e46af238a69f9dc5df4cbe720289a5))
+
+
 ## v0.33.0 (2026-04-23)
 
 ### Bug Fixes
