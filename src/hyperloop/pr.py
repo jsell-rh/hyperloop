@@ -549,10 +549,22 @@ def _pr_body(
 
 
 def _is_auto_resolvable(path: str) -> bool:
-    """Check if a conflicting file can be auto-resolved."""
+    """Check if a conflicting file can be auto-resolved.
+
+    Auto-resolvable paths:
+    - .hyperloop/state/     — orchestrator state (tasks take trunk, reviews take branch)
+    - .hyperloop/worker-result.yaml — verdict file (delete)
+    - .hyperloop/checks/    — process-improver scripts (take trunk)
+    - .agent-memory/        — Claude agent memory (take trunk, shouldn't be tracked)
+    """
     from hyperloop.adapters.verdict import VERDICT_FILE
 
-    return path.startswith(".hyperloop/state/") or path == VERDICT_FILE
+    return (
+        path.startswith(".hyperloop/state/")
+        or path == VERDICT_FILE
+        or path.startswith(".hyperloop/checks/")
+        or path.startswith(".agent-memory/")
+    )
 
 
 def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
@@ -588,13 +600,16 @@ def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
         # Resolve each file
         for f in conflicted:
             if f == VERDICT_FILE:
-                # Verdict file should never be on trunk — delete it
                 subprocess.run(
                     ["git", "-C", tmpdir, "rm", "-f", "--", f],
                     capture_output=True,
                 )
-            elif f.startswith(".hyperloop/state/tasks/"):
-                # Orchestrator owns task files — take trunk version
+            elif (
+                f.startswith(".hyperloop/state/tasks/")
+                or f.startswith(".hyperloop/checks/")
+                or f.startswith(".agent-memory/")
+            ):
+                # Orchestrator/trunk owns these — take trunk version
                 subprocess.run(
                     ["git", "-C", tmpdir, "checkout", "--ours", "--", f],
                     capture_output=True,

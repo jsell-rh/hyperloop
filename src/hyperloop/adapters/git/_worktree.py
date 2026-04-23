@@ -30,25 +30,33 @@ def clean_git_env() -> dict[str, str]:
     return env
 
 
-def ensure_worktrees_gitignored(repo_path: str) -> None:
-    """Ensure worktrees/ is in the target repo's .gitignore.
+_GITIGNORE_ENTRIES = [
+    "worktrees/",
+    ".agent-memory/",
+]
 
-    Without this, ``git add -A`` in the state store's commit() would
-    stage worktree gitlink files, polluting the repo and causing
-    spurious merge conflicts.
+
+def ensure_worktrees_gitignored(repo_path: str) -> None:
+    """Ensure hyperloop-managed paths are in the target repo's .gitignore.
+
+    Adds worktrees/ (prevents worktree gitlinks from being staged) and
+    .agent-memory/ (Claude agent memory, never tracked) if not present.
     """
     repo = Path(repo_path)
     gitignore = repo / ".gitignore"
-    entry = "worktrees/"
-    if gitignore.is_file():
-        content = gitignore.read_text()
-        if entry in content.splitlines():
-            return
-        if not content.endswith("\n"):
-            content += "\n"
-        gitignore.write_text(content + entry + "\n")
-    else:
-        gitignore.write_text(entry + "\n")
+    content = gitignore.read_text() if gitignore.is_file() else ""
+
+    lines = content.splitlines()
+    added = False
+    for entry in _GITIGNORE_ENTRIES:
+        if entry not in lines:
+            if content and not content.endswith("\n"):
+                content += "\n"
+            content += entry + "\n"
+            added = True
+
+    if added:
+        gitignore.write_text(content)
 
 
 def create_worktree(repo_path: str, worktree_path: str, branch: str) -> None:
