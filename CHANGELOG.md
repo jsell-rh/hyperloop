@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.31.2 (2026-04-23)
+
+### Bug Fixes
+
+- Add 'check' to known pipeline primitive keys
+  ([`baa8b05`](https://github.com/jsell-rh/hyperloop/commit/baa8b051cd4b28582bf298c534ee8ca210f05e9e))
+
+
 ## v0.31.1 (2026-04-23)
 
 
