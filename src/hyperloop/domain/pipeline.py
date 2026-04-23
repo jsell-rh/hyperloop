@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 from hyperloop.domain.model import (
     ActionStep,
     AgentStep,
+    CheckStep,
     GateStep,
     LoopStep,
     PipelinePosition,
@@ -50,6 +51,13 @@ class PerformAction:
 
 
 @dataclass(frozen=True)
+class PerformCheck:
+    """Evaluate a mechanical check — pass advances, fail restarts enclosing loop."""
+
+    check: str
+
+
+@dataclass(frozen=True)
 class PipelineComplete:
     """The pipeline has been fully traversed — no more steps."""
 
@@ -61,7 +69,9 @@ class PipelineFailed:
     reason: str
 
 
-PipelineAction = SpawnAgent | WaitForGate | PerformAction | PipelineComplete | PipelineFailed
+PipelineAction = (
+    SpawnAgent | WaitForGate | PerformAction | PerformCheck | PipelineComplete | PipelineFailed
+)
 """Union of all pipeline action types."""
 
 
@@ -187,6 +197,8 @@ class PipelineExecutor:
             return SpawnAgent(agent=step.agent)
         if isinstance(step, GateStep):
             return WaitForGate(gate=step.gate)
+        if isinstance(step, CheckStep):
+            return PerformCheck(check=step.check)
         if isinstance(step, ActionStep):
             return PerformAction(action=step.action)
         # LoopStep — should not be called directly; caller descends into it.

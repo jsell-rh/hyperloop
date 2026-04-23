@@ -29,6 +29,7 @@ from hyperloop.domain.model import (
     ActionStep,
     AgentContext,
     AgentStep,
+    CheckStep,
     ComposedPrompt,
     GateStep,
     ImprovementContext,
@@ -433,6 +434,8 @@ def _parse_steps(steps_raw: object) -> list[PipelineStep]:
             )
         elif key == "gate":
             result.append(GateStep(gate=str(value)))
+        elif key == "check":
+            result.append(CheckStep(check=str(value)))
         elif key == "loop":
             nested = _parse_steps(value)
             result.append(LoopStep(steps=tuple(nested)))

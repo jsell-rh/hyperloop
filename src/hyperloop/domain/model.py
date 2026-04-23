@@ -117,13 +117,23 @@ class LoopStep:
 
 
 @dataclass(frozen=True)
+class CheckStep:
+    """Mechanical pass/fail evaluation — no agent, no blocking.
+
+    On pass, advance. On fail, the enclosing loop restarts (like an agent fail).
+    """
+
+    check: str
+
+
+@dataclass(frozen=True)
 class ActionStep:
     """Terminal operation (merge-pr, mark-pr-ready, etc.)."""
 
     action: str
 
 
-PipelineStep = AgentStep | GateStep | LoopStep | ActionStep
+PipelineStep = AgentStep | GateStep | LoopStep | CheckStep | ActionStep
 """Union of all pipeline primitive types."""
 
 

@@ -438,11 +438,13 @@ def run(
     if cfg.runtime == "ambient" and hasattr(runtime, "ensure_project"):
         runtime.ensure_project()  # type: ignore[attr-defined]
 
-    # Build gate + action adapters from PRPort
+    # Build gate + action + check adapters from PRPort
     gate = None
     action = None
+    check = None
     if pr_manager is not None:
         from hyperloop.adapters.action.pr_merge import PRMergeAction
+        from hyperloop.adapters.check.pr_feedback import PRFeedbackCheck
         from hyperloop.adapters.gate.label import LabelGate
 
         gate = LabelGate(pr_manager)
@@ -451,6 +453,8 @@ def run(
             base_branch=cfg.base_branch,
             repo_path=str(repo_path),
         )
+        assert cfg.repo is not None
+        check = PRFeedbackCheck(repo=cfg.repo)
 
     # Build notification adapter
     notification = None
@@ -480,6 +484,7 @@ def run(
         base_branch=cfg.base_branch,
         gate=gate,
         action=action,
+        check=check,
         pr=pr_manager,
         spec_source=spec_source,
         hooks=tuple(hooks),

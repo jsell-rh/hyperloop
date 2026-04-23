@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from hyperloop.domain.model import (
     ActionStep,
     AgentStep,
+    CheckStep,
     GateStep,
     LoopStep,
     PipelinePosition,
@@ -18,6 +19,7 @@ from hyperloop.domain.model import (
 )
 from hyperloop.domain.pipeline import (
     PerformAction,
+    PerformCheck,
     PipelineAction,
     SpawnAgent,
     WaitForGate,
@@ -61,6 +63,8 @@ def find_position_for_step(executor: PipelineExecutor, phase_name: str) -> Pipel
             return step.agent
         if isinstance(step, GateStep):
             return step.gate
+        if isinstance(step, CheckStep):
+            return step.check
         if isinstance(step, ActionStep):
             return step.action
         return None
@@ -91,9 +95,11 @@ def position_from_phase(executor: PipelineExecutor, task: Task) -> PipelinePosit
 
 
 def phase_for_action(action: object) -> str | None:
-    """Extract a phase name from a pipeline action (WaitForGate or PerformAction)."""
+    """Extract a phase name from a pipeline action (WaitForGate, PerformCheck, or PerformAction)."""
     if isinstance(action, WaitForGate):
         return action.gate
+    if isinstance(action, PerformCheck):
+        return action.check
     if isinstance(action, PerformAction):
         return action.action
     return None
@@ -107,6 +113,8 @@ def phase_for_pipe_action(
         return action.agent
     if isinstance(action, WaitForGate):
         return action.gate
+    if isinstance(action, PerformCheck):
+        return action.check
     if isinstance(action, PerformAction):
         return action.action
     return None

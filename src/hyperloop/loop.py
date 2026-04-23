@@ -27,6 +27,7 @@ from hyperloop.cycle.intake import _unprocessed_specs
 from hyperloop.domain.deps import detect_cycles
 from hyperloop.domain.model import (
     ActionStep,
+    CheckStep,
     GateStep,
     PipelinePosition,
     TaskContext,
@@ -42,6 +43,7 @@ if TYPE_CHECKING:
     from hyperloop.cycle.spawn import SpawnPlan
     from hyperloop.domain.model import Process, Task, WorkerResult
     from hyperloop.ports.action import ActionPort
+    from hyperloop.ports.check import CheckPort
     from hyperloop.ports.gate import GatePort
     from hyperloop.ports.hook import CycleHook
     from hyperloop.ports.notification import NotificationPort
@@ -68,6 +70,7 @@ class Orchestrator:
         base_branch: str = "main",
         gate: GatePort | None = None,
         action: ActionPort | None = None,
+        check: CheckPort | None = None,
         pr: PRPort | None = None,
         spec_source: SpecSource | None = None,
         hooks: tuple[CycleHook, ...] = (),
@@ -85,6 +88,7 @@ class Orchestrator:
         self._base_branch = base_branch
         self._gate = gate
         self._action = action
+        self._check = check
         self._pr = pr
         self._spec_source = spec_source
         self._hooks = hooks
@@ -120,6 +124,7 @@ class Orchestrator:
         """Validate that pipeline steps have matching port adapters."""
         gates = collect_steps_of_type(self._process.pipeline, GateStep)
         actions = collect_steps_of_type(self._process.pipeline, ActionStep)
+        checks = collect_steps_of_type(self._process.pipeline, CheckStep)
         if gates and self._gate is None:
             names = sorted({s.gate for s in gates})  # type: ignore[union-attr]
             raise ValueError(
@@ -131,6 +136,12 @@ class Orchestrator:
             raise ValueError(
                 f"Pipeline has action steps {names} but no action adapter is configured. "
                 "Set --repo to enable PR-based actions, or remove action steps from the pipeline."
+            )
+        if checks and self._check is None:
+            names = sorted({s.check for s in checks})  # type: ignore[union-attr]
+            raise ValueError(
+                f"Pipeline has check steps {names} but no check adapter is configured. "
+                "Set --repo to enable PR-based checks, or remove check steps from the pipeline."
             )
 
     def run_loop(self, max_cycles: int = 200) -> str:
@@ -233,6 +244,7 @@ class Orchestrator:
             executor=executor,
             gate=self._gate,
             action=self._action,
+            check=self._check,
             pr=self._pr,
             notification=self._notification,
             probe=self._probe,
