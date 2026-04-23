@@ -94,6 +94,10 @@ interface SpecGroup {
   directory: string
   label: string
   specs: SpecSummary[]
+  tasksTotal: number
+  tasksComplete: number
+  tasksFailed: number
+  tasksInProgress: number
 }
 
 const groupedSpecs = computed<SpecGroup[]>(() => {
@@ -104,15 +108,34 @@ const groupedSpecs = computed<SpecGroup[]>(() => {
     groups.get(dir)!.push(spec)
   }
   const result: SpecGroup[] = []
-  for (const [dir, specs] of groups) {
+  for (const [dir, dirSpecs] of groups) {
+    let total = 0, complete = 0, failed = 0, inProgress = 0
+    for (const s of dirSpecs) {
+      total += s.tasks_total
+      complete += s.tasks_complete
+      failed += s.tasks_failed
+      inProgress += s.tasks_in_progress
+    }
     result.push({
       directory: dir,
-      label: dir || 'General',
-      specs,
+      label: dir || 'general',
+      specs: dirSpecs,
+      tasksTotal: total,
+      tasksComplete: complete,
+      tasksFailed: failed,
+      tasksInProgress: inProgress,
     })
   }
   return result
 })
+
+const activeGroup = ref<string | null>(null)
+
+function scrollToGroup(dir: string): void {
+  activeGroup.value = dir
+  const el = document.getElementById(`spec-group-${dir || 'general'}`)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
 // Dynamic page title
 useHead({ title: computed(() => {
@@ -189,18 +212,75 @@ onUnmounted(() => {
       {{ summary?.total ?? 0 }} tasks total ({{ summary?.complete ?? 0 }} complete, {{ summary?.in_progress ?? 0 }} in progress, {{ summary?.failed ?? 0 }} failed)
     </p>
 
-    <!-- Spec groups by directory -->
-    <div v-for="group in groupedSpecs" :key="group.directory" class="mb-8">
-      <h2 class="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4">
-        {{ group.label }}
-      </h2>
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-5">
-        <SpecCard
-          v-for="spec in group.specs"
-          :key="spec.spec_ref"
-          :spec="spec"
-          @hover="hoveredSpecRef = $event"
-        />
+    <!-- Sidebar + main content layout -->
+    <div v-if="groupedSpecs.length > 0" class="flex gap-8">
+      <!-- Sidebar: directory index with progress -->
+      <nav class="hidden lg:block w-52 flex-shrink-0 sticky top-20 self-start">
+        <h3 class="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-3">Domains</h3>
+        <ul class="space-y-1">
+          <li v-for="group in groupedSpecs" :key="'nav-' + group.directory">
+            <button
+              class="w-full text-left px-2.5 py-1.5 rounded-md text-sm transition-colors duration-100"
+              :class="activeGroup === group.directory
+                ? 'bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 font-medium'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50'"
+              @click="scrollToGroup(group.directory)"
+              @mouseenter="hoveredSpecRef = null"
+            >
+              <div class="flex items-center justify-between">
+                <span class="capitalize">{{ group.label }}</span>
+                <span class="text-[10px] font-mono tabular-nums text-gray-400 dark:text-gray-500">
+                  {{ group.tasksComplete }}/{{ group.tasksTotal }}
+                </span>
+              </div>
+              <!-- Mini progress bar -->
+              <div class="mt-1 h-1 w-full rounded-full bg-gray-100 dark:bg-gray-800 flex overflow-hidden">
+                <div
+                  v-if="group.tasksComplete > 0"
+                  class="h-1 bg-green-500 dark:bg-green-400"
+                  :style="{ width: `${(group.tasksComplete / group.tasksTotal) * 100}%` }"
+                />
+                <div
+                  v-if="group.tasksFailed > 0"
+                  class="h-1 bg-red-500 dark:bg-red-400"
+                  :style="{ width: `${(group.tasksFailed / group.tasksTotal) * 100}%` }"
+                />
+                <div
+                  v-if="group.tasksInProgress > 0"
+                  class="h-1 bg-blue-500 dark:bg-blue-400"
+                  :style="{ width: `${(group.tasksInProgress / group.tasksTotal) * 100}%` }"
+                />
+              </div>
+            </button>
+          </li>
+        </ul>
+      </nav>
+
+      <!-- Main: spec card groups -->
+      <div class="flex-1 min-w-0">
+        <div
+          v-for="group in groupedSpecs"
+          :key="group.directory"
+          :id="`spec-group-${group.directory || 'general'}`"
+          class="mb-10 scroll-mt-20"
+        >
+          <div class="flex items-center gap-3 mb-4">
+            <h2 class="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider capitalize">
+              {{ group.label }}
+            </h2>
+            <span class="text-[10px] font-mono tabular-nums text-gray-400 dark:text-gray-500">
+              {{ group.tasksComplete }}/{{ group.tasksTotal }} tasks
+            </span>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-5">
+            <SpecCard
+              v-for="spec in group.specs"
+              :key="spec.spec_ref"
+              :spec="spec"
+              @hover="hoveredSpecRef = $event"
+            />
+          </div>
+        </div>
       </div>
     </div>
 
