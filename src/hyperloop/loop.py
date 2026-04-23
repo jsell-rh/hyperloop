@@ -198,7 +198,11 @@ class Orchestrator:
         if not world.tasks and not self._workers:
             self._apply_intake(
                 run_intake(
-                    self._state, self._runtime, self._composer, self._has_failures_since_intake
+                    self._state,
+                    self._runtime,
+                    self._composer,
+                    self._has_failures_since_intake,
+                    spec_source=self._spec_source,
                 )
             )
             world = build_world(self._workers, self._state, self._runtime)
@@ -314,7 +318,7 @@ class Orchestrator:
 
     def _unprocessed_specs(self) -> list[str]:
         """Return spec file paths that have no corresponding task."""
-        return _unprocessed_specs(self._state)
+        return _unprocessed_specs(self._state, self._spec_source)
 
     def _collect_cycle_findings(self, reaped_results: dict[str, WorkerResult]) -> str:
         """Collect findings from all failed results this cycle."""

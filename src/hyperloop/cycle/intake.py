@@ -18,6 +18,7 @@ from hyperloop.domain.model import IntakeContext
 if TYPE_CHECKING:
     from hyperloop.compose import PromptComposer
     from hyperloop.ports.runtime import Runtime
+    from hyperloop.ports.spec_source import SpecSource
     from hyperloop.ports.state import StateStore
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger()
@@ -35,12 +36,39 @@ class IntakeResult:
     unprocessed_count: int
 
 
-def _unprocessed_specs(state: StateStore) -> list[str]:
-    """Return spec file paths that have no corresponding task."""
+def _unprocessed_specs(state: StateStore, spec_source: SpecSource | None = None) -> list[str]:
+    """Return spec file paths that need PM attention.
+
+    A spec is unprocessed if:
+    - It has no corresponding task (new spec), OR
+    - It has changed since the SHA pinned in its tasks' spec_ref
+    """
     all_specs = state.list_files("specs/**/*.spec.md")
     world = state.get_world()
-    covered_refs = {task.spec_ref.split("@")[0] for task in world.tasks.values()}
-    return [s for s in all_specs if s not in covered_refs]
+
+    # Build map: spec_path -> latest pinned SHA across all tasks for that spec
+    pinned_versions: dict[str, str] = {}
+    covered: set[str] = set()
+    for task in world.tasks.values():
+        if "@" in task.spec_ref:
+            path, sha = task.spec_ref.rsplit("@", 1)
+            covered.add(path)
+            existing = pinned_versions.get(path)
+            if existing is None:
+                pinned_versions[path] = sha
+        else:
+            covered.add(task.spec_ref)
+
+    result: list[str] = []
+    for spec in all_specs:
+        if spec not in covered or (
+            spec_source is not None
+            and spec in pinned_versions
+            and spec_source.has_changed(spec, pinned_versions[spec])
+        ):
+            result.append(spec)
+
+    return result
 
 
 def run_intake(
@@ -48,6 +76,7 @@ def run_intake(
     runtime: Runtime,
     composer: PromptComposer | None,
     has_failures: bool,
+    spec_source: SpecSource | None = None,
 ) -> IntakeResult:
     """Run PM intake if there are unprocessed specs or task failures.
 
@@ -77,7 +106,7 @@ def run_intake(
         logger.debug("intake: no composer -- skipping")
         return not_ran
 
-    unprocessed = _unprocessed_specs(state)
+    unprocessed = _unprocessed_specs(state, spec_source)
     if not unprocessed and not has_failures:
         logger.debug("intake: no unprocessed specs or failures -- skipping")
         return not_ran

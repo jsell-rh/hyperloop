@@ -19,6 +19,7 @@ class FakeSpecSource:
         self._specs: dict[str, str] = {}  # path -> content
         self._changes: list[SpecChange] = []
         self._version: str = "fake-v1"
+        self._changed_since: set[str] = set()  # spec paths that have changed
 
     def add_spec(self, path: str, content: str) -> None:
         """Seed a spec file into the in-memory store."""
@@ -41,6 +42,14 @@ class FakeSpecSource:
         path = spec_ref.split("@")[0] if "@" in spec_ref else spec_ref
         return self._specs.get(path, "")
 
+    def mark_changed(self, spec_path: str) -> None:
+        """Mark a spec as having changed since its pinned version."""
+        self._changed_since.add(spec_path)
+
     def current_version(self) -> str:
         """Return the pre-configured version marker."""
         return self._version
+
+    def has_changed(self, spec_path: str, since_version: str) -> bool:
+        """Return whether the spec has been marked as changed."""
+        return spec_path in self._changed_since

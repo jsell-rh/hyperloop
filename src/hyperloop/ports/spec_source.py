@@ -32,3 +32,7 @@ class SpecSource(Protocol):
     def current_version(self) -> str:
         """Return the current version marker (for tracking last-processed)."""
         ...
+
+    def has_changed(self, spec_path: str, since_version: str) -> bool:
+        """Return True if the spec file has changed since the given version."""
+        ...
