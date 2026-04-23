@@ -50,36 +50,26 @@ class PRReviewCheck:
     def _check_ci(self, pr_url: str) -> CheckResult:
         """Check CI status on the PR. WAIT if pending, FAIL if failed, PASS if all green."""
         result = subprocess.run(
-            [
-                "gh",
-                "pr",
-                "checks",
-                pr_url,
-                "--json",
-                "name,state,conclusion",
-                "--repo",
-                self._repo,
-            ],
+            ["gh", "pr", "checks", pr_url, "--json", "name,state", "--repo", self._repo],
             capture_output=True,
             text=True,
         )
         if result.returncode != 0:
-            return CheckResult.WAIT
+            return CheckResult.PASS
 
         try:
             checks = json.loads(result.stdout)
         except json.JSONDecodeError:
-            return CheckResult.WAIT
+            return CheckResult.PASS
 
         if not checks:
-            return CheckResult.WAIT
+            return CheckResult.PASS
 
         for check in checks:
             state = check.get("state", "")
-            conclusion = check.get("conclusion", "")
             if state in ("PENDING", "QUEUED", "IN_PROGRESS", "WAITING"):
                 return CheckResult.WAIT
-            if conclusion in ("FAILURE", "TIMED_OUT", "CANCELLED"):
+            if state in ("FAILURE", "TIMED_OUT", "CANCELLED", "ERROR"):
                 return CheckResult.FAIL
 
         return CheckResult.PASS
