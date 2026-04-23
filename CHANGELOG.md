@@ -2,6 +2,28 @@
 
 <!-- version list -->
 
+## v0.33.0 (2026-04-23)
+
+### Bug Fixes
+
+- Auto-resolve .hyperloop/checks/ and .agent-memory/ conflicts during rebase
+  ([`6ae875d`](https://github.com/jsell-rh/hyperloop/commit/6ae875d9016f8583970719b629cc25d5e65e0aa0))
+
+- Dashboard pipeline endpoints handle check: step type
+  ([`003358e`](https://github.com/jsell-rh/hyperloop/commit/003358eb6bb5c2a43f95b9e368fcbb1268756a71))
+
+### Features
+
+- Group spec cards by directory on overview page
+  ([`fb2006c`](https://github.com/jsell-rh/hyperloop/commit/fb2006cd2c5247ab5040b0b1f70e4b5ccba834b8))
+
+- Show PR title and description on task detail page
+  ([`8d7aadb`](https://github.com/jsell-rh/hyperloop/commit/8d7aadb1636e79b2781a95c3f7e1c12524d87058))
+
+- Sidebar navigation with per-domain progress on overview page
+  ([`86dc4f0`](https://github.com/jsell-rh/hyperloop/commit/86dc4f0fa8ce78d9709b138970d63bacaa5509ca))
+
+
 ## v0.32.0 (2026-04-23)
 
 ### Bug Fixes
