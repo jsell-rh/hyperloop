@@ -389,3 +389,239 @@ class TestPRMergeActionIsolation:
         result = action.execute(task, "merge-pr", {})
 
         assert result.outcome == ActionOutcome.SUCCESS
+
+
+class TestRebaseAutoResolution:
+    """Rebase auto-resolves conflicts on .hyperloop/state/, .agent-memory/,
+    and worker-result.yaml. When resolution produces empty commits, they
+    are skipped instead of aborting the rebase."""
+
+    @staticmethod
+    def _setup_remote_repo(tmp_path: Path) -> tuple[Path, Path]:
+        """Create a bare remote and a local clone with initial commit."""
+        bare = tmp_path / "origin.git"
+        repo = tmp_path / "clone"
+        subprocess.run(
+            ["git", "init", "--bare", "-b", "main", str(bare)],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "clone", str(bare), str(repo)],
+            check=True,
+            capture_output=True,
+        )
+        _git(repo, "config", "user.email", "test@test.com")
+        _git(repo, "config", "user.name", "Test")
+        (repo / "README.md").write_text("# Test\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "init")
+        _git(repo, "push", "origin", "main")
+        return bare, repo
+
+    def test_state_file_conflict_auto_resolved(self, tmp_path: Path) -> None:
+        """Worker branch modifies a state file that trunk also modified.
+        Rebase should auto-resolve by taking trunk's version."""
+        _bare, repo = self._setup_remote_repo(tmp_path)
+
+        # Create state dir on main
+        state_dir = repo / ".hyperloop" / "state" / "tasks"
+        state_dir.mkdir(parents=True)
+        (state_dir / "task-001.md").write_text("status: not-started\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "add state file")
+        _git(repo, "push", "origin", "main")
+
+        # Create worker branch that modifies the state file
+        _git(repo, "checkout", "-b", "hyperloop/task-001")
+        (state_dir / "task-001.md").write_text("status: in-progress\nphase: implementer\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "worker: update state")
+        # Also add real work so the branch has non-empty content
+        (repo / "feature.py").write_text("print('hello')\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "feat: add feature")
+        _git(repo, "push", "origin", "hyperloop/task-001")
+        _git(repo, "checkout", "main")
+
+        # Advance main — modify the same state file (orchestrator updated it)
+        (state_dir / "task-001.md").write_text("status: in-progress\nphase: verifier\nround: 2\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "orchestrator: advance task")
+        _git(repo, "push", "origin", "main")
+
+        # Rebase should succeed — state conflict auto-resolved, feature kept
+        pr = PRManager(repo="org/repo")
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(str(repo))
+            result = pr.rebase_branch("hyperloop/task-001", "main")
+        finally:
+            os.chdir(original_cwd)
+
+        assert result is True
+        assert _current_branch(repo) == "main"
+
+    def test_agent_memory_conflict_auto_resolved(self, tmp_path: Path) -> None:
+        """Worker branch modifies .agent-memory/ that trunk also modified.
+        Rebase should auto-resolve by taking trunk's version."""
+        _bare, repo = self._setup_remote_repo(tmp_path)
+
+        # Create .agent-memory on main
+        mem_dir = repo / ".agent-memory"
+        mem_dir.mkdir()
+        (mem_dir / "spec-reviewer.md").write_text("memory v1\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "add agent memory")
+        _git(repo, "push", "origin", "main")
+
+        # Worker branch modifies it
+        _git(repo, "checkout", "-b", "hyperloop/task-002")
+        (mem_dir / "spec-reviewer.md").write_text("memory v2 from worker\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "worker: update memory")
+        (repo / "feature2.py").write_text("print('feature2')\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "feat: add feature2")
+        _git(repo, "push", "origin", "hyperloop/task-002")
+        _git(repo, "checkout", "main")
+
+        # Trunk modifies the same memory file
+        (mem_dir / "spec-reviewer.md").write_text("memory v3 from trunk\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "orchestrator: update memory")
+        _git(repo, "push", "origin", "main")
+
+        pr = PRManager(repo="org/repo")
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(str(repo))
+            result = pr.rebase_branch("hyperloop/task-002", "main")
+        finally:
+            os.chdir(original_cwd)
+
+        assert result is True
+
+    def test_verdict_file_conflict_auto_resolved(self, tmp_path: Path) -> None:
+        """Worker branch has worker-result.yaml that also appears on trunk.
+        Rebase should auto-resolve by deleting it."""
+        _bare, repo = self._setup_remote_repo(tmp_path)
+
+        verdict_dir = repo / ".hyperloop"
+        verdict_dir.mkdir(parents=True)
+
+        # Trunk has the verdict file (shouldn't happen, but can via bad merge)
+        (verdict_dir / "worker-result.yaml").write_text("verdict: pass\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "stale verdict on trunk")
+        _git(repo, "push", "origin", "main")
+
+        # Worker branch has a different verdict
+        _git(repo, "checkout", "-b", "hyperloop/task-003")
+        (verdict_dir / "worker-result.yaml").write_text("verdict: fail\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "worker: write verdict")
+        (repo / "feature3.py").write_text("print('feature3')\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "feat: add feature3")
+        _git(repo, "push", "origin", "hyperloop/task-003")
+        _git(repo, "checkout", "main")
+
+        # Modify trunk to force divergence
+        (repo / "other.txt").write_text("trunk change\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "trunk: advance")
+        _git(repo, "push", "origin", "main")
+
+        pr = PRManager(repo="org/repo")
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(str(repo))
+            result = pr.rebase_branch("hyperloop/task-003", "main")
+        finally:
+            os.chdir(original_cwd)
+
+        assert result is True
+
+    def test_multiple_auto_resolvable_conflicts_in_sequence(self, tmp_path: Path) -> None:
+        """Worker branch has state + agent-memory + verdict conflicts across
+        multiple commits. All should be auto-resolved, with empty commits
+        skipped."""
+        _bare, repo = self._setup_remote_repo(tmp_path)
+
+        state_dir = repo / ".hyperloop" / "state" / "tasks"
+        state_dir.mkdir(parents=True)
+        mem_dir = repo / ".agent-memory"
+        mem_dir.mkdir()
+
+        # Set up initial tracked files on main
+        (state_dir / "task-001.md").write_text("status: not-started\n")
+        (mem_dir / "reviewer.md").write_text("memory v1\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "init state and memory")
+        _git(repo, "push", "origin", "main")
+
+        # Worker branch: modify state, memory, and add real work
+        _git(repo, "checkout", "-b", "hyperloop/task-001")
+        (state_dir / "task-001.md").write_text("status: in-progress\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "worker: update state")
+        (mem_dir / "reviewer.md").write_text("memory from worker\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "worker: update memory")
+        (repo / "feature.py").write_text("# real work\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "feat: implement feature")
+        _git(repo, "push", "origin", "hyperloop/task-001")
+        _git(repo, "checkout", "main")
+
+        # Trunk: modify the same state and memory files
+        (state_dir / "task-001.md").write_text("status: complete\nround: 5\n")
+        (mem_dir / "reviewer.md").write_text("memory from trunk\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "orchestrator: advance")
+        _git(repo, "push", "origin", "main")
+
+        pr = PRManager(repo="org/repo")
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(str(repo))
+            result = pr.rebase_branch("hyperloop/task-001", "main")
+        finally:
+            os.chdir(original_cwd)
+
+        assert result is True
+
+    def test_real_conflict_not_auto_resolved(self, tmp_path: Path) -> None:
+        """A conflict in a non-state file (real code) should NOT be
+        auto-resolved — rebase_branch returns False."""
+        _bare, repo = self._setup_remote_repo(tmp_path)
+
+        (repo / "app.py").write_text("def main():\n    pass\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "add app.py")
+        _git(repo, "push", "origin", "main")
+
+        # Worker modifies app.py
+        _git(repo, "checkout", "-b", "hyperloop/task-001")
+        (repo / "app.py").write_text("def main():\n    print('worker')\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "worker: modify app")
+        _git(repo, "push", "origin", "hyperloop/task-001")
+        _git(repo, "checkout", "main")
+
+        # Trunk modifies the same file differently
+        (repo / "app.py").write_text("def main():\n    print('trunk')\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "--no-verify", "-m", "trunk: modify app")
+        _git(repo, "push", "origin", "main")
+
+        pr = PRManager(repo="org/repo")
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(str(repo))
+            result = pr.rebase_branch("hyperloop/task-001", "main")
+        finally:
+            os.chdir(original_cwd)
+
+        assert result is False

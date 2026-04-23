@@ -639,6 +639,21 @@ def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
         if cont.returncode == 0:
             return True  # Rebase completed successfully
 
+        # Continuing can fail when all conflict resolutions result in an
+        # empty commit (e.g. state file taken from trunk matches trunk).
+        # Skip the empty commit — the loop will catch the next conflict.
+        stderr_and_stdout = cont.stdout + cont.stderr
+        if "nothing to commit" in stderr_and_stdout or "No changes" in stderr_and_stdout:
+            skip = subprocess.run(
+                ["git", "-C", tmpdir, "rebase", "--skip"],
+                capture_output=True,
+                text=True,
+                env={**os.environ, "GIT_EDITOR": "true"},
+            )
+            if skip.returncode == 0:
+                return True
+            # --skip hit another conflict — loop will handle it
+
     return False  # Exceeded max rounds
 
 
