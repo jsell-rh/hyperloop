@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from hyperloop.domain.model import Task
@@ -22,13 +22,19 @@ class PRFeedbackCheck:
     def __init__(self, repo: str) -> None:
         self._repo = repo
 
-    def evaluate(self, task: Task, check_name: str) -> bool:
+    def evaluate(self, task: Task, check_name: str, args: dict[str, object]) -> bool:
         """Evaluate the check. Returns True if all feedback is addressed."""
         if check_name != "pr-feedback-addressed":
             return True
 
         if task.pr is None:
             return True
+
+        raw_reviewers = args.get("require_reviewers")
+        if isinstance(raw_reviewers, list):
+            reviewer_list = cast("list[str]", raw_reviewers)
+            if not self._all_reviewers_posted(task.pr, reviewer_list):
+                return False
 
         latest_push = self._get_latest_push_time(task.pr)
         if latest_push is None:
@@ -39,6 +45,40 @@ class PRFeedbackCheck:
             return True
 
         return latest_push >= latest_comment
+
+    def _all_reviewers_posted(self, pr_url: str, required: list[str]) -> bool:
+        """Return True if every required reviewer has posted at least one review or comment."""
+        result = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "view",
+                pr_url,
+                "--json",
+                "comments,reviews",
+                "--repo",
+                self._repo,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return False
+
+        data = json.loads(result.stdout)
+        posted: set[str] = set()
+
+        for review in data.get("reviews", []):
+            author = review.get("author", {}).get("login", "")
+            if author:
+                posted.add(author)
+
+        for comment in data.get("comments", []):
+            author = comment.get("author", {}).get("login", "")
+            if author:
+                posted.add(author)
+
+        return all(r in posted for r in required)
 
     def _get_latest_push_time(self, pr_url: str) -> datetime | None:
         """Get the timestamp of the latest commit on the PR branch."""

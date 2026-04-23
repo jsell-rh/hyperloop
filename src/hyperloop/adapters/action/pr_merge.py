@@ -28,7 +28,7 @@ class PRMergeAction:
         self._base_branch = base_branch
         self._repo_path = repo_path
 
-    def execute(self, task: Task, action_name: str) -> ActionResult:
+    def execute(self, task: Task, action_name: str, args: dict[str, object]) -> ActionResult:
         """Execute the merge-pr action for a task.
 
         Returns:
@@ -107,9 +107,6 @@ class PRMergeAction:
                     detail="Failed to recreate closed PR",
                 )
             new_pr_url = pr_url
-
-        # Mark ready
-        self._pr.mark_ready(pr_url)
 
         # Rebase
         if not self._pr.rebase_branch(branch, self._base_branch):

@@ -1206,8 +1206,8 @@ class TestPRLifecycle:
         # The PR should be a draft
         assert pr_mgr.is_draft(task.pr)
 
-    def test_mark_ready_called_when_task_completes_pipeline(self) -> None:
-        """mark_ready is called when a task reaches the merge step."""
+    def test_mark_ready_not_called_implicitly_by_merge(self) -> None:
+        """mark_ready is NOT called by the merge action — it requires an explicit step."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
@@ -1220,7 +1220,6 @@ class TestPRLifecycle:
                 branch="hyperloop/task-001",
             )
         )
-        # Create and set PR on the task
         pr_url = pr_mgr.create_draft(
             "task-001", "hyperloop/task-001", "Task task-001", "specs/task-001.md"
         )
@@ -1229,9 +1228,7 @@ class TestPRLifecycle:
         orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
         orch.run_cycle()
 
-        # mark_ready should have been called before merge
-        assert pr_url in pr_mgr.marked_ready
-        # And the task should be complete (merged)
+        assert pr_url not in pr_mgr.marked_ready
         assert state.get_task("task-001").status == TaskStatus.COMPLETE
 
     def test_no_pr_created_when_pr_manager_is_none(self) -> None:

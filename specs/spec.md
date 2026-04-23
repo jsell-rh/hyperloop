@@ -184,16 +184,19 @@ pipeline:
   - loop:
       - agent: implementer
       - agent: verifier
+  - action: mark-pr-ready
   - gate: pr-require-label
+  - action: post-pr-comment
+    args:
+      body: "@coderabbit recheck"
+  - check: pr-feedback-addressed
+    args:
+      require_reviewers: ["coderabbit[bot]"]
   - action: merge-pr
 
 gates:
   pr-require-label:
     type: label
-
-actions:
-  merge-pr:
-    type: pr-merge
 
 hooks:
   after_reap:
@@ -206,12 +209,28 @@ hooks:
 |---|---|---|
 | `agent: X` | Spawn a worker agent with X's prompt template | Runtime |
 | `gate: X` | Block until external signal | GatePort adapter |
-| `action: X` | Execute an operation | ActionPort adapter |
-| `loop:` | Wrap agent steps — on fail restart from top, on pass continue | Pipeline executor (pure logic) |
+| `action: X` | Execute an operation (with optional `args:`) | ActionPort adapter |
+| `check: X` | Mechanical pass/fail evaluation (with optional `args:`) | CheckPort adapter |
+| `loop:` | Wrap steps — on fail restart from top, on pass continue | Pipeline executor (pure logic) |
 
 The pipeline is a state machine. The orchestrator calls `PipelineExecutor.advance(position, result)` and receives back what the next step is. The pipeline executor is a pure function with no I/O.
 
-Actions can appear anywhere in the pipeline, not just at the end. After SUCCESS, the pipeline advances to whatever comes next.
+Actions and checks can appear anywhere in the pipeline, not just at the end. After SUCCESS/pass, the pipeline advances to whatever comes next.
+
+#### Step arguments
+
+`action:` and `check:` steps accept an optional `args:` map that is passed through to the adapter at execution time. This allows process authors to configure generic framework adapters without writing code:
+
+```yaml
+- action: post-pr-comment
+  args:
+    body: "@coderabbit recheck"
+- check: pr-feedback-addressed
+  args:
+    require_reviewers: ["coderabbit[bot]"]
+```
+
+The framework never interprets `args` — it passes the dict verbatim to the adapter. Each adapter defines what keys it accepts.
 
 ### Agent definitions
 
@@ -282,8 +301,9 @@ The PM's prompt template lives at `base/pm.yaml` and is overridable via kustomiz
 For each existing task, check its current pipeline position:
 
 - **Has a WorkerResult?** Feed to pipeline executor → returns next step (`SpawnAgent`, `WaitForGate`, `PerformAction`, `PipelineComplete`, `PipelineFailed`). Update phase.
-- **At a `gate:` step?** Call `GatePort.check(task, gate_name)`. Cleared → advance. Not cleared → skip. On first entry, call `NotificationPort.gate_blocked()`.
-- **At an `action:` step?** Call `ActionPort.execute(task, action_name)`:
+- **At a `gate:` step?** Call `GatePort.check(task, gate_name)`. Cleared → advance. Not cleared → skip. On first entry, call `NotificationPort.gate_blocked()`. Gates have no side effects — PR lifecycle actions (mark ready, post comments) are separate `action:` steps.
+- **At a `check:` step?** Call `CheckPort.evaluate(task, check_name, args)`. Pass → advance. Fail → restart enclosing loop (like agent fail).
+- **At an `action:` step?** Call `ActionPort.execute(task, action_name, args)`:
   - SUCCESS → advance to next step (or COMPLETE if last)
   - RETRY → stay, try again next cycle
   - ERROR → increment `error_attempts[task]`, loop back after max
@@ -353,7 +373,9 @@ class GatePort(Protocol):
         ...
 ```
 
-Gates block until an external signal is received. Tasks at a gate do not consume a worker slot.
+Gates block until an external signal is received. Tasks at a gate do not consume a worker slot. Gates are pure queries — they check a condition and return True/False. They have no side effects.
+
+PR lifecycle actions (marking ready, posting comments, adding labels) are separate `action:` steps that the process author places before the gate. This keeps gates composable and avoids baking workflow-specific side effects into the gate primitive.
 
 Adapters:
 
@@ -364,9 +386,7 @@ Adapters:
 | `CIStatusGate` | All required CI checks pass | Checks status rollup. |
 | `AllGate` | Multiple conditions (AND) | Clears when ALL child gates clear. |
 
-When a task enters a gate, the orchestrator adds a `hyperloop/needs-approval` label to the PR. When the gate clears, the label is removed. This provides visibility into which PRs need human action.
-
-GitHub comment notifications describe the required action when a task enters a gate (e.g. "add the `lgtm` label" or "review and approve this PR").
+When a task enters a gate, the orchestrator calls `NotificationPort.gate_blocked()`. When the gate clears, the pipeline advances.
 
 Gates can be combined — a single gate requiring both label AND CI:
 
@@ -394,8 +414,8 @@ class ActionResult:
     pr_url: str | None = None   # if set, orchestrator updates task.pr
 
 class ActionPort(Protocol):
-    def execute(self, task: Task, action_name: str) -> ActionResult:
-        """Execute an action for a task."""
+    def execute(self, task: Task, action_name: str, args: dict[str, object]) -> ActionResult:
+        """Execute an action for a task. Args come from the process definition."""
         ...
 ```
 
@@ -405,10 +425,35 @@ class ActionPort(Protocol):
 | RETRY | Transient failure | Stay, try next cycle. No counter. |
 | ERROR | Needs intervention | Increment `error_attempts[task]`. After max, loop back. |
 
+Framework-shipped actions:
+
+| Action | What it does | Args |
+|---|---|---|
+| `merge-pr` | Rebase, wait for mergeable, squash-merge | — |
+| `mark-pr-ready` | Mark a draft PR as ready for review | — |
+| `post-pr-comment` | Post a comment on the task's PR | `body: str` (required) |
+
 Adapter boundary:
 
 - **Orchestrator owns:** dependency ordering, attempt tracking, status/phase transitions, applying metadata from `ActionResult`.
 - **Adapter owns:** all mechanics. Returns metadata via `ActionResult`. Never reads or writes `StateStore`.
+
+### CheckPort
+
+```python
+class CheckPort(Protocol):
+    def evaluate(self, task: Task, check_name: str, args: dict[str, object]) -> bool:
+        """Evaluate a named check for a task. Args come from the process definition."""
+        ...
+```
+
+Checks are mechanical pass/fail evaluations — no agent, no blocking. On pass, the pipeline advances. On fail, the enclosing loop restarts (like an agent fail). If there is no enclosing loop, the pipeline fails.
+
+Framework-shipped checks:
+
+| Check | What it does | Args |
+|---|---|---|
+| `pr-feedback-addressed` | All PR feedback addressed (latest push ≥ latest comment) | `require_reviewers: list[str]` (optional) — fail until all listed reviewers have posted |
 
 ### NotificationPort
 

@@ -319,7 +319,7 @@ class TestPRMergeActionIsolation:
         )
 
         action = PRMergeAction(pr_mgr, repo_path=str(repo))
-        result = action.execute(task, "merge-pr")
+        result = action.execute(task, "merge-pr", {})
 
         # A new PR should have been created (returned in pr_url)
         assert result.pr_url is not None
@@ -386,6 +386,6 @@ class TestPRMergeActionIsolation:
         )
 
         action = PRMergeAction(pr_mgr, repo_path=str(repo))
-        result = action.execute(task, "merge-pr")
+        result = action.execute(task, "merge-pr", {})
 
         assert result.outcome == ActionOutcome.SUCCESS

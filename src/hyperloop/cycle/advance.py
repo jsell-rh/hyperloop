@@ -431,7 +431,6 @@ def _advance_gate(
     if task.id not in notified_gates:
         notification.gate_blocked(task=task, gate_name=step.gate)
         if task.pr is not None and pr is not None:
-            pr.mark_ready(task.pr)
             pr.add_label(task.pr, "hyperloop/needs-approval")
         notified_gates.add(task.id)
 
@@ -517,7 +516,7 @@ def _advance_action(
         )
         return _StepResult(transitions=[])
 
-    result = action.execute(task, step.action)
+    result = action.execute(task, step.action, step.args)
 
     if result.outcome == ActionOutcome.SUCCESS:
         action_attempts.pop(task.id, None)
@@ -689,7 +688,7 @@ def _advance_check(
             transitions=[TaskTransition(task_id=task.id, status=TaskStatus.COMPLETE, phase=None)]
         )
 
-    passed = check.evaluate(task, step.check)
+    passed = check.evaluate(task, step.check, step.args)
     probe.gate_checked(
         task_id=task.id,
         gate=step.check,

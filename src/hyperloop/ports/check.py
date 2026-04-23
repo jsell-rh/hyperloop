@@ -11,6 +11,6 @@ if TYPE_CHECKING:
 class CheckPort(Protocol):
     """Interface for mechanical checks that return pass/fail."""
 
-    def evaluate(self, task: Task, check_name: str) -> bool:
-        """Evaluate a named check for a task. Returns True for pass, False for fail."""
+    def evaluate(self, task: Task, check_name: str, args: dict[str, object]) -> bool:
+        """Evaluate a named check for a task. Args come from the process definition."""
         ...

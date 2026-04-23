@@ -45,9 +45,10 @@ class WaitForGate:
 
 @dataclass(frozen=True)
 class PerformAction:
-    """Execute a terminal action (merge-pr, mark-pr-ready, etc.)."""
+    """Execute an action (merge-pr, mark-pr-ready, post-pr-comment, etc.)."""
 
     action: str
+    args: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,7 @@ class PerformCheck:
     """Evaluate a mechanical check — pass advances, fail restarts enclosing loop."""
 
     check: str
+    args: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -198,9 +200,9 @@ class PipelineExecutor:
         if isinstance(step, GateStep):
             return WaitForGate(gate=step.gate)
         if isinstance(step, CheckStep):
-            return PerformCheck(check=step.check)
+            return PerformCheck(check=step.check, args=step.args)
         if isinstance(step, ActionStep):
-            return PerformAction(action=step.action)
+            return PerformAction(action=step.action, args=step.args)
         # LoopStep — should not be called directly; caller descends into it.
         msg = f"Cannot produce action for {type(step).__name__}"
         raise ValueError(msg)

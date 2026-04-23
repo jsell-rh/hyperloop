@@ -5,6 +5,7 @@ All types are pure data with no I/O dependencies.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from enum import Enum
 from typing import Literal, NewType
@@ -93,6 +94,10 @@ class TaskProposal:
 # ---------------------------------------------------------------------------
 
 
+def _empty_args() -> dict[str, object]:
+    return {}
+
+
 @dataclass(frozen=True)
 class AgentStep:
     """Spawn an agent with a given role."""
@@ -124,13 +129,15 @@ class CheckStep:
     """
 
     check: str
+    args: dict[str, object] = dataclasses.field(default_factory=_empty_args)
 
 
 @dataclass(frozen=True)
 class ActionStep:
-    """Terminal operation (merge-pr, mark-pr-ready, etc.)."""
+    """Execute an operation (merge-pr, mark-pr-ready, post-pr-comment, etc.)."""
 
     action: str
+    args: dict[str, object] = dataclasses.field(default_factory=_empty_args)
 
 
 PipelineStep = AgentStep | GateStep | LoopStep | CheckStep | ActionStep

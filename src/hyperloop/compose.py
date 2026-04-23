@@ -406,6 +406,7 @@ def _parse_steps(steps_raw: object) -> list[PipelineStep]:
 
     result: list[PipelineStep] = []
     known_primitives = {"agent", "gate", "check", "loop", "action"}
+    meta_keys = {"on_pass", "on_fail", "args"}
 
     for raw_step in cast("list[object]", steps_raw):
         if not isinstance(raw_step, dict):
@@ -417,7 +418,7 @@ def _parse_steps(steps_raw: object) -> list[PipelineStep]:
         primitive_keys = set(step_dict.keys()) & known_primitives
 
         if not primitive_keys:
-            unknown = sorted(set(step_dict.keys()) - {"on_pass", "on_fail"})
+            unknown = sorted(set(step_dict.keys()) - meta_keys)
             msg = (
                 f"Unrecognised pipeline primitive key(s): {unknown!r}. "
                 "Expected one of: agent, gate, check, loop, action"
@@ -430,6 +431,10 @@ def _parse_steps(steps_raw: object) -> list[PipelineStep]:
 
         key = next(iter(primitive_keys))
         value = step_dict[key]
+        raw_args = step_dict.get("args")
+        step_args: dict[str, object] = (
+            cast("dict[str, object]", raw_args) if isinstance(raw_args, dict) else {}
+        )
 
         if key == "agent":
             on_pass_val = step_dict.get("on_pass")
@@ -444,12 +449,12 @@ def _parse_steps(steps_raw: object) -> list[PipelineStep]:
         elif key == "gate":
             result.append(GateStep(gate=str(value)))
         elif key == "check":
-            result.append(CheckStep(check=str(value)))
+            result.append(CheckStep(check=str(value), args=step_args))
         elif key == "loop":
             nested = _parse_steps(value)
             result.append(LoopStep(steps=tuple(nested)))
         elif key == "action":
-            result.append(ActionStep(action=str(value)))
+            result.append(ActionStep(action=str(value), args=step_args))
 
     return result
 

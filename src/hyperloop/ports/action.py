@@ -31,8 +31,8 @@ class ActionResult:
 
 
 class ActionPort(Protocol):
-    """Execute pipeline actions (merge-pr, deploy, etc.)."""
+    """Execute pipeline actions (merge-pr, mark-pr-ready, post-pr-comment, etc.)."""
 
-    def execute(self, task: Task, action_name: str) -> ActionResult:
-        """Execute an action for a task."""
+    def execute(self, task: Task, action_name: str, args: dict[str, object]) -> ActionResult:
+        """Execute an action for a task. Args come from the process definition."""
         ...

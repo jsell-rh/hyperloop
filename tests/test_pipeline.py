@@ -64,7 +64,7 @@ class TestSimpleSequence:
     def test_verifier_pass_advances_to_action(self):
         """At step 1 with pass, advance to step 2 and perform merge."""
         action, new_pos = self.executor.next_action(pos(1), result=PASS)
-        assert action == PerformAction(action="merge-pr")
+        assert action == PerformAction(action="merge-pr", args={})
         assert new_pos == pos(2)
 
     def test_action_pass_completes_pipeline(self):
@@ -107,7 +107,7 @@ class TestLoop:
     def test_verifier_pass_exits_loop(self):
         """Inside loop, verifier pass exits loop and advances to merge."""
         action, new_pos = self.executor.next_action(pos(0, 1), result=PASS)
-        assert action == PerformAction(action="merge-pr")
+        assert action == PerformAction(action="merge-pr", args={})
         assert new_pos == pos(1)
 
     def test_verifier_fail_restarts_loop(self):
@@ -174,7 +174,7 @@ class TestNestedLoops:
     def test_security_pass_exits_both_loops_to_merge(self):
         """Security pass exits outer loop, advances to merge."""
         action, new_pos = self.executor.next_action(pos(0, 1), result=PASS)
-        assert action == PerformAction(action="merge-pr")
+        assert action == PerformAction(action="merge-pr", args={})
         assert new_pos == pos(1)
 
     def test_merge_pass_completes_pipeline(self):
@@ -212,7 +212,7 @@ class TestGate:
     def test_gate_pass_advances_to_merge(self):
         """Gate with pass (signal received) advances to merge."""
         action, new_pos = self.executor.next_action(pos(1), result=PASS)
-        assert action == PerformAction(action="merge-pr")
+        assert action == PerformAction(action="merge-pr", args={})
         assert new_pos == pos(2)
 
 
@@ -262,7 +262,7 @@ class TestEdgeCases:
         pipeline = (ActionStep(action="merge-pr"),)
         executor = PipelineExecutor(pipeline)
         action, new_pos = executor.next_action(pos(0), result=None)
-        assert action == PerformAction(action="merge-pr")
+        assert action == PerformAction(action="merge-pr", args={})
         assert new_pos == pos(0)
 
     def test_action_step_no_result_performs_action(self):
@@ -270,7 +270,7 @@ class TestEdgeCases:
         pipeline = (ActionStep(action="merge-pr"),)
         executor = PipelineExecutor(pipeline)
         action, _new_pos = executor.next_action(pos(0), result=None)
-        assert action == PerformAction(action="merge-pr")
+        assert action == PerformAction(action="merge-pr", args={})
 
     def test_loop_with_single_role(self):
         """Loop containing a single role restarts on fail."""

@@ -435,3 +435,6 @@ class OtelProbe:
 
     def state_synced(self, **_kw: object) -> None:
         pass
+
+    def intake_specs_detected(self, **_kw: object) -> None:
+        pass

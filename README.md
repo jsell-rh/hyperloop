@@ -59,13 +59,14 @@ The orchestrator halts when no gaps remain. Use `hyperloop watch` for continuous
 
 ## Pipeline Primitives
 
-Work moves through a pipeline defined in `process.yaml`. Four primitives:
+Work moves through a pipeline defined in `process.yaml`. Five primitives:
 
 | Primitive | What it does |
 |---|---|
 | `agent: X` | Spawn a worker agent with X's prompt template |
 | `gate: X` | Block until an external signal (e.g. PR label, CI status) |
-| `action: X` | Execute an operation (e.g. merge PR) |
+| `action: X` | Execute an operation with optional `args:` (e.g. merge PR, mark ready) |
+| `check: X` | Mechanical pass/fail evaluation with optional `args:` (no agent) |
 | `loop:` | Wrap steps -- on fail restart from top, on pass continue |
 
 Example pipeline:
@@ -75,9 +76,25 @@ pipeline:
   - loop:
       - agent: implementer
       - agent: verifier
+  - action: mark-pr-ready
   - gate: pr-require-label
+  - action: post-pr-comment
+    args:
+      body: "@coderabbit recheck"
+  - check: pr-feedback-addressed
+    args:
+      require_reviewers: ["coderabbit[bot]"]
   - action: merge-pr
 ```
+
+Framework-shipped actions and checks:
+
+| Step | Type | What it does | Args |
+|---|---|---|---|
+| `merge-pr` | action | Rebase, wait for mergeable, squash-merge | -- |
+| `mark-pr-ready` | action | Mark a draft PR as ready for review | -- |
+| `post-pr-comment` | action | Post a comment on the task's PR | `body: str` |
+| `pr-feedback-addressed` | check | All PR feedback addressed (push >= latest comment) | `require_reviewers: list[str]` |
 
 ## Project Structure
 
@@ -116,20 +133,54 @@ At compose time the orchestrator injects: `prompt + guidelines + spec content + 
 
 ## Configuration
 
+All configuration lives in `.hyperloop.yaml` at the repo root. CLI flags override YAML values.
+
 ```yaml
 # .hyperloop.yaml
 
-overlay: .hyperloop/agents/
-base_branch: main
+repo: owner/repo                        # GitHub repo (inferred from git remote if omitted)
+overlay: .hyperloop/agents/             # kustomize overlay directory
+base_branch: main                       # base branch for PRs and rebasing
 runtime: local                          # local | ambient
 
-max_workers: 6
-poll_interval: 30
-max_task_rounds: 50
-max_action_attempts: 3
+max_workers: 6                          # parallel agent workers
+poll_interval: 30                       # seconds between cycles
+max_task_rounds: 50                     # max implement-verify loops per task
+max_cycles: 200                         # max orchestrator cycles
+max_action_attempts: 3                  # action retries before looping back
+
+merge:
+  auto_merge: true                      # auto-merge approved PRs
+  strategy: squash                      # squash | merge | rebase
+  delete_branch: true                   # delete branch after merge
 
 notifications:
-  type: github-comment                  # github-comment | null (default: null)
+  type: github-comment                  # github-comment | null
+
+observability:
+  log_format: console                   # console | json
+  log_level: info                       # debug | info | warning | error
+  matrix:                               # optional Matrix notifications
+    homeserver: https://matrix.example.com
+    room_id: "!abc123:matrix.example.com"
+    token_env: MATRIX_ACCESS_TOKEN
+  otel:                                 # optional OpenTelemetry
+    endpoint: http://localhost:4317
+    service_name: hyperloop
+
+dashboard:
+  enabled: false                        # enable activity dashboard
+  events_limit: 1000                    # max retained events
+```
+
+See [docs/configuration.md](docs/configuration.md) for the full reference with all options, defaults, and environment variables.
+
+### CLI
+
+```bash
+hyperloop run [--path .] [--repo owner/repo] [--branch main] [--config .hyperloop.yaml] [--max-workers 6] [--dry-run]
+hyperloop init [--path .] [--base-ref REF] [--overlay REF]
+hyperloop dashboard [--path .] [--port 8787]
 ```
 
 ## Custom Processes
@@ -137,27 +188,29 @@ notifications:
 Override the default pipeline in `.hyperloop/agents/process/process.yaml`:
 
 ```yaml
+apiVersion: hyperloop.io/v1
+kind: Process
+metadata:
+  name: default
+
 pipeline:
   - loop:
       - agent: implementer
       - agent: verifier
+  - action: mark-pr-ready
   - gate: pr-require-label
   - action: merge-pr
 
 gates:
   pr-require-label:
-    type: label                         # label (configurable, default: lgtm)
-  # pr-require-approval:               # alternative gate type
-  #   type: pr-approval                 # checks GitHub PR review approvals
-
-actions:
-  merge-pr:
-    type: pr-merge
+    type: label                         # label (default: lgtm) | pr-approval | ci-status | all
 
 hooks:
   after_reap:
     - type: process-improver
 ```
+
+Gates are pure queries with no side effects. PR lifecycle actions (marking ready, posting comments) are separate `action:` steps that you place wherever you need them in the pipeline.
 
 ## Architecture
 

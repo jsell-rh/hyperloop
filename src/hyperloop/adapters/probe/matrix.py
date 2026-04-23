@@ -326,3 +326,6 @@ class MatrixProbe:
 
     def state_synced(self, **kw: object) -> None:
         pass
+
+    def intake_specs_detected(self, **kw: object) -> None:
+        pass

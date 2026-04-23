@@ -128,7 +128,7 @@ class TestPRMergeAction:
         pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
 
         task = _task(pr=pr_url)
-        result = action.execute(task, "merge-pr")
+        result = action.execute(task, "merge-pr", {})
 
         assert result.outcome == ActionOutcome.SUCCESS
         assert pr_url in pr.merged
@@ -140,7 +140,7 @@ class TestPRMergeAction:
         pr.set_rebase_fails("hyperloop/task-001")
 
         task = _task(pr=pr_url)
-        result = action.execute(task, "merge-pr")
+        result = action.execute(task, "merge-pr", {})
 
         assert result.outcome == ActionOutcome.ERROR
         assert "Rebase conflict" in result.detail
@@ -152,7 +152,7 @@ class TestPRMergeAction:
         pr.close_pr(pr_url)
 
         task = _task(pr=pr_url)
-        result = action.execute(task, "merge-pr")
+        result = action.execute(task, "merge-pr", {})
 
         # Should succeed with a new PR URL
         assert result.outcome == ActionOutcome.SUCCESS
@@ -164,7 +164,7 @@ class TestPRMergeAction:
         action = PRMergeAction(pr=pr, base_branch="main")
 
         task = _task(branch=None)
-        result = action.execute(task, "merge-pr")
+        result = action.execute(task, "merge-pr", {})
 
         assert result.outcome == ActionOutcome.ERROR
         assert "no branch" in result.detail.lower()
@@ -175,7 +175,7 @@ class TestPRMergeAction:
         pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
 
         task = _task(pr=pr_url)
-        result = action.execute(task, "deploy")
+        result = action.execute(task, "deploy", {})
 
         assert result.outcome == ActionOutcome.ERROR
         assert "Unknown action" in result.detail
@@ -185,7 +185,7 @@ class TestPRMergeAction:
         action = PRMergeAction(pr=pr, base_branch="main")
 
         task = _task(pr=None)
-        result = action.execute(task, "merge-pr")
+        result = action.execute(task, "merge-pr", {})
 
         assert result.outcome == ActionOutcome.SUCCESS
         assert result.pr_url is not None
@@ -197,7 +197,7 @@ class TestPRMergeAction:
         pr.set_merge_fails(pr_url)
 
         task = _task(pr=pr_url)
-        result = action.execute(task, "merge-pr")
+        result = action.execute(task, "merge-pr", {})
 
         assert result.outcome == ActionOutcome.ERROR
 

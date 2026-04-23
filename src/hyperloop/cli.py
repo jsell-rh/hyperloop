@@ -443,17 +443,23 @@ def run(
     action = None
     check = None
     if pr_manager is not None:
+        from hyperloop.adapters.action.composite import CompositeAction
+        from hyperloop.adapters.action.pr_actions import MarkPRReadyAction, PostPRCommentAction
         from hyperloop.adapters.action.pr_merge import PRMergeAction
         from hyperloop.adapters.check.pr_feedback import PRFeedbackCheck
         from hyperloop.adapters.gate.label import LabelGate
 
         gate = LabelGate(pr_manager)
-        action = PRMergeAction(
-            pr_manager,
-            base_branch=cfg.base_branch,
-            repo_path=str(repo_path),
-        )
         assert cfg.repo is not None
+        action = CompositeAction(
+            merge=PRMergeAction(
+                pr_manager,
+                base_branch=cfg.base_branch,
+                repo_path=str(repo_path),
+            ),
+            mark_ready=MarkPRReadyAction(pr_manager),
+            post_comment=PostPRCommentAction(repo=cfg.repo),
+        )
         check = PRFeedbackCheck(repo=cfg.repo)
 
     # Build notification adapter
