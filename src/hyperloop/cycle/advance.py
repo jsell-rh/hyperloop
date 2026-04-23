@@ -40,6 +40,7 @@ from hyperloop.domain.pipeline import (
     SpawnAgent,
 )
 from hyperloop.ports.action import ActionOutcome
+from hyperloop.ports.check import CheckResult
 
 if TYPE_CHECKING:
     from hyperloop.domain.model import Task
@@ -105,6 +106,7 @@ def advance(
     action_attempts: dict[str, int],
     notified_gates: set[str],
     cycle: int,
+    running_tasks: frozenset[str] = frozenset(),
 ) -> AdvanceResult:
     """Advance tasks: process reaped results, then gates/actions.
 
@@ -366,8 +368,11 @@ def advance(
                 probe=probe,
                 max_task_rounds=max_task_rounds,
                 cycle=cycle,
+                running_tasks=running_tasks,
             )
             transitions.extend(check_result.transitions)
+            if check_result.to_spawn:
+                to_spawn.extend(check_result.to_spawn)
             if check_result.halt_reason is not None:
                 halt_reason = check_result.halt_reason
                 had_failures = True
@@ -404,10 +409,11 @@ def advance(
 
 @dataclass(frozen=True)
 class _StepResult:
-    """Internal result from processing a single gate or action step."""
+    """Internal result from processing a single gate, action, or check step."""
 
     transitions: list[TaskTransition]
     halt_reason: str | None = None
+    to_spawn: list[tuple[str, str, PipelinePosition]] | None = None
 
 
 def _advance_gate(
@@ -667,54 +673,79 @@ def _advance_check(
     probe: OrchestratorProbe,
     max_task_rounds: int,
     cycle: int,
+    running_tasks: frozenset[str] = frozenset(),
 ) -> _StepResult:
-    """Handle a task at a check step. Returns transitions."""
+    """Handle a task at a check step. Returns transitions and optional spawn requests.
+
+    Three-outcome logic:
+    - WAIT: stay at step, re-evaluate next cycle (like a gate)
+    - PASS: advance (or spawn check agent if step has an evaluator)
+    - FAIL: restart enclosing loop
+    """
+    # If a check agent is already running for this task, skip evaluation
+    if task.id in running_tasks:
+        return _StepResult(transitions=[])
+
     if check is None:
         # No check adapter — pass through
-        advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
-        if advanced is not None:
-            next_action, _new_pos = advanced
-            phase_name = phase_for_pipe_action(next_action)
-            return _StepResult(
-                transitions=[
-                    TaskTransition(
-                        task_id=task.id,
-                        status=TaskStatus.IN_PROGRESS,
-                        phase=Phase(phase_name) if phase_name else None,
-                    )
-                ]
-            )
-        return _StepResult(
-            transitions=[TaskTransition(task_id=task.id, status=TaskStatus.COMPLETE, phase=None)]
-        )
+        return _check_advance(task, pos, executor)
 
-    passed = check.evaluate(task, step.check, step.args)
+    result = check.evaluate(task, step.check, step.args)
     probe.gate_checked(
         task_id=task.id,
         gate=step.check,
-        cleared=passed,
+        cleared=result == CheckResult.PASS,
         cycle=cycle,
     )
 
-    if passed:
-        advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
-        if advanced is not None:
-            next_action, _new_pos = advanced
-            phase_name = phase_for_pipe_action(next_action)
-            return _StepResult(
-                transitions=[
-                    TaskTransition(
-                        task_id=task.id,
-                        status=TaskStatus.IN_PROGRESS,
-                        phase=Phase(phase_name) if phase_name else None,
-                    )
-                ]
-            )
-        return _StepResult(
-            transitions=[TaskTransition(task_id=task.id, status=TaskStatus.COMPLETE, phase=None)]
-        )
+    if result == CheckResult.WAIT:
+        return _StepResult(transitions=[])
 
-    # Check failed — feed through pipeline executor to trigger loop restart
+    if result == CheckResult.PASS:
+        # If check has an evaluator agent, spawn it instead of advancing
+        if step.agent is not None:
+            return _StepResult(
+                transitions=[],
+                to_spawn=[(task.id, step.agent, pos)],
+            )
+        return _check_advance(task, pos, executor)
+
+    # FAIL — restart enclosing loop
+    return _check_fail(task, step, pos, executor, max_task_rounds)
+
+
+def _check_advance(
+    task: Task,
+    pos: PipelinePosition,
+    executor: PipelineExecutor,
+) -> _StepResult:
+    """Advance past a check step that passed."""
+    advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
+    if advanced is not None:
+        next_action, _new_pos = advanced
+        phase_name = phase_for_pipe_action(next_action)
+        return _StepResult(
+            transitions=[
+                TaskTransition(
+                    task_id=task.id,
+                    status=TaskStatus.IN_PROGRESS,
+                    phase=Phase(phase_name) if phase_name else None,
+                )
+            ]
+        )
+    return _StepResult(
+        transitions=[TaskTransition(task_id=task.id, status=TaskStatus.COMPLETE, phase=None)]
+    )
+
+
+def _check_fail(
+    task: Task,
+    step: CheckStep,
+    pos: PipelinePosition,
+    executor: PipelineExecutor,
+    max_task_rounds: int,
+) -> _StepResult:
+    """Handle a check failure — restart enclosing loop or fail pipeline."""
     fail_result = WorkerResult(verdict=Verdict.FAIL, detail=f"Check '{step.check}' failed")
     pipe_action, _new_pos = executor.next_action(pos, fail_result)
 
@@ -767,5 +798,4 @@ def _advance_check(
             halt_reason=f"task {task.id} check failed: {pipe_action.reason}",
         )
 
-    # Shouldn't reach here, but handle gracefully
     return _StepResult(transitions=[])

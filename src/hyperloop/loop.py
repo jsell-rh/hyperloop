@@ -257,6 +257,7 @@ class Orchestrator:
             action_attempts=dict(self._action_attempts),
             notified_gates=set(self._notified_gates),
             cycle=cycle_num,
+            running_tasks=frozenset(self._workers.keys()),
         )
         for t in advanced.transitions:
             if t.reset_branch:

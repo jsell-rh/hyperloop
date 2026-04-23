@@ -123,13 +123,18 @@ class LoopStep:
 
 @dataclass(frozen=True)
 class CheckStep:
-    """Mechanical pass/fail evaluation — no agent, no blocking.
+    """Evaluation step — mechanical or agent-backed.
 
-    On pass, advance. On fail, the enclosing loop restarts (like an agent fail).
+    On PASS, advance. On FAIL, enclosing loop restarts. On WAIT, stay and
+    re-evaluate next cycle.
+
+    When ``agent`` is set, the framework spawns that agent role for evaluation
+    after the check adapter's pre-conditions return PASS.
     """
 
     check: str
     args: dict[str, object] = dataclasses.field(default_factory=_empty_args)
+    agent: str | None = None
 
 
 @dataclass(frozen=True)

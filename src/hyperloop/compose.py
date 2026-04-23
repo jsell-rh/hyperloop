@@ -406,7 +406,7 @@ def _parse_steps(steps_raw: object) -> list[PipelineStep]:
 
     result: list[PipelineStep] = []
     known_primitives = {"agent", "gate", "check", "loop", "action"}
-    meta_keys = {"on_pass", "on_fail", "args"}
+    meta_keys = {"on_pass", "on_fail", "args", "evaluator"}
 
     for raw_step in cast("list[object]", steps_raw):
         if not isinstance(raw_step, dict):
@@ -449,7 +449,9 @@ def _parse_steps(steps_raw: object) -> list[PipelineStep]:
         elif key == "gate":
             result.append(GateStep(gate=str(value)))
         elif key == "check":
-            result.append(CheckStep(check=str(value), args=step_args))
+            evaluator_val = step_dict.get("evaluator")
+            check_agent = str(evaluator_val) if evaluator_val is not None else None
+            result.append(CheckStep(check=str(value), args=step_args, agent=check_agent))
         elif key == "loop":
             nested = _parse_steps(value)
             result.append(LoopStep(steps=tuple(nested)))

@@ -446,7 +446,7 @@ def run(
         from hyperloop.adapters.action.composite import CompositeAction
         from hyperloop.adapters.action.pr_actions import MarkPRReadyAction, PostPRCommentAction
         from hyperloop.adapters.action.pr_merge import PRMergeAction
-        from hyperloop.adapters.check.pr_feedback import PRFeedbackCheck
+        from hyperloop.adapters.check.pr_feedback import PRReviewCheck
         from hyperloop.adapters.gate.label import LabelGate
 
         gate = LabelGate(pr_manager)
@@ -460,7 +460,7 @@ def run(
             mark_ready=MarkPRReadyAction(pr_manager),
             post_comment=PostPRCommentAction(repo=cfg.repo),
         )
-        check = PRFeedbackCheck(repo=cfg.repo)
+        check = PRReviewCheck(repo=cfg.repo)
 
     # Build notification adapter
     notification = None

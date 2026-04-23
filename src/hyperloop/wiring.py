@@ -79,7 +79,7 @@ def wire_orchestrator(
     check = None
     if pr_manager is not None:
         from hyperloop.adapters.action.pr_merge import PRMergeAction
-        from hyperloop.adapters.check.pr_feedback import PRFeedbackCheck
+        from hyperloop.adapters.check.pr_feedback import PRReviewCheck
         from hyperloop.adapters.gate.label import LabelGate
 
         gate = LabelGate(pr_manager)
@@ -88,7 +88,7 @@ def wire_orchestrator(
             base_branch=cfg.base_branch,
             repo_path=str(repo_path),
         )
-        check = PRFeedbackCheck(repo=cfg.repo or "")
+        check = PRReviewCheck(repo=cfg.repo or "")
 
     # Build notification adapter
     notification = None

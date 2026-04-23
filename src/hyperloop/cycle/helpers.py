@@ -128,6 +128,8 @@ def collect_roles(steps: tuple[PipelineStep, ...]) -> set[str]:
             roles.add(step.agent)
         elif isinstance(step, LoopStep):
             roles.update(collect_roles(step.steps))
+        if isinstance(step, CheckStep) and step.agent is not None:
+            roles.add(step.agent)
     return roles
 
 

@@ -53,10 +53,11 @@ class PerformAction:
 
 @dataclass(frozen=True)
 class PerformCheck:
-    """Evaluate a mechanical check — pass advances, fail restarts enclosing loop."""
+    """Evaluate a check — pass advances, fail restarts enclosing loop, wait stays."""
 
     check: str
     args: dict[str, object]
+    agent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -200,7 +201,7 @@ class PipelineExecutor:
         if isinstance(step, GateStep):
             return WaitForGate(gate=step.gate)
         if isinstance(step, CheckStep):
-            return PerformCheck(check=step.check, args=step.args)
+            return PerformCheck(check=step.check, args=step.args, agent=step.agent)
         if isinstance(step, ActionStep):
             return PerformAction(action=step.action, args=step.args)
         # LoopStep — should not be called directly; caller descends into it.

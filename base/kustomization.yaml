@@ -2,6 +2,7 @@ resources:
   - process.yaml
   - implementer.yaml
   - verifier.yaml
+  - pr-reviewer.yaml
   - process-improver.yaml
   - rebase-resolver.yaml
   - pm.yaml
