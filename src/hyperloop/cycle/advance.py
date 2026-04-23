@@ -430,8 +430,8 @@ def _advance_gate(
     # Notification deduplication: notify once per gate entry
     if task.id not in notified_gates:
         notification.gate_blocked(task=task, gate_name=step.gate)
-        # Add needs-approval label when task first enters a gate
         if task.pr is not None and pr is not None:
+            pr.mark_ready(task.pr)
             pr.add_label(task.pr, "hyperloop/needs-approval")
         notified_gates.add(task.id)
 
