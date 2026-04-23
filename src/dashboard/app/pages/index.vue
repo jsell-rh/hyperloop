@@ -83,6 +83,37 @@ const sortedSpecs = computed(() => {
   })
 })
 
+function specDirectory(specRef: string): string {
+  const stripped = specRef.replace(/^specs\//, '')
+  const lastSlash = stripped.lastIndexOf('/')
+  if (lastSlash === -1) return ''
+  return stripped.substring(0, lastSlash)
+}
+
+interface SpecGroup {
+  directory: string
+  label: string
+  specs: SpecSummary[]
+}
+
+const groupedSpecs = computed<SpecGroup[]>(() => {
+  const groups = new Map<string, SpecSummary[]>()
+  for (const spec of sortedSpecs.value) {
+    const dir = specDirectory(spec.spec_ref)
+    if (!groups.has(dir)) groups.set(dir, [])
+    groups.get(dir)!.push(spec)
+  }
+  const result: SpecGroup[] = []
+  for (const [dir, specs] of groups) {
+    result.push({
+      directory: dir,
+      label: dir || 'General',
+      specs,
+    })
+  }
+  return result
+})
+
 // Dynamic page title
 useHead({ title: computed(() => {
   const ip = summary.value?.in_progress ?? 0
@@ -158,17 +189,19 @@ onUnmounted(() => {
       {{ summary?.total ?? 0 }} tasks total ({{ summary?.complete ?? 0 }} complete, {{ summary?.in_progress ?? 0 }} in progress, {{ summary?.failed ?? 0 }} failed)
     </p>
 
-    <!-- Specs section label -->
-    <h2 class="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4">Specs</h2>
-
-    <!-- Spec cards grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-5">
-      <SpecCard
-        v-for="spec in sortedSpecs"
-        :key="spec.spec_ref"
-        :spec="spec"
-        @hover="hoveredSpecRef = $event"
-      />
+    <!-- Spec groups by directory -->
+    <div v-for="group in groupedSpecs" :key="group.directory" class="mb-8">
+      <h2 class="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-4">
+        {{ group.label }}
+      </h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 md:gap-5">
+        <SpecCard
+          v-for="spec in group.specs"
+          :key="spec.spec_ref"
+          :spec="spec"
+          @hover="hoveredSpecRef = $event"
+        />
+      </div>
     </div>
 
     <!-- Empty state -->
