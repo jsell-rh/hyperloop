@@ -114,7 +114,15 @@ class FakePRManager:
             return None
         return PRState(state=rec.state, head_sha=rec.head_sha)
 
-    def create_draft(self, task_id: str, branch: str, title: str, spec_ref: str) -> str:
+    def create_draft(
+        self,
+        task_id: str,
+        branch: str,
+        title: str,
+        spec_ref: str,
+        pr_title: str | None = None,
+        pr_description: str | None = None,
+    ) -> str:
         """Create a draft PR. Returns PR URL. Adds spec/task labels."""
         self._pr_counter += 1
         url = f"https://github.com/{self.repo}/pull/{self._pr_counter}"
@@ -170,6 +178,10 @@ class FakePRManager:
         """Rebase a branch onto base. Returns True if clean, False if conflicts."""
         self.rebased.append((branch, base_branch))
         return branch not in self._rebase_fails
+
+    def get_feedback(self, pr_url: str) -> str:
+        """Return empty feedback in the fake."""
+        return ""
 
 
 def _spec_name_from_ref(spec_ref: str) -> str:

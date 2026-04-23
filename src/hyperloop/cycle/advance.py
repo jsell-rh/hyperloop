@@ -241,6 +241,8 @@ def advance(
                         branch,
                         task.title,
                         task.spec_ref,
+                        pr_title=task.pr_title,
+                        pr_description=task.pr_description,
                     )
                     if draft_url:
                         pr_url = draft_url
@@ -275,6 +277,8 @@ def advance(
                     branch,
                     task.title,
                     task.spec_ref,
+                    pr_title=task.pr_title,
+                    pr_description=task.pr_description,
                 )
                 if draft_url:
                     pr_url_ga = draft_url

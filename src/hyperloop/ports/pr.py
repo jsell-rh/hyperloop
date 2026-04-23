@@ -30,7 +30,15 @@ class PRPort(Protocol):
         """Return the PR's current state, or None if not found."""
         ...
 
-    def create_draft(self, task_id: str, branch: str, title: str, spec_ref: str) -> str:
+    def create_draft(
+        self,
+        task_id: str,
+        branch: str,
+        title: str,
+        spec_ref: str,
+        pr_title: str | None = None,
+        pr_description: str | None = None,
+    ) -> str:
         """Create a draft PR. Returns PR URL. Adds spec/task labels."""
         ...
 
@@ -64,4 +72,12 @@ class PRPort(Protocol):
 
     def remove_label(self, pr_url: str, label: str) -> None:
         """Remove a label from a PR."""
+        ...
+
+    def get_feedback(self, pr_url: str) -> str:
+        """Collect PR feedback: CI check results and review comments.
+
+        Returns a formatted string suitable for injection into an agent's
+        prompt. Returns empty string if no feedback is available.
+        """
         ...

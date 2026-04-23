@@ -89,6 +89,12 @@ def _frontmatter_to_task(fm: dict[str, object]) -> Task:
     raw_pr = fm.get("pr")
     pr = str(raw_pr) if raw_pr is not None else None
 
+    raw_pr_title = fm.get("pr_title")
+    pr_title = str(raw_pr_title) if raw_pr_title is not None else None
+
+    raw_pr_desc = fm.get("pr_description")
+    pr_description = str(raw_pr_desc) if raw_pr_desc is not None else None
+
     return Task(
         id=str(fm["id"]),
         title=str(fm["title"]),
@@ -99,12 +105,26 @@ def _frontmatter_to_task(fm: dict[str, object]) -> Task:
         round=int(fm.get("round", 0)),  # type: ignore[arg-type]
         branch=branch,
         pr=pr,
+        pr_title=pr_title,
+        pr_description=pr_description,
     )
 
 
 def _serialize_task_file(fm: dict[str, object]) -> str:
     """Serialize frontmatter dict into a task file string (pure metadata)."""
-    ordered_keys = ["id", "title", "spec_ref", "status", "phase", "deps", "round", "branch", "pr"]
+    ordered_keys = [
+        "id",
+        "title",
+        "spec_ref",
+        "status",
+        "phase",
+        "deps",
+        "round",
+        "branch",
+        "pr",
+        "pr_title",
+        "pr_description",
+    ]
     ordered_fm: dict[str, object] = {}
     for key in ordered_keys:
         if key in fm:
@@ -297,6 +317,8 @@ class GitStateStore:
             "round": task.round,
             "branch": task.branch,
             "pr": task.pr,
+            "pr_title": task.pr_title,
+            "pr_description": task.pr_description,
         }
         self._write_task_file(task.id, fm)
 

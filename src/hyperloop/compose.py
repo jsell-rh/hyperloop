@@ -221,6 +221,12 @@ class PromptComposer:
                 PromptSection(source="findings", label="findings", content=context.findings)
             )
 
+        if context.pr_feedback:
+            text_parts.append(f"## PR Feedback\n{context.pr_feedback}")
+            sections.append(
+                PromptSection(source="pr", label="pr-feedback", content=context.pr_feedback)
+            )
+
         if epilogue:
             text_parts.append(f"## Runtime\n{epilogue}")
             sections.append(PromptSection(source="runtime", label="epilogue", content=epilogue))

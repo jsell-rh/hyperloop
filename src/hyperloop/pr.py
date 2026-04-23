@@ -90,12 +90,27 @@ class PRManager:
             return None
         return PRState(state=state, head_sha=head_sha)
 
-    def create_draft(self, task_id: str, branch: str, title: str, spec_ref: str) -> str:
+    def create_draft(
+        self,
+        task_id: str,
+        branch: str,
+        title: str,
+        spec_ref: str,
+        pr_title: str | None = None,
+        pr_description: str | None = None,
+    ) -> str:
         """Create a draft PR. Returns PR URL. Adds spec/task labels.
+
+        Uses pr_title if provided (PM-authored), otherwise derives a
+        conventional commit-style title from the task title and spec_ref.
 
         If the branch already has a PR, returns the existing PR URL.
         Label failures are logged and swallowed (labels may not exist on the repo).
         """
+        if pr_title is not None:
+            title = pr_title
+        elif not re.match(r"^(feat|fix|chore|docs|refactor|test|ci|build|perf|style)\b", title):
+            title = _conventional_title(title, spec_ref)
         # Check if an open PR already exists for this branch
         existing = subprocess.run(
             [
@@ -125,7 +140,7 @@ class PRManager:
             text=True,
         )
 
-        body = _pr_body(task_id, spec_ref, self._has_gate)
+        body = _pr_body(task_id, spec_ref, self._has_gate, pr_description)
         result = subprocess.run(
             [
                 "gh",
@@ -242,6 +257,54 @@ class PRManager:
         )
         if self._probe is not None:
             self._probe.pr_label_changed(pr_url=pr_url, label=label, added=False)
+
+    def get_feedback(self, pr_url: str) -> str:
+        """Collect PR feedback: CI check results and review comments."""
+        sections: list[str] = []
+
+        # CI checks
+        checks = subprocess.run(
+            ["gh", "pr", "checks", pr_url, "--repo", self.repo],
+            capture_output=True,
+            text=True,
+        )
+        if checks.returncode == 0 and checks.stdout.strip():
+            sections.append(f"### CI Checks\n```\n{checks.stdout.strip()}\n```")
+        elif checks.returncode != 0 and checks.stdout.strip():
+            sections.append(f"### CI Checks (failing)\n```\n{checks.stdout.strip()}\n```")
+
+        # Review comments
+        comments = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "view",
+                pr_url,
+                "--json",
+                "comments,reviews",
+                "--repo",
+                self.repo,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if comments.returncode == 0:
+            data = json.loads(comments.stdout)
+            review_bodies: list[str] = []
+            for review in data.get("reviews", []):
+                body = str(review.get("body", "")).strip()
+                state = str(review.get("state", ""))
+                if body:
+                    review_bodies.append(f"**{state}:** {body}")
+            for comment in data.get("comments", []):
+                body = str(comment.get("body", "")).strip()
+                author = str(comment.get("author", {}).get("login", ""))
+                if body and not body.startswith("<!--"):
+                    review_bodies.append(f"**{author}:** {body}")
+            if review_bodies:
+                sections.append("### PR Comments\n" + "\n\n".join(review_bodies))
+
+        return "\n\n".join(sections)
 
     def mark_ready(self, pr_url: str) -> None:
         """Mark a draft PR as ready for review. Best-effort — logs on failure."""
@@ -435,18 +498,25 @@ def _remove_verdict_file(tmpdir: str) -> None:
     )
 
 
-def _pr_body(task_id: str, spec_ref: str, has_gate: bool) -> str:
+def _pr_body(
+    task_id: str,
+    spec_ref: str,
+    has_gate: bool,
+    description: str | None = None,
+) -> str:
     """Generate the PR description body."""
-    lines = [
-        f"**Task:** `{task_id}`",
-        f"**Spec:** `{spec_ref}`",
-        "",
-        "---",
-        "",
-        "This PR was created by [hyperloop](https://github.com/jsell-rh/hyperloop),",
-        "an AI agent orchestrator.",
-        "",
-    ]
+    lines: list[str] = []
+
+    if description:
+        lines.extend([description, "", "---", ""])
+
+    lines.extend(
+        [
+            f"**Task:** `{task_id}`",
+            f"**Spec:** `{spec_ref}`",
+            "",
+        ]
+    )
 
     if has_gate:
         lines.extend(
@@ -467,6 +537,11 @@ def _pr_body(task_id: str, spec_ref: str, has_gate: bool) -> str:
             "once all pipeline steps pass"
             + (" and the `lgtm` label is applied" if has_gate else "")
             + ".",
+            "",
+            "---",
+            "",
+            "This PR was created by [hyperloop](https://github.com/jsell-rh/hyperloop),",
+            "an AI agent orchestrator.",
         ]
     )
 
@@ -550,6 +625,30 @@ def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
             return True  # Rebase completed successfully
 
     return False  # Exceeded max rounds
+
+
+def _conventional_title(title: str, spec_ref: str) -> str:
+    """Derive a conventional commit-style PR title from a task title and spec_ref.
+
+    'specs/iam/tenants.spec.md@abc' + 'Implement tenant CRUD' -> 'feat(iam): implement tenant CRUD'
+    'specs/widget.spec.md' + 'Build widget' -> 'feat: build widget'
+    """
+    name = spec_ref.split("@")[0] if "@" in spec_ref else spec_ref
+    name = re.sub(r"^specs/", "", name)
+    name = re.sub(r"\.spec\.md$|\.md$", "", name)
+
+    # Use the directory as scope, or no scope for top-level specs
+    parts = name.split("/")
+    scope = parts[0] if len(parts) > 1 else ""
+
+    # Lowercase the first letter of the title for conventional commit style
+    clean_title = title[0].lower() + title[1:] if title else title
+    # Strip trailing period
+    clean_title = clean_title.rstrip(".")
+
+    if scope:
+        return f"feat({scope}): {clean_title}"
+    return f"feat: {clean_title}"
 
 
 def _spec_name_from_ref(spec_ref: str) -> str:

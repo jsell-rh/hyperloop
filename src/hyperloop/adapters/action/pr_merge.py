@@ -53,7 +53,14 @@ class PRMergeAction:
 
         # If no PR exists, create one
         if pr_url is None:
-            pr_url = self._pr.create_draft(task.id, branch, task.title, task.spec_ref)
+            pr_url = self._pr.create_draft(
+                task.id,
+                branch,
+                task.title,
+                task.spec_ref,
+                pr_title=task.pr_title,
+                pr_description=task.pr_description,
+            )
             if not pr_url:
                 return ActionResult(outcome=ActionOutcome.RETRY, detail="Failed to create PR")
             new_pr_url = pr_url
@@ -69,7 +76,14 @@ class PRMergeAction:
             if branch_tip is None or pr_state.head_sha == branch_tip:
                 return ActionResult(outcome=ActionOutcome.SUCCESS, detail="Already merged")
             # Stale merge -- create new PR for remaining work
-            pr_url = self._pr.create_draft(task.id, branch, task.title, task.spec_ref)
+            pr_url = self._pr.create_draft(
+                task.id,
+                branch,
+                task.title,
+                task.spec_ref,
+                pr_title=task.pr_title,
+                pr_description=task.pr_description,
+            )
             if not pr_url:
                 return ActionResult(
                     outcome=ActionOutcome.RETRY,
@@ -79,7 +93,14 @@ class PRMergeAction:
 
         elif pr_state.state == "CLOSED":
             # Recreate PR
-            pr_url = self._pr.create_draft(task.id, branch, task.title, task.spec_ref)
+            pr_url = self._pr.create_draft(
+                task.id,
+                branch,
+                task.title,
+                task.spec_ref,
+                pr_title=task.pr_title,
+                pr_description=task.pr_description,
+            )
             if not pr_url:
                 return ActionResult(
                     outcome=ActionOutcome.RETRY,

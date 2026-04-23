@@ -55,6 +55,8 @@ class Task:
     round: int
     branch: str | None
     pr: str | None
+    pr_title: str | None = None
+    pr_description: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,8 @@ class TaskProposal:
     title: str
     spec_ref: str  # "specs/widget.md@abc123"
     deps: tuple[str, ...]
+    pr_title: str | None = None
+    pr_description: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +223,7 @@ class TaskContext:
     spec_ref: str
     findings: str
     round: int
+    pr_feedback: str = ""
 
 
 @dataclass(frozen=True)

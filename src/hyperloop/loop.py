@@ -390,11 +390,15 @@ class Orchestrator:
         if self._composer is None:
             return ""
         findings = self._state.get_findings(task.id)
+        pr_feedback = ""
+        if task.pr and self._pr is not None:
+            pr_feedback = self._pr.get_feedback(task.pr)
         context = TaskContext(
             task_id=task.id,
             spec_ref=task.spec_ref,
             findings=findings,
             round=task.round,
+            pr_feedback=pr_feedback,
         )
         composed = self._composer.compose(
             role=role,
