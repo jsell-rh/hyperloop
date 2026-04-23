@@ -13,6 +13,7 @@ from hyperloop.cycle.helpers import build_world, find_position_for_step
 from hyperloop.domain.decide import decide
 from hyperloop.domain.model import (
     AgentStep,
+    CheckStep,
     Phase,
     PipelinePosition,
     SpawnWorker,
@@ -89,7 +90,9 @@ def plan_spawns(
             pos = find_position_for_step(executor, phase_name)
             if pos is not None:
                 step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
-                if isinstance(step, AgentStep):
+                is_agent_step = isinstance(step, AgentStep)
+                is_check_agent = isinstance(step, CheckStep) and step.agent == phase_name
+                if is_agent_step or is_check_agent:
                     plans.append(
                         SpawnPlan(
                             task_id=act.task_id,

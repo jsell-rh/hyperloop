@@ -371,8 +371,6 @@ def advance(
                 running_tasks=running_tasks,
             )
             transitions.extend(check_result.transitions)
-            if check_result.to_spawn:
-                to_spawn.extend(check_result.to_spawn)
             if check_result.halt_reason is not None:
                 halt_reason = check_result.halt_reason
                 had_failures = True
@@ -413,7 +411,6 @@ class _StepResult:
 
     transitions: list[TaskTransition]
     halt_reason: str | None = None
-    to_spawn: list[tuple[str, str, PipelinePosition]] | None = None
 
 
 def _advance_gate(
@@ -702,11 +699,17 @@ def _advance_check(
         return _StepResult(transitions=[])
 
     if result == CheckResult.PASS:
-        # If check has an evaluator agent, spawn it instead of advancing
+        # If check has an evaluator agent, transition to the agent phase
+        # so the SPAWN phase picks it up
         if step.agent is not None:
             return _StepResult(
-                transitions=[],
-                to_spawn=[(task.id, step.agent, pos)],
+                transitions=[
+                    TaskTransition(
+                        task_id=task.id,
+                        status=TaskStatus.IN_PROGRESS,
+                        phase=Phase(step.agent),
+                    )
+                ],
             )
         return _check_advance(task, pos, executor)
 

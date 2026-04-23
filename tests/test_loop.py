@@ -13,6 +13,7 @@ from hyperloop.compose import PromptComposer, load_templates_from_dir
 from hyperloop.domain.model import (
     ActionStep,
     AgentStep,
+    CheckStep,
     GateStep,
     LoopStep,
     Phase,
@@ -80,6 +81,7 @@ def _make_orchestrator(
     poll_interval: float = 0,
     probe: RecordingProbe | None = None,
     max_action_attempts: int = 3,
+    check: object | None = None,
 ) -> Orchestrator:
     gate = LabelGate(pr_manager) if pr_manager is not None else None
     action = PRMergeAction(pr_manager) if pr_manager is not None else None
@@ -92,6 +94,7 @@ def _make_orchestrator(
         max_action_attempts=max_action_attempts,
         gate=gate,
         action=action,
+        check=check,
         pr=pr_manager,
         composer=composer,
         poll_interval=poll_interval,
@@ -1656,3 +1659,231 @@ class TestPoisonedBranchReset:
         assert task.round == 0
         assert task.branch is not None  # New branch assigned
         assert task.pr is None  # PR was cleared
+
+
+# ---------------------------------------------------------------------------
+# Agent-backed check tests
+# ---------------------------------------------------------------------------
+
+
+class FakeCheck:
+    """Fake CheckPort that returns configurable results per task."""
+
+    def __init__(self) -> None:
+        from hyperloop.ports.check import CheckResult
+
+        self._results: dict[str, CheckResult] = {}
+        self._default = CheckResult.PASS
+
+    def set_result(self, task_id: str, result: object) -> None:
+        from hyperloop.ports.check import CheckResult
+
+        assert isinstance(result, CheckResult)
+        self._results[task_id] = result
+
+    def set_default(self, result: object) -> None:
+        from hyperloop.ports.check import CheckResult
+
+        assert isinstance(result, CheckResult)
+        self._default = result
+
+    def evaluate(self, task: Task, check_name: str, args: dict[str, object]) -> object:
+        return self._results.get(task.id, self._default)
+
+
+class TestAgentBackedCheck:
+    """Check steps with an evaluator agent: pre-conditions, spawn, reap, advance."""
+
+    CHECK_PROCESS = Process(
+        name="check-process",
+        pipeline=(
+            LoopStep(
+                steps=(
+                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                    CheckStep(check="pr-review", agent="pr-reviewer"),
+                ),
+            ),
+        ),
+    )
+
+    def test_check_wait_does_not_spawn_or_advance(self) -> None:
+        """WAIT result keeps the task at the check phase without spawning."""
+        from hyperloop.ports.check import CheckResult
+
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        fake_check = FakeCheck()
+        fake_check.set_default(CheckResult.WAIT)
+
+        state.add_task(
+            _task(id="task-001", status=TaskStatus.IN_PROGRESS, phase=Phase("pr-review"))
+        )
+
+        orch = _make_orchestrator(state, runtime, process=self.CHECK_PROCESS, check=fake_check)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.phase == Phase("pr-review")
+
+    def test_check_pass_with_agent_transitions_to_agent_phase(self) -> None:
+        """PASS on a check with an evaluator transitions to the agent phase for spawning."""
+        from hyperloop.ports.check import CheckResult
+
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        fake_check = FakeCheck()
+        fake_check.set_default(CheckResult.PASS)
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("pr-review"),
+                branch="hyperloop/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime, process=self.CHECK_PROCESS, check=fake_check)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.phase == Phase("pr-reviewer")
+
+    def test_check_agent_pass_advances_past_check(self) -> None:
+        """When the check agent passes, the task advances past the check step."""
+        from hyperloop.ports.check import CheckResult
+
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        fake_check = FakeCheck()
+        fake_check.set_default(CheckResult.PASS)
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("pr-reviewer"),
+                branch="hyperloop/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime, process=self.CHECK_PROCESS, check=fake_check)
+
+        # Cycle 1: spawn the check agent
+        orch.run_cycle()
+
+        # Check agent passes
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", PASS_RESULT)
+
+        # Cycle 2: reap check agent, advance past check -> loop exits -> COMPLETE
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.COMPLETE
+
+    def test_check_agent_fail_restarts_loop(self) -> None:
+        """When the check agent fails, the enclosing loop restarts."""
+        from hyperloop.ports.check import CheckResult
+
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        fake_check = FakeCheck()
+        fake_check.set_default(CheckResult.PASS)
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("pr-reviewer"),
+                branch="hyperloop/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime, process=self.CHECK_PROCESS, check=fake_check)
+
+        # Cycle 1: spawn check agent
+        orch.run_cycle()
+
+        # Check agent fails
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", FAIL_RESULT)
+
+        # Cycle 2: reap check agent -> FAIL -> loop restarts at implementer
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.phase == Phase("implementer")
+        assert task.round == 1
+
+    def test_check_fail_without_agent_restarts_loop(self) -> None:
+        """A mechanical check (no agent) that FAILs restarts the loop."""
+        from hyperloop.ports.check import CheckResult
+
+        mechanical_process = Process(
+            name="mech-check",
+            pipeline=(
+                LoopStep(
+                    steps=(
+                        AgentStep(agent="implementer", on_pass=None, on_fail=None),
+                        CheckStep(check="ci-check"),
+                    ),
+                ),
+            ),
+        )
+
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        fake_check = FakeCheck()
+        fake_check.set_default(CheckResult.FAIL)
+
+        state.add_task(_task(id="task-001", status=TaskStatus.IN_PROGRESS, phase=Phase("ci-check")))
+
+        orch = _make_orchestrator(state, runtime, process=mechanical_process, check=fake_check)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.phase == Phase("implementer")
+        assert task.round == 1
+
+    def test_full_cycle_implementer_then_check_agent(self) -> None:
+        """End-to-end: implementer passes -> check pre-conditions pass ->
+        check agent spawns -> check agent passes -> task completes."""
+        from hyperloop.ports.check import CheckResult
+
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        fake_check = FakeCheck()
+        fake_check.set_default(CheckResult.PASS)
+
+        state.add_task(_task(id="task-001", branch="hyperloop/task-001"))
+
+        orch = _make_orchestrator(state, runtime, process=self.CHECK_PROCESS, check=fake_check)
+
+        # Cycle 1: spawn implementer
+        orch.run_cycle()
+        assert state.get_task("task-001").phase == Phase("implementer")
+
+        # Implementer passes
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", PASS_RESULT)
+
+        # Cycle 2: reap implementer -> advance to check phase
+        orch.run_cycle()
+        assert state.get_task("task-001").phase == Phase("pr-review")
+
+        # Cycle 3: check pre-conditions pass -> transition to pr-reviewer -> spawn agent
+        orch.run_cycle()
+        assert state.get_task("task-001").phase == Phase("pr-reviewer")
+
+        # Check agent passes
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result("task-001", PASS_RESULT)
+
+        # Cycle 4: reap check agent -> PASS -> advance past check -> loop exits -> COMPLETE
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.COMPLETE

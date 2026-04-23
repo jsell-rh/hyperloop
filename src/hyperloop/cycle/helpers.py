@@ -76,6 +76,9 @@ def find_position_for_step(executor: PipelineExecutor, phase_name: str) -> Pipel
             path = (*prefix, i)
             if _step_name(step) == phase_name:
                 return PipelinePosition(path=path)
+            # Check agent-backed checks by their evaluator role name
+            if isinstance(step, CheckStep) and step.agent == phase_name:
+                return PipelinePosition(path=path)
             if isinstance(step, LoopStep):
                 found = _search(step.steps, path)
                 if found is not None:
