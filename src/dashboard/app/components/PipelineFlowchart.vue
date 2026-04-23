@@ -13,6 +13,8 @@ const stepColorClass = (type: string): string => {
       return 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-700'
     case 'action':
       return 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 border-green-200 dark:border-green-700'
+    case 'check':
+      return 'bg-cyan-50 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 border-cyan-200 dark:border-cyan-700'
     default:
       return 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-200 dark:border-gray-700'
   }
@@ -20,7 +22,8 @@ const stepColorClass = (type: string): string => {
 
 const stepLabel = (step: PipelineTreeStep): string => {
   if (step.type === 'loop') return 'loop'
-  const prefix = step.type === 'gate' ? 'gate: ' : step.type === 'action' ? 'action: ' : ''
+  const prefixMap: Record<string, string> = { gate: 'gate: ', action: 'action: ', check: 'check: ' }
+  const prefix = prefixMap[step.type] ?? ''
   return `${prefix}${step.name || ''}`
 }
 </script>
