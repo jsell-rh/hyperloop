@@ -36,3 +36,10 @@ class SpecSource(Protocol):
     def has_changed(self, spec_path: str, since_version: str) -> bool:
         """Return True if the spec file has changed since the given version."""
         ...
+
+    def get_diff(self, spec_path: str, since_version: str) -> str:
+        """Return the diff of a spec file since the given version.
+
+        Returns empty string if no diff is available.
+        """
+        ...

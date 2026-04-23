@@ -237,10 +237,20 @@ class TaskContext:
 
 
 @dataclass(frozen=True)
+class SpecIntakeEntry:
+    """A spec that needs PM attention, with optional change context."""
+
+    path: str
+    change_type: str  # "new" or "modified"
+    diff: str = ""
+
+
+@dataclass(frozen=True)
 class IntakeContext:
     """Context for PM intake."""
 
     unprocessed_specs: tuple[str, ...]
+    spec_entries: tuple[SpecIntakeEntry, ...] = ()
     failed_tasks: tuple[str, ...] = ()
 
 

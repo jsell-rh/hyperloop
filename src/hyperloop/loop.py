@@ -23,7 +23,7 @@ from hyperloop.cycle import (
     run_intake,
 )
 from hyperloop.cycle.helpers import build_world
-from hyperloop.cycle.intake import _unprocessed_specs
+from hyperloop.cycle.intake import _detect_spec_entries
 from hyperloop.domain.deps import detect_cycles
 from hyperloop.domain.model import (
     ActionStep,
@@ -307,12 +307,32 @@ class Orchestrator:
                 cycle=self._current_cycle,
             )
         self._has_failures_since_intake = False
-        if result.created_count > 0 and self._spec_source is not None:
+        if self._spec_source is not None:
             version = self._spec_source.current_version()
             world = self._state.get_world()
-            for task in world.tasks.values():
-                if task.id not in result.tasks_before and "@" not in task.spec_ref:
-                    self._state.set_spec_ref(task.id, f"{task.spec_ref}@{version}")
+            # Pin new tasks
+            if result.created_count > 0:
+                for task in world.tasks.values():
+                    if task.id not in result.tasks_before and "@" not in task.spec_ref:
+                        self._state.set_spec_ref(task.id, f"{task.spec_ref}@{version}")
+            # Re-pin pre-existing tasks whose specs were modified (prevents re-triggering)
+            modified_specs = {
+                s
+                for s in result.unprocessed_specs
+                if s
+                in {
+                    t.spec_ref.split("@")[0]
+                    for t in world.tasks.values()
+                    if t.id in result.tasks_before
+                }
+            }
+            if modified_specs:
+                for task in world.tasks.values():
+                    if task.id not in result.tasks_before:
+                        continue
+                    spec_path = task.spec_ref.split("@")[0]
+                    if spec_path in modified_specs:
+                        self._state.set_spec_ref(task.id, f"{spec_path}@{version}")
         self._probe.intake_ran(
             unprocessed_specs=result.unprocessed_count,
             created_tasks=result.created_count,
@@ -323,7 +343,7 @@ class Orchestrator:
 
     def _unprocessed_specs(self) -> list[str]:
         """Return spec file paths that have no corresponding task."""
-        return _unprocessed_specs(self._state, self._spec_source)
+        return [e.path for e in _detect_spec_entries(self._state, self._spec_source)]
 
     def _collect_cycle_findings(self, reaped_results: dict[str, WorkerResult]) -> str:
         """Collect findings from all failed results this cycle."""

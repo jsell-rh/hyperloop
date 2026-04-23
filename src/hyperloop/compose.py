@@ -258,7 +258,16 @@ class PromptComposer:
                 )
             )
 
-        if context.unprocessed_specs:
+        if context.spec_entries:
+            spec_lines: list[str] = []
+            for entry in context.spec_entries:
+                spec_lines.append(f"- `{entry.path}` ({entry.change_type})")
+                if entry.diff:
+                    spec_lines.append(f"\n```diff\n{entry.diff.rstrip()}\n```\n")
+            spec_text = "\n".join(spec_lines)
+            text_parts.append(f"## Specs to Process\n\n{spec_text}")
+            sections.append(PromptSection(source="spec", label="spec", content=spec_text))
+        elif context.unprocessed_specs:
             spec_list = "\n".join(f"- {s}" for s in context.unprocessed_specs)
             text_parts.append(f"## Specs to Process\n\n{spec_list}")
             sections.append(PromptSection(source="spec", label="spec", content=spec_list))

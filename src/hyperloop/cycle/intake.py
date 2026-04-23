@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from hyperloop.domain.model import IntakeContext
+from hyperloop.domain.model import IntakeContext, SpecIntakeEntry
 
 if TYPE_CHECKING:
     from hyperloop.compose import PromptComposer
@@ -37,17 +37,13 @@ class IntakeResult:
     unprocessed_specs: tuple[str, ...] = ()
 
 
-def _unprocessed_specs(state: StateStore, spec_source: SpecSource | None = None) -> list[str]:
-    """Return spec file paths that need PM attention.
-
-    A spec is unprocessed if:
-    - It has no corresponding task (new spec), OR
-    - It has changed since the SHA pinned in its tasks' spec_ref
-    """
+def _detect_spec_entries(
+    state: StateStore, spec_source: SpecSource | None = None
+) -> list[SpecIntakeEntry]:
+    """Return specs that need PM attention, with change context for modified ones."""
     all_specs = state.list_files("specs/**/*.spec.md")
     world = state.get_world()
 
-    # Build map: spec_path -> latest pinned SHA across all tasks for that spec
     pinned_versions: dict[str, str] = {}
     covered: set[str] = set()
     for task in world.tasks.values():
@@ -60,14 +56,17 @@ def _unprocessed_specs(state: StateStore, spec_source: SpecSource | None = None)
         else:
             covered.add(task.spec_ref)
 
-    result: list[str] = []
+    result: list[SpecIntakeEntry] = []
     for spec in all_specs:
-        if spec not in covered or (
+        if spec not in covered:
+            result.append(SpecIntakeEntry(path=spec, change_type="new"))
+        elif (
             spec_source is not None
             and spec in pinned_versions
             and spec_source.has_changed(spec, pinned_versions[spec])
         ):
-            result.append(spec)
+            diff = spec_source.get_diff(spec, pinned_versions[spec])
+            result.append(SpecIntakeEntry(path=spec, change_type="modified", diff=diff))
 
     return result
 
@@ -107,14 +106,16 @@ def run_intake(
         logger.debug("intake: no composer -- skipping")
         return not_ran
 
-    unprocessed = _unprocessed_specs(state, spec_source)
-    if not unprocessed and not has_failures:
+    entries = _detect_spec_entries(state, spec_source)
+    if not entries and not has_failures:
         logger.debug("intake: no unprocessed specs or failures -- skipping")
         return not_ran
 
+    spec_paths = tuple(e.path for e in entries)
+
     logger.info(
         "intake: running PM (unprocessed=%d, failures=%s)",
-        len(unprocessed),
+        len(entries),
         has_failures,
     )
 
@@ -127,7 +128,8 @@ def run_intake(
         failed_task_ids = tuple(t.id for t in world.tasks.values() if t.status == TaskStatus.FAILED)
 
     context = IntakeContext(
-        unprocessed_specs=tuple(unprocessed),
+        unprocessed_specs=spec_paths,
+        spec_entries=tuple(entries),
         failed_tasks=failed_task_ids,
     )
     composed = composer.compose(role="pm", context=context)
@@ -149,6 +151,6 @@ def run_intake(
         tasks_before=tasks_before,
         success=success,
         duration_s=time.monotonic() - intake_start,
-        unprocessed_count=len(unprocessed),
-        unprocessed_specs=tuple(unprocessed),
+        unprocessed_count=len(entries),
+        unprocessed_specs=spec_paths,
     )

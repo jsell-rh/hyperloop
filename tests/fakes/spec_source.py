@@ -53,3 +53,7 @@ class FakeSpecSource:
     def has_changed(self, spec_path: str, since_version: str) -> bool:
         """Return whether the spec has been marked as changed."""
         return spec_path in self._changed_since
+
+    def get_diff(self, spec_path: str, since_version: str) -> str:
+        """Return empty diff in the fake."""
+        return ""
