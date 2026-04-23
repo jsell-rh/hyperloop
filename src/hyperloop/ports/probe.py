@@ -230,6 +230,15 @@ class OrchestratorProbe(Protocol):
     # Serial agents
     # ------------------------------------------------------------------
 
+    def intake_specs_detected(
+        self,
+        *,
+        specs: tuple[str, ...],
+        cycle: int,
+    ) -> None:
+        """Specs that need PM attention were detected (new or modified)."""
+        ...
+
     def intake_ran(
         self,
         *,

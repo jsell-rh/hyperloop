@@ -61,6 +61,9 @@ class NullProbe:
     def rebase_conflict(self, **_: object) -> None:
         pass
 
+    def intake_specs_detected(self, **_: object) -> None:
+        pass
+
     def intake_ran(self, **_: object) -> None:
         pass
 
@@ -156,6 +159,9 @@ class MultiProbe:
 
     def rebase_conflict(self, **kw: object) -> None:
         self._call("rebase_conflict", **kw)
+
+    def intake_specs_detected(self, **kw: object) -> None:
+        self._call("intake_specs_detected", **kw)
 
     def intake_ran(self, **kw: object) -> None:
         self._call("intake_ran", **kw)

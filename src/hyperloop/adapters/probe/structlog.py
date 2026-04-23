@@ -104,6 +104,9 @@ class StructlogProbe:
     # Serial agents
     # ------------------------------------------------------------------
 
+    def intake_specs_detected(self, **kw: object) -> None:
+        self._log.info("intake_specs_detected", **kw)
+
     def intake_ran(self, **kw: object) -> None:
         duration_s = kw.get("duration_s")
         if isinstance(duration_s, float):

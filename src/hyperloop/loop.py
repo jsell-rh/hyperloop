@@ -301,6 +301,11 @@ class Orchestrator:
         """Apply intake result: pin spec_refs, emit probe, reset failure flag."""
         if not result.ran:
             return
+        if result.unprocessed_specs:
+            self._probe.intake_specs_detected(
+                specs=result.unprocessed_specs,
+                cycle=self._current_cycle,
+            )
         self._has_failures_since_intake = False
         if result.created_count > 0 and self._spec_source is not None:
             version = self._spec_source.current_version()

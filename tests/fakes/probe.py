@@ -78,6 +78,9 @@ class RecordingProbe:
     def rebase_conflict(self, **kw: object) -> None:
         self._record("rebase_conflict", **kw)
 
+    def intake_specs_detected(self, **kw: object) -> None:
+        self._record("intake_specs_detected", **kw)
+
     def intake_ran(self, **kw: object) -> None:
         self._record("intake_ran", **kw)
 

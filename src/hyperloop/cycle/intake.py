@@ -34,6 +34,7 @@ class IntakeResult:
     success: bool
     duration_s: float
     unprocessed_count: int
+    unprocessed_specs: tuple[str, ...] = ()
 
 
 def _unprocessed_specs(state: StateStore, spec_source: SpecSource | None = None) -> list[str]:
@@ -149,4 +150,5 @@ def run_intake(
         success=success,
         duration_s=time.monotonic() - intake_start,
         unprocessed_count=len(unprocessed),
+        unprocessed_specs=tuple(unprocessed),
     )
