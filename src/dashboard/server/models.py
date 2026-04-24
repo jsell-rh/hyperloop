@@ -342,3 +342,26 @@ class CheckScript(BaseModel):
     name: str
     path: str
     content: str
+
+
+# ---------------------------------------------------------------------------
+# Control operation request models
+# ---------------------------------------------------------------------------
+
+
+class RestartRequest(BaseModel):
+    """Request body for restarting a task."""
+
+    expected_round: int
+
+
+class RetireRequest(BaseModel):
+    """Request body for retiring a task."""
+
+    expected_round: int
+
+
+class ForceClearRequest(BaseModel):
+    """Request body for force-clearing a task past a signal step."""
+
+    expected_round: int

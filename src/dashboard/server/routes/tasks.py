@@ -1,8 +1,8 @@
-"""GET /api/tasks — task listing and detail endpoints."""
+"""Task listing, detail, and control endpoints."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from fastapi import APIRouter, HTTPException
 
@@ -10,11 +10,14 @@ from dashboard.server.agents_loader import load_agent_templates
 from dashboard.server.deps import get_repo_path, get_state
 from dashboard.server.models import (
     DepDetail,
+    ForceClearRequest,
     GraphEdge,
     GraphNode,
     GraphResponse,
     PromptSectionResponse,
     ReconstructedPrompt,
+    RestartRequest,
+    RetireRequest,
     Review,
     TaskDetail,
     TaskSummary,
@@ -202,6 +205,112 @@ def get_task(task_id: str) -> TaskDetail:
         deps_detail=deps_detail,
         reviews=reviews,
     )
+
+
+# ---------------------------------------------------------------------------
+# Control operations
+# ---------------------------------------------------------------------------
+
+
+def _load_phase_map(repo_path: Path) -> dict[str, dict[str, str]]:
+    """Load the flat phase map from process.yaml.
+
+    Returns a dict of phase_name -> {"on_pass": ..., "on_fail": ..., ...}.
+    """
+    from dashboard.server.routes.process import _find_and_read_process_yaml
+
+    process_data = _find_and_read_process_yaml(repo_path)
+    phases_raw = process_data.get("phases", {})
+    if not isinstance(phases_raw, dict):
+        return {}
+    return cast("dict[str, dict[str, str]]", phases_raw)
+
+
+@router.post("/api/tasks/{task_id}/restart")
+def restart_task(task_id: str, body: RestartRequest) -> dict[str, str]:
+    """Restart a task: reset to first phase, increment round."""
+    from hyperloop.domain.model import Phase, TaskStatus
+
+    state = get_state()
+    try:
+        task = state.get_task(task_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")  # noqa: B904
+
+    if task.round != body.expected_round:
+        raise HTTPException(status_code=409, detail="Task has been modified")
+
+    # Determine first phase from the process phase map
+    repo_path = get_repo_path()
+    phases = _load_phase_map(repo_path)
+    first_phase = next(iter(phases), None) if phases else None
+
+    state.transition_task(
+        task_id,
+        TaskStatus.IN_PROGRESS,
+        Phase(first_phase) if first_phase else None,
+        task.round + 1,
+    )
+    state.persist(f"dashboard: restart {task_id}")
+    return {"status": "ok"}
+
+
+@router.post("/api/tasks/{task_id}/retire")
+def retire_task(task_id: str, body: RetireRequest) -> dict[str, str]:
+    """Retire a task: transition to FAILED."""
+    from hyperloop.domain.model import TaskStatus
+
+    state = get_state()
+    try:
+        task = state.get_task(task_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")  # noqa: B904
+
+    if task.round != body.expected_round:
+        raise HTTPException(status_code=409, detail="Task has been modified")
+
+    state.transition_task(task_id, TaskStatus.FAILED, phase=None)
+    state.persist(f"dashboard: retire {task_id}")
+    return {"status": "ok"}
+
+
+@router.post("/api/tasks/{task_id}/force-clear")
+def force_clear_task(task_id: str, body: ForceClearRequest) -> dict[str, str]:
+    """Force-clear a task past a signal step to the on_pass target."""
+    from hyperloop.domain.model import Phase, TaskStatus
+
+    state = get_state()
+    try:
+        task = state.get_task(task_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")  # noqa: B904
+
+    if task.round != body.expected_round:
+        raise HTTPException(status_code=409, detail="Task has been modified")
+
+    if task.phase is None:
+        raise HTTPException(status_code=400, detail="Task has no current phase")
+
+    repo_path = get_repo_path()
+    phases = _load_phase_map(repo_path)
+    current_phase = str(task.phase)
+
+    if current_phase not in phases:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Phase {current_phase} not found in process",
+        )
+
+    phase_config = phases[current_phase]
+    on_pass = phase_config.get("on_pass", "done")
+
+    if on_pass == "done":
+        state.transition_task(task_id, TaskStatus.COMPLETED, phase=None)
+    else:
+        state.transition_task(task_id, TaskStatus.IN_PROGRESS, Phase(on_pass))
+
+    state.persist(f"dashboard: force-clear {task_id}")
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------

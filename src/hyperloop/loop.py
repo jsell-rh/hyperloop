@@ -29,6 +29,9 @@ from hyperloop.domain.model import (
     WorkerHandle,
 )
 from hyperloop.domain.reconciler import (
+    check_convergence_needed,
+    detect_coverage_gaps,
+    detect_freshness_drift,
     detect_phase_orphans,
     handle_deleted_specs,
     handle_pm_failure,
@@ -106,8 +109,10 @@ class Orchestrator:
         # Reconciler state
         self._converged_specs: set[str] = set()
         self._pm_consecutive_failures: int = 0
+        self._pm_skip_until: int = 0
         self._gc_last_cycle: int = 0
         self._task_ages: dict[str, float] = {}
+        self._has_drift: bool = False
 
     def validate_templates(self) -> None:
         """Validate that every role in the phase map has a resolved template."""
@@ -207,6 +212,25 @@ class Orchestrator:
         self._workers = collected.remaining_workers
         if any(r.verdict == Verdict.FAIL for r in collected.reaped.values()):
             self._has_failures_since_intake = True
+
+        # Emit crash notifications for workers whose poll status was FAILED
+        for task_id in collected.crashed_task_ids:
+            worker_info = collected.reaped_metadata.get(task_id)
+            if worker_info is not None:
+                handle, _ = worker_info
+                task = self._state.get_task(task_id)
+                self._probe.worker_crash_detected(
+                    task_id=task_id,
+                    role=handle.role,
+                    branch=task.branch or "",
+                )
+                if self._channel is not None:
+                    self._channel.worker_crashed(
+                        task=task,
+                        role=handle.role,
+                        branch=task.branch or "",
+                    )
+
         if collected.reaped:
             for hook in self._hooks:
                 hook.after_reap(results=collected.reaped, cycle=cycle_num)
@@ -271,7 +295,7 @@ class Orchestrator:
     # -- Reconcile phase -----------------------------------------------------
 
     def _run_reconcile(self, cycle_num: int) -> str | None:
-        """Run reconciler checks: deleted specs, phase orphans, intake, GC.
+        """Run reconciler checks: drift, deleted specs, orphans, convergence, intake, GC.
 
         Returns halt reason if PM failure threshold is reached, else None.
         """
@@ -283,16 +307,31 @@ class Orchestrator:
         # 2. Detect phase orphans -- reset tasks at phases not in current map
         self._handle_phase_orphans(world.tasks, cycle_num)
 
-        # 3. Run intake (PM agent for task creation)
-        intake_result = run_intake(
-            self._state,
-            self._runtime,
-            self._composer,
-            self._has_failures_since_intake,
-        )
+        # 3. Drift detection (coverage + freshness)
+        self._run_drift_detection(world.tasks)
+
+        # 4. Convergence tracking (auditor for completed specs)
+        self._run_convergence_check(world.tasks, cycle_num)
+
+        # 5. Run intake (PM agent for task creation) -- skip during backoff
+        if self._current_cycle < self._pm_skip_until:
+            intake_result = run_intake(
+                self._state,
+                self._runtime,
+                None,  # skip intake by passing no composer
+                False,
+            )
+        else:
+            intake_result = run_intake(
+                self._state,
+                self._runtime,
+                self._composer,
+                self._has_failures_since_intake or self._has_drift,
+                spec_source=self._spec_source,
+            )
         self._apply_intake(intake_result)
 
-        # 4. Track PM failures
+        # 6. Track PM failures and apply backoff
         if intake_result.ran and not intake_result.success:
             self._pm_consecutive_failures += 1
             response = handle_pm_failure(self._pm_consecutive_failures, self._pm_max_failures)
@@ -302,13 +341,97 @@ class Orchestrator:
                     f"consecutive failures"
                 )
                 return reason
+            # Apply exponential backoff
+            backoff_cycles = min(2**self._pm_consecutive_failures, 32)
+            self._pm_skip_until = self._current_cycle + backoff_cycles
         elif intake_result.ran and intake_result.success:
             self._pm_consecutive_failures = 0
+            self._pm_skip_until = 0
 
-        # 5. Garbage collection
+        # 7. Garbage collection
         self._run_gc(cycle_num)
 
+        # Reset drift flag after intake has had a chance to process it
+        self._has_drift = False
+
         return None
+
+    def _run_drift_detection(self, tasks: dict[str, Task]) -> None:
+        """Run coverage and freshness drift detection."""
+        if self._spec_source is None:
+            return
+
+        spec_files = self._state.list_files("specs/**/*.spec.md")
+        spec_files_alt = self._state.list_files("specs/**/*.md")
+        current_specs = sorted(set(spec_files) | set(spec_files_alt))
+
+        if not current_specs:
+            return
+
+        # Coverage gaps
+        coverage_gaps = detect_coverage_gaps(tasks, current_specs, {})
+        for gap in coverage_gaps:
+            self._probe.drift_detected(
+                spec_path=gap.spec_path, drift_type=gap.drift_type, detail=gap.detail
+            )
+            self._has_drift = True
+
+        # Freshness drift -- build spec_versions mapping from spec_source
+        current_version = self._spec_source.current_version()
+        spec_versions: dict[str, str] = {}
+        for spec_path in current_specs:
+            spec_versions[spec_path] = current_version
+
+        freshness_drifts = detect_freshness_drift(tasks, spec_versions)
+        for drift in freshness_drifts:
+            self._probe.drift_detected(
+                spec_path=drift.spec_path, drift_type=drift.drift_type, detail=drift.detail
+            )
+            self._has_drift = True
+
+    def _run_convergence_check(self, tasks: dict[str, Task], cycle_num: int) -> None:
+        """Check for specs needing alignment audit and run auditor."""
+        if self._composer is None:
+            return
+
+        needs_audit = check_convergence_needed(tasks, self._converged_specs)
+        for spec_ref in needs_audit:
+            spec_path = spec_ref.split("@")[0] if "@" in spec_ref else spec_ref
+            audit_start = time.monotonic()
+            prompt = self._compose_auditor_prompt(spec_ref)
+            success = self._runtime.run_serial("auditor", prompt)
+            duration_s = time.monotonic() - audit_start
+
+            if success:
+                self._converged_specs.add(spec_ref)
+                self._probe.convergence_marked(
+                    spec_path=spec_path, spec_ref=spec_ref, cycle=cycle_num
+                )
+                self._probe.audit_ran(
+                    spec_ref=spec_ref, result="aligned", cycle=cycle_num, duration_s=duration_s
+                )
+            else:
+                self._probe.audit_ran(
+                    spec_ref=spec_ref, result="misaligned", cycle=cycle_num, duration_s=duration_s
+                )
+                self._has_drift = True
+
+    def _compose_auditor_prompt(self, spec_ref: str) -> str:
+        """Compose the auditor prompt for a spec_ref."""
+        if self._composer is None:
+            return ""
+        context = TaskContext(
+            task_id="auditor",
+            spec_ref=spec_ref,
+            findings="",
+            round=0,
+        )
+        composed = self._composer.compose(
+            role="auditor",
+            context=context,
+            epilogue=self._runtime.worker_epilogue(),
+        )
+        return composed.text
 
     def _handle_deleted_specs(self, tasks: dict[str, Task], cycle_num: int) -> None:
         """Detect tasks referencing deleted specs and fail them."""

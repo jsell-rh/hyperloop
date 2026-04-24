@@ -283,7 +283,10 @@ class PromptComposer:
             )
 
         if context.failed_tasks:
-            failed_list = "\n".join(f"- {t}" for t in context.failed_tasks)
+            if context.failure_details:
+                failed_list = "\n".join(f"- {d}" for d in context.failure_details)
+            else:
+                failed_list = "\n".join(f"- {t}" for t in context.failed_tasks)
             failed_section = (
                 "The following tasks have failed and may need new approaches or "
                 "different task decomposition:\n\n" + failed_list

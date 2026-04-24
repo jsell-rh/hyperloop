@@ -109,18 +109,29 @@ def run_intake(
 
     spec_paths = tuple(e.path for e in entries)
 
-    # Collect failed task IDs when re-triggering on failures
+    # Collect failed task IDs and their detail when re-triggering on failures
     failed_task_ids: tuple[str, ...] = ()
+    failure_details: tuple[str, ...] = ()
     if has_failures:
         from hyperloop.domain.model import TaskStatus
 
         world = state.get_world()
-        failed_task_ids = tuple(t.id for t in world.tasks.values() if t.status == TaskStatus.FAILED)
+        failed_tasks_list = [t for t in world.tasks.values() if t.status == TaskStatus.FAILED]
+        failed_task_ids = tuple(t.id for t in failed_tasks_list)
+        details: list[str] = []
+        for task in failed_tasks_list:
+            findings = state.get_findings(task.id)
+            if findings:
+                details.append(f"Task {task.id}: {findings}")
+            else:
+                details.append(f"Task {task.id}: (no detail available)")
+        failure_details = tuple(details)
 
     context = IntakeContext(
         unprocessed_specs=spec_paths,
         spec_entries=tuple(entries),
         failed_tasks=failed_task_ids,
+        failure_details=failure_details,
     )
     composed = composer.compose(role="pm", context=context)
     prompt = composed.text

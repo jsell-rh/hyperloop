@@ -1048,6 +1048,151 @@ class TestProcess:
         assert "process.yaml" in data["source_file"]
 
 
+class TestControlRestart:
+    """POST /api/tasks/{task_id}/restart resets phase and increments round."""
+
+    def test_restart_resets_phase_and_increments_round(self, seeded_repo: Path) -> None:
+        client = _make_client(seeded_repo)
+        # task-001 is at phase implementer, round 1
+        resp = client.post(
+            "/api/tasks/task-001/restart",
+            json={"expected_round": 1},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+
+        # Verify the task was updated
+        task_resp = client.get("/api/tasks/task-001").json()
+        assert task_resp["status"] == "in-progress"
+        assert task_resp["round"] == 2
+
+    def test_restart_version_conflict(self, seeded_repo: Path) -> None:
+        client = _make_client(seeded_repo)
+        # task-001 is at round 1, send wrong expected_round
+        resp = client.post(
+            "/api/tasks/task-001/restart",
+            json={"expected_round": 0},
+        )
+        assert resp.status_code == 409
+
+    def test_restart_not_found(self, seeded_repo: Path) -> None:
+        client = _make_client(seeded_repo)
+        resp = client.post(
+            "/api/tasks/task-999/restart",
+            json={"expected_round": 0},
+        )
+        assert resp.status_code == 404
+
+
+class TestControlRetire:
+    """POST /api/tasks/{task_id}/retire transitions to FAILED."""
+
+    def test_retire_sets_status_to_failed(self, seeded_repo: Path) -> None:
+        client = _make_client(seeded_repo)
+        resp = client.post(
+            "/api/tasks/task-001/retire",
+            json={"expected_round": 1},
+        )
+        assert resp.status_code == 200
+
+        task_resp = client.get("/api/tasks/task-001").json()
+        assert task_resp["status"] == "failed"
+
+    def test_retire_version_conflict(self, seeded_repo: Path) -> None:
+        client = _make_client(seeded_repo)
+        resp = client.post(
+            "/api/tasks/task-001/retire",
+            json={"expected_round": 99},
+        )
+        assert resp.status_code == 409
+
+    def test_retire_not_found(self, seeded_repo: Path) -> None:
+        client = _make_client(seeded_repo)
+        resp = client.post(
+            "/api/tasks/task-999/retire",
+            json={"expected_round": 0},
+        )
+        assert resp.status_code == 404
+
+
+class TestControlForceClear:
+    """POST /api/tasks/{task_id}/force-clear advances past a signal step."""
+
+    def test_force_clear_advances_past_signal(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        # Write a process.yaml with a signal step
+        process_dir = repo / ".hyperloop" / "agents" / "process"
+        process_dir.mkdir(parents=True)
+        process_yaml = {
+            "apiVersion": "hyperloop.io/v1",
+            "kind": "Process",
+            "metadata": {"name": "default"},
+            "phases": {
+                "implement": {
+                    "run": "agent implementer",
+                    "on_pass": "await-review",
+                    "on_fail": "implement",
+                },
+                "await-review": {
+                    "run": "signal human-approval",
+                    "on_pass": "done",
+                    "on_fail": "implement",
+                    "on_wait": "await-review",
+                },
+            },
+        }
+        (process_dir / "process.yaml").write_text(yaml.dump(process_yaml))
+
+        # Create a task stuck at the signal step
+        _write_task_file(
+            repo,
+            "task-001",
+            {
+                "id": "task-001",
+                "title": "Build widget",
+                "spec_ref": "specs/widget.md",
+                "status": "in-progress",
+                "phase": "await-review",
+                "deps": [],
+                "round": 1,
+                "branch": "hyperloop/task-001",
+                "pr": None,
+            },
+        )
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.post(
+            "/api/tasks/task-001/force-clear",
+            json={"expected_round": 1},
+        )
+        assert resp.status_code == 200
+
+        # Task should have advanced to the on_pass target (done -> completed)
+        task_resp = client.get("/api/tasks/task-001").json()
+        assert task_resp["status"] == "completed"
+
+    def test_force_clear_version_conflict(self, seeded_repo: Path) -> None:
+        client = _make_client(seeded_repo)
+        resp = client.post(
+            "/api/tasks/task-001/force-clear",
+            json={"expected_round": 99},
+        )
+        assert resp.status_code == 409
+
+    def test_force_clear_not_found(self, seeded_repo: Path) -> None:
+        client = _make_client(seeded_repo)
+        resp = client.post(
+            "/api/tasks/task-999/force-clear",
+            json={"expected_round": 0},
+        )
+        assert resp.status_code == 404
+
+
 class TestAgents:
     def test_agents_list(self, tmp_path: Path) -> None:
         """Returns agents from kustomize build (fallback to base/ YAML)."""

@@ -315,6 +315,7 @@ class IntakeContext:
     unprocessed_specs: tuple[str, ...]
     spec_entries: tuple[SpecIntakeEntry, ...] = ()
     failed_tasks: tuple[str, ...] = ()
+    failure_details: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

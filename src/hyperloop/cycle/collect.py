@@ -13,6 +13,7 @@ from hyperloop.domain.decide import decide
 from hyperloop.domain.model import (
     ReapWorker,
     WorkerHandle,
+    WorkerPollStatus,
 )
 
 if TYPE_CHECKING:
@@ -31,6 +32,7 @@ class CollectResult:
     reaped: dict[str, WorkerResult]
     reaped_metadata: dict[str, tuple[WorkerHandle, float]]
     remaining_workers: dict[str, tuple[WorkerHandle, float]]
+    crashed_task_ids: frozenset[str] = frozenset()
 
 
 def collect(
@@ -65,6 +67,12 @@ def collect(
     reaped_results: dict[str, WorkerResult] = {}
     reaped_metadata: dict[str, tuple[WorkerHandle, float]] = {}
     remaining: dict[str, tuple[WorkerHandle, float]] = dict(workers)
+    crashed: set[str] = set()
+
+    # Identify workers whose poll status was FAILED (crashed)
+    failed_poll_ids = {
+        ws.task_id for ws in world.workers.values() if ws.status == WorkerPollStatus.FAILED
+    }
 
     for act in actions:
         if isinstance(act, ReapWorker):
@@ -75,9 +83,12 @@ def collect(
                 reaped_results[task_id] = result
                 reaped_metadata[task_id] = (handle, spawn_time)
                 del remaining[task_id]
+                if task_id in failed_poll_ids:
+                    crashed.add(task_id)
 
     return CollectResult(
         reaped=reaped_results,
         reaped_metadata=reaped_metadata,
         remaining_workers=remaining,
+        crashed_task_ids=frozenset(crashed),
     )

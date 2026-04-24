@@ -31,6 +31,7 @@ from tests.fakes.pr import FakePRManager
 from tests.fakes.probe import RecordingProbe
 from tests.fakes.runtime import InMemoryRuntime
 from tests.fakes.signal import FakeSignalPort
+from tests.fakes.spec_source import FakeSpecSource
 from tests.fakes.state import InMemoryStateStore
 from tests.fakes.step_executor import FakeStepExecutor
 
@@ -117,6 +118,7 @@ def _make_orchestrator(
     gc_retention_days: int = 30,
     gc_run_every_cycles: int = 10,
     pm_max_failures: int = 5,
+    spec_source: FakeSpecSource | None = None,
 ) -> Orchestrator:
     return Orchestrator(
         state=state,
@@ -129,6 +131,7 @@ def _make_orchestrator(
         signal_port=signal_port,
         channel=channel,
         pr=pr_manager,
+        spec_source=spec_source,
         composer=composer,
         poll_interval=poll_interval,
         probe=probe or RecordingProbe(),
@@ -819,6 +822,92 @@ class TestWorkerCrash:
         assert task.phase == Phase("implement")
         assert task.round == 1
 
+    def test_worker_crash_poll_failed_calls_channel(self) -> None:
+        """When poll returns FAILED, channel.worker_crashed() is called."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        channel = FakeChannelPort()
+        probe = RecordingProbe()
+
+        state.add_task(_task())
+
+        orch = _make_orchestrator(state, runtime, channel=channel, probe=probe)
+
+        # Cycle 1: spawn implementer
+        orch.run_cycle()
+
+        # Worker crashes -- poll returns FAILED (not DONE)
+        runtime.set_poll_status("task-001", WorkerPollStatus.FAILED)
+        runtime.set_result(
+            "task-001",
+            WorkerResult(verdict=Verdict.FAIL, detail="Agent future missing or failed"),
+        )
+
+        # Cycle 2: reap crash
+        orch.run_cycle()
+
+        # Channel should have been notified
+        assert len(channel.worker_crashed_calls) == 1
+        task_id, role, _branch = channel.worker_crashed_calls[0]
+        assert task_id == "task-001"
+        assert role == "implementer"
+
+    def test_worker_crash_poll_failed_emits_probe(self) -> None:
+        """When poll returns FAILED, probe.worker_crash_detected is emitted."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        state.add_task(_task())
+
+        orch = _make_orchestrator(state, runtime, probe=probe)
+
+        # Cycle 1: spawn implementer
+        orch.run_cycle()
+
+        # Worker crashes -- poll returns FAILED
+        runtime.set_poll_status("task-001", WorkerPollStatus.FAILED)
+        runtime.set_result(
+            "task-001",
+            WorkerResult(verdict=Verdict.FAIL, detail="Agent future missing or failed"),
+        )
+
+        # Cycle 2: reap crash
+        orch.run_cycle()
+
+        crash_calls = probe.of_method("worker_crash_detected")
+        assert len(crash_calls) == 1
+        assert crash_calls[0]["task_id"] == "task-001"
+        assert crash_calls[0]["role"] == "implementer"
+
+    def test_normal_failure_does_not_call_channel_crashed(self) -> None:
+        """When poll returns DONE with verdict FAIL, worker_crashed is NOT called."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        channel = FakeChannelPort()
+        probe = RecordingProbe()
+
+        state.add_task(_task())
+
+        orch = _make_orchestrator(state, runtime, channel=channel, probe=probe)
+
+        # Cycle 1: spawn implementer
+        orch.run_cycle()
+
+        # Worker completes normally with FAIL verdict (poll returns DONE)
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
+        runtime.set_result("task-001", FAIL_RESULT)
+
+        # Cycle 2: reap normal failure
+        orch.run_cycle()
+
+        # Channel should NOT have been notified about a crash
+        assert len(channel.worker_crashed_calls) == 0
+
+        # Probe should NOT have crash_detected
+        crash_calls = probe.of_method("worker_crash_detected")
+        assert len(crash_calls) == 0
+
 
 class TestDeadlockDetection:
     """Deadlock detection when failed deps block remaining work."""
@@ -1411,3 +1500,367 @@ class TestPhaseOrphanDetection:
         assert len(reset_calls) >= 1
         assert reset_calls[0]["task_id"] == "task-001"
         assert "process changed" in str(reset_calls[0]["reason"]).lower()
+
+
+# ---------------------------------------------------------------------------
+# Gap #1: Drift detection wired into reconciler
+# ---------------------------------------------------------------------------
+
+
+class TestCoverageGapTriggersIntake:
+    """Coverage gap detected by reconciler triggers PM intake."""
+
+    def test_coverage_gap_triggers_intake(self) -> None:
+        """When a spec has no tasks, drift is detected and intake runs."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        # Seed an existing task so the cycle doesn't exit early
+        state.add_task(_task(id="task-001"))
+        state.set_file("specs/task-001.md", "Existing spec")
+
+        # Add an uncovered spec -- no task references it
+        state.set_file("specs/uncovered.spec.md", "Uncovered spec content")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/uncovered.spec.md", "Uncovered spec content")
+        spec_source.add_spec("specs/task-001.md", "Existing spec")
+        spec_source.set_version("abc123")
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        orch.run_cycle()
+
+        # Coverage drift should have been detected
+        drift_calls = probe.of_method("drift_detected")
+        coverage_drifts = [c for c in drift_calls if c["drift_type"] == "coverage"]
+        assert len(coverage_drifts) >= 1
+        assert any("uncovered" in str(c["spec_path"]) for c in coverage_drifts)
+
+    def test_coverage_gap_causes_intake_to_run(self) -> None:
+        """When coverage gaps exist, intake runs even without prior failures."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(_task(id="task-001"))
+        state.set_file("specs/task-001.md", "Existing spec")
+        state.set_file("specs/uncovered.spec.md", "Uncovered spec")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/uncovered.spec.md", "Uncovered spec")
+        spec_source.add_spec("specs/task-001.md", "Existing spec")
+        spec_source.set_version("abc123")
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        orch.run_cycle()
+
+        intake_calls = probe.of_method("intake_ran")
+        assert len(intake_calls) >= 1
+
+
+class TestFreshnessDriftTriggersIntake:
+    """Freshness drift detected by reconciler triggers PM intake."""
+
+    def test_freshness_drift_triggers_intake(self) -> None:
+        """When a spec SHA changes, freshness drift is detected."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        # Task pinned to old SHA
+        state.add_task(
+            Task(
+                id="task-001",
+                title="Task task-001",
+                spec_ref="specs/auth.md@oldsha",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("implement"),
+                deps=(),
+                round=0,
+                branch="hyperloop/task-001",
+                pr=None,
+            )
+        )
+        state.set_file("specs/auth.md", "Auth spec content")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/auth.md", "Auth spec content")
+        spec_source.set_version("newsha")
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        orch.run_cycle()
+
+        drift_calls = probe.of_method("drift_detected")
+        freshness_drifts = [c for c in drift_calls if c["drift_type"] == "freshness"]
+        assert len(freshness_drifts) >= 1
+        assert any("auth" in str(c["spec_path"]) for c in freshness_drifts)
+
+
+# ---------------------------------------------------------------------------
+# Gap #2: Convergence tracking with auditor
+# ---------------------------------------------------------------------------
+
+
+class TestConvergenceTracking:
+    """All tasks completed for a spec triggers auditor, marks converged."""
+
+    def test_all_tasks_completed_triggers_auditor(self) -> None:
+        """When all tasks for a spec are completed, auditor runs."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(
+            Task(
+                id="task-001",
+                title="Task 001",
+                spec_ref="specs/auth.md@abc123",
+                status=TaskStatus.COMPLETED,
+                phase=None,
+                deps=(),
+                round=1,
+                branch="hyperloop/task-001",
+                pr=None,
+            )
+        )
+        state.set_file("specs/auth.md", "Auth spec content")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/auth.md", "Auth spec content")
+        spec_source.set_version("abc123")
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        # Auditor passes (run_serial returns True)
+        runtime.set_serial_default_success(True)
+
+        orch.run_cycle()
+
+        # Auditor should have been invoked via run_serial
+        auditor_runs = [r for r in runtime.serial_runs if r.role == "auditor"]
+        assert len(auditor_runs) >= 1
+
+        # Spec should be marked converged
+        convergence_calls = probe.of_method("convergence_marked")
+        assert len(convergence_calls) >= 1
+        assert convergence_calls[0]["spec_ref"] == "specs/auth.md@abc123"
+
+    def test_converged_spec_not_re_audited(self) -> None:
+        """A spec already marked converged should not be audited again."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(
+            Task(
+                id="task-001",
+                title="Task 001",
+                spec_ref="specs/auth.md@abc123",
+                status=TaskStatus.COMPLETED,
+                phase=None,
+                deps=(),
+                round=1,
+                branch="hyperloop/task-001",
+                pr=None,
+            )
+        )
+        state.set_file("specs/auth.md", "Auth spec content")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/auth.md", "Auth spec content")
+        spec_source.set_version("abc123")
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        runtime.set_serial_default_success(True)
+
+        # Pre-mark spec as converged
+        orch._converged_specs.add("specs/auth.md@abc123")
+
+        orch.run_cycle()
+
+        # No auditor should have run
+        auditor_runs = [r for r in runtime.serial_runs if r.role == "auditor"]
+        assert len(auditor_runs) == 0
+
+    def test_auditor_failure_does_not_mark_converged(self) -> None:
+        """When auditor finds misalignment, spec is NOT marked converged."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(
+            Task(
+                id="task-001",
+                title="Task 001",
+                spec_ref="specs/auth.md@abc123",
+                status=TaskStatus.COMPLETED,
+                phase=None,
+                deps=(),
+                round=1,
+                branch="hyperloop/task-001",
+                pr=None,
+            )
+        )
+        state.set_file("specs/auth.md", "Auth spec content")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/auth.md", "Auth spec content")
+        spec_source.set_version("abc123")
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        # Auditor fails (misaligned)
+        runtime.set_serial_default_success(False)
+
+        orch.run_cycle()
+
+        # Spec should NOT be converged
+        assert "specs/auth.md@abc123" not in orch._converged_specs
+
+        # Audit event should show misaligned
+        audit_calls = probe.of_method("audit_ran")
+        assert len(audit_calls) >= 1
+        assert audit_calls[0]["result"] == "misaligned"
+
+
+# ---------------------------------------------------------------------------
+# Gap #3: PM backoff implementation
+# ---------------------------------------------------------------------------
+
+
+class TestPMBackoffSkipsIntake:
+    """PM backoff: after failure, intake is skipped for N cycles."""
+
+    def test_pm_backoff_skips_intake_for_n_cycles(self) -> None:
+        """After PM failure, intake should be skipped during backoff period."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(_task(id="task-001"))
+        state.set_file("specs/task-001.md", "Existing spec")
+        state.set_file("specs/uncovered.spec.md", "Uncovered spec")
+        runtime.set_serial_default_success(False)
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/uncovered.spec.md", "Uncovered spec")
+        spec_source.add_spec("specs/task-001.md", "Existing spec")
+        spec_source.set_version("abc123")
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            composer=composer,
+            probe=probe,
+            pm_max_failures=10,
+            spec_source=spec_source,
+        )
+
+        # Cycle 1: PM fails, backoff activated
+        orch.run_cycle(cycle_num=1)
+        assert orch._pm_consecutive_failures >= 1
+
+        # Record how many serial runs happened up to now
+        serial_count_after_first = len(runtime.serial_runs)
+
+        # Cycle 2: Should skip intake due to backoff
+        orch.run_cycle(cycle_num=2)
+
+        # During backoff, PM (serial) should not be invoked
+        pm_intake_runs = [
+            r for r in runtime.serial_runs[serial_count_after_first:] if r.role == "pm"
+        ]
+        assert len(pm_intake_runs) == 0
+
+    def test_pm_backoff_exponential(self) -> None:
+        """PM backoff uses exponential backoff (2^failures)."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(_task(id="task-001"))
+        state.set_file("specs/task-001.md", "Existing spec")
+        state.set_file("specs/uncovered.spec.md", "Uncovered spec")
+        runtime.set_serial_default_success(False)
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/uncovered.spec.md", "Uncovered spec")
+        spec_source.add_spec("specs/task-001.md", "Existing spec")
+        spec_source.set_version("abc123")
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            composer=composer,
+            probe=probe,
+            pm_max_failures=10,
+            spec_source=spec_source,
+        )
+
+        # First failure: backoff = 2^1 = 2 cycles
+        orch.run_cycle(cycle_num=1)
+        assert orch._pm_skip_until >= 3  # current_cycle(1) + 2 = 3
+
+
+# ---------------------------------------------------------------------------
+# Gap #6: Failure details passed to PM
+# ---------------------------------------------------------------------------
+
+
+class TestPMReceivesFailureDetails:
+    """PM receives failure details (not just IDs) in prompt."""
+
+    def test_pm_receives_failure_details_in_prompt(self) -> None:
+        """When intake runs due to failures, PM prompt includes failure detail."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        # Create a failed task with review detail
+        state.add_task(_task(id="task-fail", status=TaskStatus.FAILED))
+        state.set_file("specs/task-fail.md", "Failing spec")
+        state.store_review("task-fail", 1, "verifier", "fail", "timeout handling missing")
+
+        # Need an uncovered spec to trigger intake, or rely on has_failures
+        state.set_file("specs/new.spec.md", "New spec")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/task-fail.md", "Failing spec")
+        spec_source.add_spec("specs/new.spec.md", "New spec")
+        spec_source.set_version("abc123")
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        # Set has_failures flag so intake triggers with failure context
+        orch._has_failures_since_intake = True
+
+        orch.run_cycle(cycle_num=1)
+
+        # PM should have been called
+        pm_runs = [r for r in runtime.serial_runs if r.role == "pm"]
+        assert len(pm_runs) >= 1
+
+        # The prompt should contain the actual failure detail, not just the task ID
+        pm_prompt = pm_runs[0].prompt
+        assert "timeout handling missing" in pm_prompt
