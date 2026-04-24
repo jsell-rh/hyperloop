@@ -7,7 +7,6 @@ they implement the StateStore protocol identically.
 from __future__ import annotations
 
 import subprocess
-from textwrap import dedent
 from typing import TYPE_CHECKING
 
 import pytest
@@ -45,34 +44,6 @@ def _init_git_repo(path: Path) -> None:
     )
 
 
-def _write_task_file(repo: Path, task_id: str, content: str) -> None:
-    """Write a task file into the repo's .hyperloop/state/tasks directory and commit it."""
-    tasks_dir = repo / ".hyperloop" / "state" / "tasks"
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    (tasks_dir / f"{task_id}.md").write_text(content)
-    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "commit", "--no-verify", "-m", f"add {task_id}"],
-        check=True,
-        capture_output=True,
-    )
-
-
-TASK_CONTENT = dedent("""\
-    ---
-    id: task-001
-    title: Implement widget
-    spec_ref: specs/widget.md
-    status: not-started
-    phase: null
-    deps: [task-004]
-    round: 0
-    branch: null
-    pr: null
-    ---
-    """)
-
-
 def _seed_task() -> Task:
     """Return the Task domain object matching TASK_CONTENT."""
     return Task(
@@ -96,8 +67,12 @@ def _make_memory_store(task: Task) -> InMemoryStateStore:
 
 def _make_git_store(tmp_path: Path) -> GitStateStore:
     _init_git_repo(tmp_path)
-    _write_task_file(tmp_path, "task-001", TASK_CONTENT)
-    return GitStateStore(repo_path=tmp_path)
+    store = GitStateStore(repo_path=tmp_path)
+    store.bootstrap()
+    task = _seed_task()
+    store.add_task(task)
+    store.persist("seed task-001")
+    return store
 
 
 @pytest.fixture(params=["memory", "git"])
@@ -119,7 +94,9 @@ def empty_state_store(
     if request.param == "memory":
         return InMemoryStateStore()
     _init_git_repo(tmp_path)
-    return GitStateStore(repo_path=tmp_path)
+    store = GitStateStore(repo_path=tmp_path)
+    store.bootstrap()
+    return store
 
 
 # ---------------------------------------------------------------------------
