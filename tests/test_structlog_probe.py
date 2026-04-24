@@ -66,7 +66,7 @@ class TestTaskFailed:
 
 
 class TestCycleStarted:
-    """cycle_started logs at debug level."""
+    """cycle_started logs at debug level and uses 'completed' kwarg."""
 
     def test_logs_at_debug(self) -> None:
         with structlog.testing.capture_logs() as logs:
@@ -76,7 +76,7 @@ class TestCycleStarted:
                 active_workers=3,
                 not_started=2,
                 in_progress=3,
-                complete=1,
+                completed=1,
                 failed=0,
             )
         assert len(logs) == 1
@@ -84,32 +84,125 @@ class TestCycleStarted:
         assert logs[0]["event"] == "cycle_started"
 
 
-class TestGateChecked:
-    """gate_checked log level depends on cleared flag."""
+class TestSignalChecked:
+    """signal_checked replaces gate_checked with new log level logic."""
 
-    def test_cleared_true_logs_at_info(self) -> None:
+    def test_non_pending_status_logs_at_info(self) -> None:
         with structlog.testing.capture_logs() as logs:
             probe = StructlogProbe()
-            probe.gate_checked(
+            probe.signal_checked(
                 task_id="task-001",
-                gate="pr-require-label",
-                cleared=True,
+                signal_name="ci-green",
+                status="pass",
+                message="all checks green",
                 cycle=5,
             )
         assert len(logs) == 1
         assert logs[0]["log_level"] == "info"
+        assert logs[0]["event"] == "signal_checked"
 
-    def test_cleared_false_logs_at_debug(self) -> None:
+    def test_pending_status_logs_at_debug(self) -> None:
         with structlog.testing.capture_logs() as logs:
             probe = StructlogProbe()
-            probe.gate_checked(
+            probe.signal_checked(
                 task_id="task-001",
-                gate="pr-require-label",
-                cleared=False,
+                signal_name="ci-green",
+                status="pending",
+                message="waiting",
                 cycle=5,
             )
         assert len(logs) == 1
         assert logs[0]["log_level"] == "debug"
+
+
+class TestTaskRetried:
+    """task_retried (renamed from task_looped_back) logs at warning."""
+
+    def test_logs_at_warning(self) -> None:
+        with structlog.testing.capture_logs() as logs:
+            probe = StructlogProbe()
+            probe.task_retried(
+                task_id="task-001",
+                spec_ref="specs/task-001.md",
+                round=2,
+                cycle=4,
+                findings_preview="test failures",
+            )
+        assert len(logs) == 1
+        assert logs[0]["log_level"] == "warning"
+        assert logs[0]["event"] == "task_retried"
+
+
+class TestNewObservabilityEvents:
+    """New probe methods log at correct levels."""
+
+    def test_drift_detected_logs_at_info(self) -> None:
+        with structlog.testing.capture_logs() as logs:
+            probe = StructlogProbe()
+            probe.drift_detected(spec_path="specs/a.md", drift_type="missing", detail="gone")
+        assert len(logs) == 1
+        assert logs[0]["log_level"] == "info"
+        assert logs[0]["event"] == "drift_detected"
+
+    def test_audit_ran_logs_at_info(self) -> None:
+        with structlog.testing.capture_logs() as logs:
+            probe = StructlogProbe()
+            probe.audit_ran(spec_ref="specs/a.md", result="pass", cycle=1, duration_s=1.5)
+        assert len(logs) == 1
+        assert logs[0]["log_level"] == "info"
+        assert logs[0]["event"] == "audit_ran"
+
+    def test_gc_ran_logs_at_info(self) -> None:
+        with structlog.testing.capture_logs() as logs:
+            probe = StructlogProbe()
+            probe.gc_ran(pruned_count=3, cycle=1)
+        assert len(logs) == 1
+        assert logs[0]["log_level"] == "info"
+        assert logs[0]["event"] == "gc_ran"
+
+    def test_convergence_marked_logs_at_info(self) -> None:
+        with structlog.testing.capture_logs() as logs:
+            probe = StructlogProbe()
+            probe.convergence_marked(spec_path="specs/a.md", spec_ref="ref-1", cycle=1)
+        assert len(logs) == 1
+        assert logs[0]["log_level"] == "info"
+        assert logs[0]["event"] == "convergence_marked"
+
+    def test_worker_crash_detected_logs_at_warning(self) -> None:
+        with structlog.testing.capture_logs() as logs:
+            probe = StructlogProbe()
+            probe.worker_crash_detected(task_id="t-1", role="impl", branch="hl/t-1")
+        assert len(logs) == 1
+        assert logs[0]["log_level"] == "warning"
+        assert logs[0]["event"] == "worker_crash_detected"
+
+    def test_step_executed_logs_at_debug(self) -> None:
+        with structlog.testing.capture_logs() as logs:
+            probe = StructlogProbe()
+            probe.step_executed(task_id="t-1", step_name="build", outcome="ok", detail="", cycle=1)
+        assert len(logs) == 1
+        assert logs[0]["log_level"] == "debug"
+        assert logs[0]["event"] == "step_executed"
+
+
+class TestDeprecatedMethods:
+    """Deprecated methods are kept as backward compat shims."""
+
+    def test_gate_checked_still_works(self) -> None:
+        with structlog.testing.capture_logs() as logs:
+            probe = StructlogProbe()
+            probe.gate_checked(task_id="t", gate="g", cleared=True, cycle=1)
+        assert len(logs) == 1
+        assert logs[0]["event"] == "gate_checked"
+
+    def test_task_looped_back_still_works(self) -> None:
+        with structlog.testing.capture_logs() as logs:
+            probe = StructlogProbe()
+            probe.task_looped_back(
+                task_id="t", spec_ref="s", round=1, cycle=1, findings_preview="x"
+            )
+        assert len(logs) == 1
+        assert logs[0]["event"] == "task_looped_back"
 
 
 class TestLogEntryContainsAllKwargs:
@@ -162,10 +255,16 @@ class TestDurationRounding:
                 active_workers=0,
                 not_started=0,
                 in_progress=0,
-                complete=1,
+                completed=1,
                 failed=0,
                 spawned_ids=(),
                 reaped_ids=(),
                 duration_s=9.8765,
             )
         assert logs[0]["duration_s"] == 9.9
+
+    def test_duration_rounded_in_audit_ran(self) -> None:
+        with structlog.testing.capture_logs() as logs:
+            probe = StructlogProbe()
+            probe.audit_ran(spec_ref="s", result="pass", cycle=1, duration_s=3.456)
+        assert logs[0]["duration_s"] == 3.5

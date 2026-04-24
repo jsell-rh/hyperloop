@@ -284,7 +284,7 @@ class OtelProbe:
     def task_advanced(self, **_kw: object) -> None:
         pass
 
-    def task_looped_back(
+    def task_retried(
         self,
         *,
         task_id: str,
@@ -293,11 +293,11 @@ class OtelProbe:
         try:
             if self._run_span is not None:
                 self._run_span.add_event(
-                    "task_looped_back",
+                    "task_retried",
                     attributes={"hyperloop.task_id": task_id},
                 )
         except Exception:
-            _log.exception("otel: task_looped_back failed")
+            _log.exception("otel: task_retried failed")
 
     def task_completed(
         self,
@@ -347,16 +347,74 @@ class OtelProbe:
             _log.exception("otel: task_reset failed")
 
     # ------------------------------------------------------------------
-    # Pipeline: gates, merges, conflicts
+    # Pipeline: signals, merges, steps
     # ------------------------------------------------------------------
 
-    def gate_checked(self, **_kw: object) -> None:
+    def signal_checked(self, **_kw: object) -> None:
         pass
 
     def merge_attempted(self, **_kw: object) -> None:
         pass
 
-    def rebase_conflict(self, **_kw: object) -> None:
+    def step_executed(self, **_kw: object) -> None:
+        pass
+
+    # ------------------------------------------------------------------
+    # Drift and convergence
+    # ------------------------------------------------------------------
+
+    def drift_detected(
+        self,
+        *,
+        spec_path: str,
+        drift_type: str,
+        detail: str,
+        **_kw: object,
+    ) -> None:
+        try:
+            if self._run_span is not None:
+                self._run_span.add_event(
+                    "drift_detected",
+                    attributes={
+                        "hyperloop.spec_path": spec_path,
+                        "hyperloop.drift_type": drift_type,
+                        "hyperloop.detail": detail,
+                    },
+                )
+        except Exception:
+            _log.exception("otel: drift_detected failed")
+
+    def convergence_marked(self, **_kw: object) -> None:
+        pass
+
+    # ------------------------------------------------------------------
+    # Audit and GC
+    # ------------------------------------------------------------------
+
+    def audit_ran(
+        self,
+        *,
+        spec_ref: str,
+        result: str,
+        cycle: int,
+        duration_s: float,
+        **_kw: object,
+    ) -> None:
+        try:
+            if self._run_span is not None:
+                self._run_span.add_event(
+                    "audit_ran",
+                    attributes={
+                        "hyperloop.spec_ref": spec_ref,
+                        "hyperloop.result": result,
+                        "hyperloop.cycle": cycle,
+                        "hyperloop.duration_s": duration_s,
+                    },
+                )
+        except Exception:
+            _log.exception("otel: audit_ran failed")
+
+    def gc_ran(self, **_kw: object) -> None:
         pass
 
     # ------------------------------------------------------------------
@@ -412,6 +470,32 @@ class OtelProbe:
         pass
 
     # ------------------------------------------------------------------
+    # Worker crash detection
+    # ------------------------------------------------------------------
+
+    def worker_crash_detected(
+        self,
+        *,
+        task_id: str,
+        role: str,
+        branch: str,
+        **_kw: object,
+    ) -> None:
+        try:
+            span = self._worker_spans.get(task_id)
+            if span is not None:
+                span.add_event(
+                    "worker_crash_detected",
+                    attributes={
+                        "hyperloop.task_id": task_id,
+                        "hyperloop.role": role,
+                        "hyperloop.branch": branch,
+                    },
+                )
+        except Exception:
+            _log.exception("otel: worker_crash_detected failed")
+
+    # ------------------------------------------------------------------
     # Prompt composition
     # ------------------------------------------------------------------
 
@@ -424,17 +508,37 @@ class OtelProbe:
     def pr_created(self, **_kw: object) -> None:
         pass
 
-    def pr_label_changed(self, **_kw: object) -> None:
-        pass
-
     def pr_marked_ready(self, **_kw: object) -> None:
-        pass
-
-    def branch_pushed(self, **_kw: object) -> None:
         pass
 
     def state_synced(self, **_kw: object) -> None:
         pass
 
+    # ------------------------------------------------------------------
+    # Backward-compatible aliases for call sites not yet migrated
+    # ------------------------------------------------------------------
+
+    def gate_checked(self, **_kw: object) -> None:
+        pass
+
+    def task_looped_back(self, *, task_id: str, **_kw: object) -> None:
+        try:
+            if self._run_span is not None:
+                self._run_span.add_event(
+                    "task_looped_back",
+                    attributes={"hyperloop.task_id": task_id},
+                )
+        except Exception:
+            _log.exception("otel: task_looped_back failed")
+
+    def rebase_conflict(self, **_kw: object) -> None:
+        pass
+
     def intake_specs_detected(self, **_kw: object) -> None:
+        pass
+
+    def pr_label_changed(self, **_kw: object) -> None:
+        pass
+
+    def branch_pushed(self, **_kw: object) -> None:
         pass

@@ -97,8 +97,8 @@ class FileProbe:
     def task_advanced(self, **kw: object) -> None:
         self._write("task_advanced", **kw)
 
-    def task_looped_back(self, **kw: object) -> None:
-        self._write("task_looped_back", **kw)
+    def task_retried(self, **kw: object) -> None:
+        self._write("task_retried", **kw)
 
     def task_completed(self, **kw: object) -> None:
         self._write("task_completed", **kw)
@@ -110,24 +110,41 @@ class FileProbe:
         self._write("task_reset", **kw)
 
     # ------------------------------------------------------------------
-    # Pipeline: gates, merges, conflicts
+    # Pipeline: signals, merges, steps
     # ------------------------------------------------------------------
 
-    def gate_checked(self, **kw: object) -> None:
-        self._write("gate_checked", **kw)
+    def signal_checked(self, **kw: object) -> None:
+        self._write("signal_checked", **kw)
 
     def merge_attempted(self, **kw: object) -> None:
         self._write("merge_attempted", **kw)
 
-    def rebase_conflict(self, **kw: object) -> None:
-        self._write("rebase_conflict", **kw)
+    def step_executed(self, **kw: object) -> None:
+        self._write("step_executed", **kw)
+
+    # ------------------------------------------------------------------
+    # Drift and convergence
+    # ------------------------------------------------------------------
+
+    def drift_detected(self, **kw: object) -> None:
+        self._write("drift_detected", **kw)
+
+    def convergence_marked(self, **kw: object) -> None:
+        self._write("convergence_marked", **kw)
+
+    # ------------------------------------------------------------------
+    # Audit and GC
+    # ------------------------------------------------------------------
+
+    def audit_ran(self, **kw: object) -> None:
+        self._write("audit_ran", **kw)
+
+    def gc_ran(self, **kw: object) -> None:
+        self._write("gc_ran", **kw)
 
     # ------------------------------------------------------------------
     # Serial agents
     # ------------------------------------------------------------------
-
-    def intake_specs_detected(self, **kw: object) -> None:
-        self._write("intake_specs_detected", **kw)
 
     def intake_ran(self, **kw: object) -> None:
         self._write("intake_ran", **kw)
@@ -144,6 +161,13 @@ class FileProbe:
 
     def orphan_found(self, **kw: object) -> None:
         self._write("orphan_found", **kw)
+
+    # ------------------------------------------------------------------
+    # Worker crash detection
+    # ------------------------------------------------------------------
+
+    def worker_crash_detected(self, **kw: object) -> None:
+        self._write("worker_crash_detected", **kw)
 
     # ------------------------------------------------------------------
     # Worker messages
@@ -169,14 +193,30 @@ class FileProbe:
     def pr_created(self, **kw: object) -> None:
         self._write("pr_created", **kw)
 
-    def pr_label_changed(self, **kw: object) -> None:
-        self._write("pr_label_changed", **kw)
-
     def pr_marked_ready(self, **kw: object) -> None:
         self._write("pr_marked_ready", **kw)
 
-    def branch_pushed(self, **kw: object) -> None:
-        self._write("branch_pushed", **kw)
-
     def state_synced(self, **kw: object) -> None:
         self._write("state_synced", **kw)
+
+    # ------------------------------------------------------------------
+    # Backward-compatible aliases for call sites not yet migrated
+    # ------------------------------------------------------------------
+
+    def gate_checked(self, **kw: object) -> None:
+        self._write("gate_checked", **kw)
+
+    def task_looped_back(self, **kw: object) -> None:
+        self._write("task_looped_back", **kw)
+
+    def rebase_conflict(self, **kw: object) -> None:
+        self._write("rebase_conflict", **kw)
+
+    def intake_specs_detected(self, **kw: object) -> None:
+        self._write("intake_specs_detected", **kw)
+
+    def pr_label_changed(self, **kw: object) -> None:
+        self._write("pr_label_changed", **kw)
+
+    def branch_pushed(self, **kw: object) -> None:
+        self._write("branch_pushed", **kw)

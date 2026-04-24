@@ -3,9 +3,9 @@
 One method per interesting moment. All methods use keyword-only arguments
 so call sites are self-documenting and adding new keyword args is non-breaking.
 
-Implementations: NullProbe, MultiProbe (adapters/probe.py),
-StructlogProbe (adapters/structlog_probe.py),
-MatrixProbe (adapters/matrix_probe.py),
+Implementations: NullProbe, MultiProbe (adapters/probe/base.py),
+StructlogProbe (adapters/probe/structlog.py),
+MatrixProbe (adapters/probe/matrix.py),
 RecordingProbe (tests/fakes/probe.py).
 """
 
@@ -146,7 +146,7 @@ class OrchestratorProbe(Protocol):
         cycle: int,
         findings_preview: str,
     ) -> None:
-        """Verification failed, task retrying from earlier phase."""
+        """Verification failed, task restarting the pipeline loop."""
         ...
 
     def task_completed(
@@ -186,7 +186,7 @@ class OrchestratorProbe(Protocol):
         ...
 
     # ------------------------------------------------------------------
-    # Pipeline: gates, merges, conflicts
+    # Pipeline: signals, merges, steps
     # ------------------------------------------------------------------
 
     def signal_checked(
@@ -198,7 +198,7 @@ class OrchestratorProbe(Protocol):
         message: str,
         cycle: int,
     ) -> None:
-        """A signal was checked for a task."""
+        """A signal was polled for a task."""
         ...
 
     def merge_attempted(
@@ -212,6 +212,66 @@ class OrchestratorProbe(Protocol):
         cycle: int,
     ) -> None:
         """PR merge was attempted (whether or not it succeeded)."""
+        ...
+
+    def step_executed(
+        self,
+        *,
+        task_id: str,
+        step_name: str,
+        outcome: str,
+        detail: str,
+        cycle: int,
+    ) -> None:
+        """A pipeline step was executed."""
+        ...
+
+    # ------------------------------------------------------------------
+    # Drift and convergence
+    # ------------------------------------------------------------------
+
+    def drift_detected(
+        self,
+        *,
+        spec_path: str,
+        drift_type: str,
+        detail: str,
+    ) -> None:
+        """Drift was detected between spec and reality."""
+        ...
+
+    def convergence_marked(
+        self,
+        *,
+        spec_path: str,
+        spec_ref: str,
+        cycle: int,
+    ) -> None:
+        """A spec was marked as converged."""
+        ...
+
+    # ------------------------------------------------------------------
+    # Audit and GC
+    # ------------------------------------------------------------------
+
+    def audit_ran(
+        self,
+        *,
+        spec_ref: str,
+        result: str,
+        cycle: int,
+        duration_s: float,
+    ) -> None:
+        """An audit check ran."""
+        ...
+
+    def gc_ran(
+        self,
+        *,
+        pruned_count: int,
+        cycle: int,
+    ) -> None:
+        """Garbage collection ran."""
         ...
 
     # ------------------------------------------------------------------
@@ -260,6 +320,20 @@ class OrchestratorProbe(Protocol):
         branch: str,
     ) -> None:
         """An orphaned worker was found and cancelled."""
+        ...
+
+    # ------------------------------------------------------------------
+    # Worker crash detection
+    # ------------------------------------------------------------------
+
+    def worker_crash_detected(
+        self,
+        *,
+        task_id: str,
+        role: str,
+        branch: str,
+    ) -> None:
+        """A worker crash was detected."""
         ...
 
     # ------------------------------------------------------------------
@@ -331,67 +405,68 @@ class OrchestratorProbe(Protocol):
         ...
 
     # ------------------------------------------------------------------
-    # Reconciler lifecycle
+    # Backward-compatible aliases (call sites not yet migrated)
     # ------------------------------------------------------------------
 
-    def drift_detected(
-        self,
-        *,
-        spec_path: str,
-        drift_type: str,
-        detail: str,
-    ) -> None:
-        """Drift was detected between spec and live state."""
-        ...
-
-    def audit_ran(
-        self,
-        *,
-        spec_ref: str,
-        result: str,
-        cycle: int,
-        duration_s: float,
-    ) -> None:
-        """Audit check completed for a spec."""
-        ...
-
-    def gc_ran(
-        self,
-        *,
-        pruned_count: int,
-        cycle: int,
-    ) -> None:
-        """Garbage collection pruned stale resources."""
-        ...
-
-    def convergence_marked(
-        self,
-        *,
-        spec_path: str,
-        spec_ref: str,
-        cycle: int,
-    ) -> None:
-        """A spec was marked as converged."""
-        ...
-
-    def worker_crash_detected(
+    def gate_checked(
         self,
         *,
         task_id: str,
-        role: str,
+        gate: str,
+        cleared: bool,
+        cycle: int,
+    ) -> None:
+        """Deprecated: use signal_checked instead."""
+        ...
+
+    def task_looped_back(
+        self,
+        *,
+        task_id: str,
+        spec_ref: str,
+        round: int,
+        cycle: int,
+        findings_preview: str,
+    ) -> None:
+        """Deprecated: use task_retried instead."""
+        ...
+
+    def rebase_conflict(
+        self,
+        *,
+        task_id: str,
+        branch: str,
+        attempt: int,
+        max_attempts: int,
+        looping_back: bool,
+        cycle: int,
+    ) -> None:
+        """Deprecated: will be removed."""
+        ...
+
+    def intake_specs_detected(
+        self,
+        *,
+        specs: tuple[str, ...],
+        cycle: int,
+    ) -> None:
+        """Deprecated: will be removed."""
+        ...
+
+    def pr_label_changed(
+        self,
+        *,
+        pr_url: str,
+        label: str,
+        added: bool,
+    ) -> None:
+        """Deprecated: will be removed."""
+        ...
+
+    def branch_pushed(
+        self,
+        *,
         branch: str,
     ) -> None:
-        """A crashed worker was detected."""
-        ...
-
-    def step_executed(
-        self,
-        *,
-        task_id: str,
-        step_name: str,
-        outcome: str,
-        detail: str,
-        cycle: int,
-    ) -> None:
-        """A phase step was executed."""
+        """Deprecated: will be removed."""
         ...

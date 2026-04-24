@@ -216,7 +216,7 @@ class TestCycleCreatesSpan:
             active_workers=3,
             not_started=2,
             in_progress=3,
-            complete=1,
+            completed=1,
             failed=0,
         )
         probe.cycle_completed(
@@ -224,7 +224,7 @@ class TestCycleCreatesSpan:
             active_workers=2,
             not_started=1,
             in_progress=2,
-            complete=2,
+            completed=2,
             failed=0,
             spawned_ids=("task-001",),
             reaped_ids=("task-002",),
@@ -325,7 +325,7 @@ class TestMetricsRecorded:
             active_workers=0,
             not_started=0,
             in_progress=0,
-            complete=0,
+            completed=0,
             failed=0,
         )
         probe.cycle_completed(
@@ -333,7 +333,7 @@ class TestMetricsRecorded:
             active_workers=0,
             not_started=0,
             in_progress=0,
-            complete=1,
+            completed=1,
             failed=0,
             spawned_ids=(),
             reaped_ids=(),
@@ -358,7 +358,6 @@ class TestProbeDoesNotRaise:
         """Reaping a task_id that was never spawned should not raise."""
         probe, _exporter, _reader = _make_probe()
 
-        # No exception expected
         probe.worker_reaped(
             task_id="nonexistent",
             role="verifier",
@@ -390,7 +389,7 @@ class TestProbeDoesNotRaise:
             active_workers=0,
             not_started=0,
             in_progress=0,
-            complete=0,
+            completed=0,
             failed=0,
             spawned_ids=(),
             reaped_ids=(),
@@ -409,16 +408,21 @@ class TestProbeDoesNotRaise:
         )
 
     def test_all_noop_methods_accept_kwargs(self) -> None:
-        """No-op methods (gate_checked, merge_attempted, etc.) accept kwargs."""
+        """No-op methods accept kwargs without raising."""
         probe, _exporter, _reader = _make_probe()
 
         probe.task_advanced(task_id="t", from_phase="a", to_phase="b")
-        probe.gate_checked(task_id="t", gate="g", cleared=True, cycle=1)
+        probe.signal_checked(task_id="t", signal_name="ci", status="pass", message="ok", cycle=1)
         probe.merge_attempted(task_id="t", branch="b", spec_ref="s", outcome="merged")
-        probe.rebase_conflict(task_id="t", branch="b", attempt=1, max_attempts=3)
         probe.recovery_started(in_progress_tasks=0)
         probe.orphan_found(task_id="t", branch="b")
         probe.prompt_composed(task_id="t", role="r", prompt_text="p", sections=(), round=1, cycle=1)
+        probe.drift_detected(spec_path="s", drift_type="missing", detail="gone")
+        probe.audit_ran(spec_ref="s", result="pass", cycle=1, duration_s=1.0)
+        probe.gc_ran(pruned_count=3, cycle=1)
+        probe.convergence_marked(spec_path="s", spec_ref="r", cycle=1)
+        probe.step_executed(task_id="t", step_name="build", outcome="ok", detail="", cycle=1)
+        probe.worker_crash_detected(task_id="t", role="impl", branch="b")
 
 
 class TestOrchestratorRunSpan:
@@ -460,7 +464,7 @@ class TestSerialAgentEvents:
             active_workers=0,
             not_started=5,
             in_progress=0,
-            complete=0,
+            completed=0,
             failed=0,
         )
         probe.intake_ran(
@@ -475,7 +479,7 @@ class TestSerialAgentEvents:
             active_workers=0,
             not_started=3,
             in_progress=2,
-            complete=0,
+            completed=0,
             failed=0,
             spawned_ids=("task-001", "task-002"),
             reaped_ids=(),
@@ -495,7 +499,7 @@ class TestSerialAgentEvents:
             active_workers=0,
             not_started=0,
             in_progress=0,
-            complete=3,
+            completed=3,
             failed=1,
         )
         probe.process_improver_ran(
@@ -509,7 +513,7 @@ class TestSerialAgentEvents:
             active_workers=0,
             not_started=0,
             in_progress=0,
-            complete=3,
+            completed=3,
             failed=1,
             spawned_ids=(),
             reaped_ids=(),
@@ -522,7 +526,7 @@ class TestSerialAgentEvents:
 
 
 class TestTaskLifecycleEvents:
-    """task_completed/failed/looped_back add events to run span."""
+    """task_completed/failed/retried add events to run span."""
 
     def test_task_completed_adds_event_to_run_span(self) -> None:
         probe, exporter, _reader = _make_probe()
@@ -568,6 +572,91 @@ class TestTaskLifecycleEvents:
         run_span = next(s for s in spans if s.name == "hyperloop.run")
         assert any(e.name == "task_failed" for e in run_span.events)
 
+    def test_task_retried_adds_event_to_run_span(self) -> None:
+        probe, exporter, _reader = _make_probe()
+
+        probe.orchestrator_started(task_count=1, max_workers=1, max_task_rounds=10)
+        probe.task_retried(
+            task_id="task-001",
+            spec_ref="specs/task-001.md",
+            round=2,
+            cycle=4,
+            findings_preview="test failures",
+        )
+        probe.orchestrator_halted(
+            reason="all tasks complete",
+            total_cycles=10,
+            completed_tasks=1,
+            failed_tasks=0,
+        )
+
+        spans = exporter.get_finished_spans()
+        run_span = next(s for s in spans if s.name == "hyperloop.run")
+        assert any(e.name == "task_retried" for e in run_span.events)
+
+
+class TestNewObservabilityEvents:
+    """New observability methods add events to the run span."""
+
+    def test_drift_detected_adds_event_to_run_span(self) -> None:
+        probe, exporter, _reader = _make_probe()
+
+        probe.orchestrator_started(task_count=1, max_workers=1, max_task_rounds=10)
+        probe.drift_detected(spec_path="specs/a.md", drift_type="missing", detail="gone")
+        probe.orchestrator_halted(reason="done", total_cycles=1, completed_tasks=1, failed_tasks=0)
+
+        spans = exporter.get_finished_spans()
+        run_span = next(s for s in spans if s.name == "hyperloop.run")
+        assert any(e.name == "drift_detected" for e in run_span.events)
+
+    def test_audit_ran_adds_event_to_run_span(self) -> None:
+        probe, exporter, _reader = _make_probe()
+
+        probe.orchestrator_started(task_count=1, max_workers=1, max_task_rounds=10)
+        probe.audit_ran(spec_ref="specs/a.md", result="pass", cycle=1, duration_s=1.0)
+        probe.orchestrator_halted(reason="done", total_cycles=1, completed_tasks=1, failed_tasks=0)
+
+        spans = exporter.get_finished_spans()
+        run_span = next(s for s in spans if s.name == "hyperloop.run")
+        assert any(e.name == "audit_ran" for e in run_span.events)
+
+    def test_worker_crash_detected_adds_event_to_worker_span(self) -> None:
+        probe, exporter, _reader = _make_probe()
+
+        probe.worker_spawned(
+            task_id="t-1",
+            role="impl",
+            branch="hl/t-1",
+            round=1,
+            cycle=1,
+            spec_ref="specs/t-1.md",
+        )
+        probe.worker_crash_detected(task_id="t-1", role="impl", branch="hl/t-1")
+        probe.worker_reaped(
+            task_id="t-1",
+            role="impl",
+            verdict="error",
+            round=1,
+            cycle=1,
+            spec_ref="specs/t-1.md",
+            detail="crash",
+            duration_s=5.0,
+        )
+
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 1
+        events = spans[0].events
+        assert any(e.name == "worker_crash_detected" for e in events)
+
+    def test_worker_crash_detected_without_active_span_does_not_raise(self) -> None:
+        """worker_crash_detected for unknown task_id must not raise."""
+        probe, _exporter, _reader = _make_probe()
+        probe.worker_crash_detected(task_id="unknown", role="impl", branch="hl/x")
+
+
+class TestDeprecatedMethods:
+    """Deprecated methods are kept as backward compat shims."""
+
     def test_task_looped_back_adds_event_to_run_span(self) -> None:
         probe, exporter, _reader = _make_probe()
 
@@ -589,3 +678,12 @@ class TestTaskLifecycleEvents:
         spans = exporter.get_finished_spans()
         run_span = next(s for s in spans if s.name == "hyperloop.run")
         assert any(e.name == "task_looped_back" for e in run_span.events)
+
+    def test_deprecated_noop_methods_accept_kwargs(self) -> None:
+        """Deprecated no-op methods accept kwargs without raising."""
+        probe, _exporter, _reader = _make_probe()
+        probe.gate_checked(task_id="t", gate="g", cleared=True, cycle=1)
+        probe.rebase_conflict(task_id="t", branch="b", attempt=1, max_attempts=3)
+        probe.intake_specs_detected(specs=("s",), cycle=1)
+        probe.pr_label_changed(pr_url="u", label="l", added=True)
+        probe.branch_pushed(branch="b")

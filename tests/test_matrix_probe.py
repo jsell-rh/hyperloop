@@ -127,6 +127,35 @@ class TestHighSignalCalls:
 
         assert len(requests) == 1
 
+    def test_worker_crash_detected_sends_request(self) -> None:
+        """worker_crash_detected is high-signal and always sent."""
+        requests: list[httpx.Request] = []
+        probe = _make_probe(requests)
+
+        probe.worker_crash_detected(task_id="t-1", role="impl", branch="hl/t-1")
+
+        assert len(requests) == 1
+        body = json.loads(requests[0].content)["body"]
+        assert "t-1" in body
+        assert "crash" in body.lower()
+
+    def test_task_retried_sends_request(self) -> None:
+        """task_retried (renamed from task_looped_back) is high-signal."""
+        requests: list[httpx.Request] = []
+        probe = _make_probe(requests)
+
+        probe.task_retried(
+            task_id="task-001",
+            spec_ref="specs/task-001.md",
+            round=2,
+            cycle=4,
+            findings_preview="test failures",
+        )
+
+        assert len(requests) == 1
+        body = json.loads(requests[0].content)["body"]
+        assert "task-001" in body
+
 
 class TestLowSignalCalls:
     """Low-signal probe calls send NO HTTP request."""
@@ -140,7 +169,7 @@ class TestLowSignalCalls:
             active_workers=0,
             not_started=5,
             in_progress=0,
-            complete=0,
+            completed=0,
             failed=0,
         )
 
@@ -160,6 +189,24 @@ class TestLowSignalCalls:
             round=0,
             cycle=1,
         )
+
+        assert len(requests) == 0
+
+    def test_step_executed_never_sent(self) -> None:
+        """step_executed is too noisy for Matrix, never sent."""
+        requests: list[httpx.Request] = []
+        probe = _make_probe(requests, verbose=True)
+
+        probe.step_executed(task_id="t-1", step_name="build", outcome="ok", detail="", cycle=1)
+
+        assert len(requests) == 0
+
+    def test_signal_checked_never_sent(self) -> None:
+        """signal_checked is too noisy for Matrix, never sent."""
+        requests: list[httpx.Request] = []
+        probe = _make_probe(requests, verbose=True)
+
+        probe.signal_checked(task_id="t-1", signal_name="ci", status="pass", message="ok", cycle=1)
 
         assert len(requests) == 0
 
@@ -206,7 +253,7 @@ class TestVerboseOnlyCalls:
             active_workers=0,
             not_started=0,
             in_progress=0,
-            complete=5,
+            completed=5,
             failed=0,
             spawned_ids=(),
             reaped_ids=(),
@@ -224,7 +271,7 @@ class TestVerboseOnlyCalls:
             active_workers=0,
             not_started=0,
             in_progress=0,
-            complete=5,
+            completed=5,
             failed=0,
             spawned_ids=(),
             reaped_ids=(),
@@ -232,6 +279,54 @@ class TestVerboseOnlyCalls:
         )
 
         assert len(requests) == 1
+
+    def test_drift_detected_verbose_only(self) -> None:
+        """drift_detected is verbose-only."""
+        requests_quiet: list[httpx.Request] = []
+        probe_quiet = _make_probe(requests_quiet, verbose=False)
+        probe_quiet.drift_detected(spec_path="s", drift_type="missing", detail="gone")
+        assert len(requests_quiet) == 0
+
+        requests_verbose: list[httpx.Request] = []
+        probe_verbose = _make_probe(requests_verbose, verbose=True)
+        probe_verbose.drift_detected(spec_path="s", drift_type="missing", detail="gone")
+        assert len(requests_verbose) == 1
+
+    def test_audit_ran_verbose_only(self) -> None:
+        """audit_ran is verbose-only."""
+        requests_quiet: list[httpx.Request] = []
+        probe_quiet = _make_probe(requests_quiet, verbose=False)
+        probe_quiet.audit_ran(spec_ref="s", result="pass", cycle=1, duration_s=1.0)
+        assert len(requests_quiet) == 0
+
+        requests_verbose: list[httpx.Request] = []
+        probe_verbose = _make_probe(requests_verbose, verbose=True)
+        probe_verbose.audit_ran(spec_ref="s", result="pass", cycle=1, duration_s=1.0)
+        assert len(requests_verbose) == 1
+
+    def test_gc_ran_verbose_only(self) -> None:
+        """gc_ran is verbose-only."""
+        requests_quiet: list[httpx.Request] = []
+        probe_quiet = _make_probe(requests_quiet, verbose=False)
+        probe_quiet.gc_ran(pruned_count=3, cycle=1)
+        assert len(requests_quiet) == 0
+
+        requests_verbose: list[httpx.Request] = []
+        probe_verbose = _make_probe(requests_verbose, verbose=True)
+        probe_verbose.gc_ran(pruned_count=3, cycle=1)
+        assert len(requests_verbose) == 1
+
+    def test_convergence_marked_verbose_only(self) -> None:
+        """convergence_marked is verbose-only."""
+        requests_quiet: list[httpx.Request] = []
+        probe_quiet = _make_probe(requests_quiet, verbose=False)
+        probe_quiet.convergence_marked(spec_path="s", spec_ref="r", cycle=1)
+        assert len(requests_quiet) == 0
+
+        requests_verbose: list[httpx.Request] = []
+        probe_verbose = _make_probe(requests_verbose, verbose=True)
+        probe_verbose.convergence_marked(spec_path="s", spec_ref="r", cycle=1)
+        assert len(requests_verbose) == 1
 
 
 class TestTaskThreading:
@@ -259,7 +354,6 @@ class TestTaskThreading:
         requests: list[httpx.Request] = []
         probe = _make_probe(requests)
 
-        # First call — sets the thread root
         probe.worker_reaped(
             task_id="task-001",
             role="implementer",
@@ -271,7 +365,6 @@ class TestTaskThreading:
             duration_s=10.0,
         )
 
-        # Second call — should include m.relates_to
         probe.task_completed(
             task_id="task-001",
             spec_ref="specs/task-001.md",
@@ -290,13 +383,11 @@ class TestErrorIsolation:
     """HTTP errors are swallowed — MatrixProbe never raises."""
 
     def test_http_error_swallowed(self) -> None:
-        # Re-configure structlog to avoid stale config from other test modules
         _configure_structlog_for_tests()
 
         requests: list[httpx.Request] = []
         probe = _make_probe(requests, error=True)
 
-        # Should not raise
         probe.worker_reaped(
             task_id="task-001",
             role="verifier",
@@ -308,35 +399,20 @@ class TestErrorIsolation:
             duration_s=5.0,
         )
 
-        # No request was captured (the transport raises before response)
         assert len(requests) == 0
 
 
-class TestGateCheckedFiltering:
-    """gate_checked with cleared=True sends, cleared=False does not."""
+class TestDeprecatedMethods:
+    """Deprecated methods are kept as backward compat shims."""
 
-    def test_cleared_true_sends(self) -> None:
+    def test_gate_checked_cleared_sends(self) -> None:
         requests: list[httpx.Request] = []
         probe = _make_probe(requests)
-
-        probe.gate_checked(
-            task_id="task-001",
-            gate="pr-require-label",
-            cleared=True,
-            cycle=5,
-        )
-
+        probe.gate_checked(task_id="t", gate="g", cleared=True, cycle=1)
         assert len(requests) == 1
 
-    def test_cleared_false_does_not_send(self) -> None:
+    def test_task_looped_back_sends(self) -> None:
         requests: list[httpx.Request] = []
         probe = _make_probe(requests)
-
-        probe.gate_checked(
-            task_id="task-001",
-            gate="pr-require-label",
-            cleared=False,
-            cycle=5,
-        )
-
-        assert len(requests) == 0
+        probe.task_looped_back(task_id="t", spec_ref="s", round=1, cycle=1, findings_preview="x")
+        assert len(requests) == 1
