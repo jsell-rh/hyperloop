@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.37.1 (2026-04-23)
+
+### Bug Fixes
+
+- Use correct gh pr checks fields (state, not conclusion)
+  ([`8b9ef2a`](https://github.com/jsell-rh/hyperloop/commit/8b9ef2a5d8b8a03604dc357d9b5b7fa19234f102))
+
+
 ## v0.37.0 (2026-04-23)
 
 
