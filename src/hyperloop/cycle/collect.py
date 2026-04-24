@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING
 
 from hyperloop.domain.decide import decide
 from hyperloop.domain.model import (
-    PipelinePosition,
     ReapWorker,
     WorkerHandle,
 )
@@ -30,12 +29,12 @@ class CollectResult:
     """Result of the COLLECT phase."""
 
     reaped: dict[str, WorkerResult]
-    reaped_metadata: dict[str, tuple[WorkerHandle, PipelinePosition, float]]
-    remaining_workers: dict[str, tuple[WorkerHandle, PipelinePosition, float]]
+    reaped_metadata: dict[str, tuple[WorkerHandle, float]]
+    remaining_workers: dict[str, tuple[WorkerHandle, float]]
 
 
 def collect(
-    workers: dict[str, tuple[WorkerHandle, PipelinePosition, float]],
+    workers: dict[str, tuple[WorkerHandle, float]],
     state: StateStore,
     runtime: Runtime,
     probe: OrchestratorProbe,
@@ -49,7 +48,7 @@ def collect(
     and reaped metadata as separate fields.
 
     Args:
-        workers: Current active workers: task_id -> (handle, position, spawn_time).
+        workers: Current active workers: task_id -> (handle, spawn_time).
         state: State store for building world snapshot.
         runtime: Runtime for polling and reaping workers.
         probe: Probe for observability events.
@@ -64,17 +63,17 @@ def collect(
     actions = decide(world, max_workers, max_task_rounds)
 
     reaped_results: dict[str, WorkerResult] = {}
-    reaped_metadata: dict[str, tuple[WorkerHandle, PipelinePosition, float]] = {}
-    remaining: dict[str, tuple[WorkerHandle, PipelinePosition, float]] = dict(workers)
+    reaped_metadata: dict[str, tuple[WorkerHandle, float]] = {}
+    remaining: dict[str, tuple[WorkerHandle, float]] = dict(workers)
 
     for act in actions:
         if isinstance(act, ReapWorker):
             task_id = act.task_id
             if task_id in remaining:
-                handle, pos, spawn_time = remaining[task_id]
+                handle, spawn_time = remaining[task_id]
                 result = runtime.reap(handle)
                 reaped_results[task_id] = result
-                reaped_metadata[task_id] = (handle, pos, spawn_time)
+                reaped_metadata[task_id] = (handle, spawn_time)
                 del remaining[task_id]
 
     return CollectResult(

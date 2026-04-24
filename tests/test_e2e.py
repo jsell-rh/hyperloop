@@ -12,8 +12,7 @@ from typing import TYPE_CHECKING
 
 from hyperloop.adapters.git.state import GitStateStore
 from hyperloop.domain.model import (
-    AgentStep,
-    LoopStep,
+    PhaseStep,
     Process,
     TaskStatus,
     Verdict,
@@ -35,14 +34,10 @@ FAIL_RESULT = WorkerResult(verdict=Verdict.FAIL, detail="Tests failed")
 
 DEFAULT_PROCESS = Process(
     name="default",
-    pipeline=(
-        LoopStep(
-            steps=(
-                AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                AgentStep(agent="verifier", on_pass=None, on_fail=None),
-            ),
-        ),
-    ),
+    phases={
+        "implement": PhaseStep(run="agent implementer", on_pass="verify", on_fail="implement"),
+        "verify": PhaseStep(run="agent verifier", on_pass="done", on_fail="implement"),
+    },
 )
 
 TASK_001_CONTENT = dedent("""\
@@ -103,7 +98,7 @@ def _commit_all(repo: Path, message: str) -> None:
 
 
 class TestSingleTaskCompletesE2E:
-    """Full loop: not-started -> implementer -> verifier -> complete,
+    """Full loop: not-started -> implementer -> verifier -> completed,
     with a real GitStateStore and fake runtime."""
 
     def test_single_task_completes(self, tmp_path: Path) -> None:
@@ -137,27 +132,27 @@ class TestSingleTaskCompletesE2E:
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS
         assert task.phase is not None
-        assert str(task.phase) == "implementer"
+        assert str(task.phase) == "implement"
 
         # Simulate implementer completing with pass
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", PASS_RESULT)
 
-        # Cycle 2: reap implementer, advance to verifier
+        # Cycle 2: reap implementer, advance to verify
         orch.run_cycle(cycle_num=2)
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS
         assert task.phase is not None
-        assert str(task.phase) == "verifier"
+        assert str(task.phase) == "verify"
 
         # Simulate verifier completing with pass
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", PASS_RESULT)
 
-        # Cycle 3: reap verifier, pipeline complete, task complete
+        # Cycle 3: reap verifier, on_pass="done" -> COMPLETED
         orch.run_cycle(cycle_num=3)
         task = state.get_task("task-001")
-        assert task.status == TaskStatus.COMPLETE
+        assert task.status == TaskStatus.COMPLETED
 
         # Verify probe events were recorded
         spawned = probe.of_method("worker_spawned")
@@ -196,16 +191,16 @@ class TestFailedVerificationRetriesE2E:
         # Cycle 1: spawn implementer
         orch.run_cycle(cycle_num=1)
         task = state.get_task("task-001")
-        assert str(task.phase) == "implementer"
+        assert str(task.phase) == "implement"
 
         # Implementer passes
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", PASS_RESULT)
 
-        # Cycle 2: reap implementer, advance to verifier
+        # Cycle 2: reap implementer, advance to verify
         orch.run_cycle(cycle_num=2)
         task = state.get_task("task-001")
-        assert str(task.phase) == "verifier"
+        assert str(task.phase) == "verify"
 
         # Verifier fails
         runtime.set_poll_status("task-001", "done")
@@ -216,10 +211,10 @@ class TestFailedVerificationRetriesE2E:
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS
         assert task.round == 1
-        assert str(task.phase) == "implementer"
+        assert str(task.phase) == "implement"
 
-        # Verify loop-back probe event
-        looped = probe.of_method("task_looped_back")
-        assert len(looped) == 1
-        assert looped[0]["task_id"] == "task-001"
-        assert looped[0]["round"] == 1
+        # Verify retry probe event
+        retried = probe.of_method("task_retried")
+        assert len(retried) == 1
+        assert retried[0]["task_id"] == "task-001"
+        assert retried[0]["round"] == 1

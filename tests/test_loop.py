@@ -1,34 +1,35 @@
-"""Tests for the orchestrator loop — wires decide, pipeline, state, and runtime.
+"""Tests for the orchestrator loop -- flat phase map, new ports.
 
-Uses InMemoryStateStore and InMemoryRuntime fakes. No mocks.
+Uses InMemoryStateStore, InMemoryRuntime, FakeStepExecutor, FakeSignalPort,
+FakeChannelPort, RecordingProbe fakes. No mocks.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from hyperloop.adapters.action.pr_merge import PRMergeAction
-from hyperloop.adapters.gate.label import LabelGate
 from hyperloop.compose import PromptComposer, load_templates_from_dir
 from hyperloop.domain.model import (
-    ActionStep,
-    AgentStep,
-    CheckStep,
-    GateStep,
-    LoopStep,
     Phase,
+    PhaseStep,
     Process,
+    Signal,
+    SignalStatus,
+    StepOutcome,
+    StepResult,
     Task,
     TaskStatus,
     Verdict,
     WorkerResult,
 )
 from hyperloop.loop import Orchestrator
-from hyperloop.ports.check import CheckPort, CheckResult
+from tests.fakes.channel import FakeChannelPort
 from tests.fakes.pr import FakePRManager
 from tests.fakes.probe import RecordingProbe
 from tests.fakes.runtime import InMemoryRuntime
+from tests.fakes.signal import FakeSignalPort
 from tests.fakes.state import InMemoryStateStore
+from tests.fakes.step_executor import FakeStepExecutor
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -39,14 +40,38 @@ FAIL_RESULT = WorkerResult(verdict=Verdict.FAIL, detail="Tests failed")
 
 DEFAULT_PROCESS = Process(
     name="default",
-    pipeline=(
-        LoopStep(
-            steps=(
-                AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                AgentStep(agent="verifier", on_pass=None, on_fail=None),
-            ),
+    phases={
+        "implement": PhaseStep(run="agent implementer", on_pass="verify", on_fail="implement"),
+        "verify": PhaseStep(run="agent verifier", on_pass="done", on_fail="implement"),
+    },
+)
+
+MERGE_PROCESS = Process(
+    name="merge-process",
+    phases={
+        "implement": PhaseStep(run="agent implementer", on_pass="verify", on_fail="implement"),
+        "verify": PhaseStep(run="agent verifier", on_pass="merge", on_fail="implement"),
+        "merge": PhaseStep(run="action merge", on_pass="done", on_fail="implement"),
+    },
+)
+
+SIGNAL_PROCESS = Process(
+    name="signal-process",
+    phases={
+        "implement": PhaseStep(run="agent implementer", on_pass="verify", on_fail="implement"),
+        "verify": PhaseStep(
+            run="agent verifier",
+            on_pass="await-review",
+            on_fail="implement",
         ),
-    ),
+        "await-review": PhaseStep(
+            run="signal human-approval",
+            on_pass="merge",
+            on_fail="implement",
+            on_wait="await-review",
+        ),
+        "merge": PhaseStep(run="action merge", on_pass="done", on_fail="implement"),
+    },
 )
 
 
@@ -57,6 +82,7 @@ def _task(
     round: int = 0,
     phase: Phase | None = None,
     branch: str | None = None,
+    pr: str | None = None,
 ) -> Task:
     return Task(
         id=id,
@@ -67,7 +93,7 @@ def _task(
         deps=deps,
         round=round,
         branch=branch,
-        pr=None,
+        pr=pr,
     )
 
 
@@ -77,15 +103,15 @@ def _make_orchestrator(
     process: Process = DEFAULT_PROCESS,
     max_workers: int = 6,
     max_task_rounds: int = 50,
+    step_executor: FakeStepExecutor | None = None,
+    signal_port: FakeSignalPort | None = None,
+    channel: FakeChannelPort | None = None,
     pr_manager: FakePRManager | None = None,
     composer: PromptComposer | None = None,
     poll_interval: float = 0,
     probe: RecordingProbe | None = None,
     max_action_attempts: int = 3,
-    check: CheckPort | None = None,
 ) -> Orchestrator:
-    gate = LabelGate(pr_manager) if pr_manager is not None else None
-    action = PRMergeAction(pr_manager) if pr_manager is not None else None
     return Orchestrator(
         state=state,
         runtime=runtime,
@@ -93,13 +119,13 @@ def _make_orchestrator(
         max_workers=max_workers,
         max_task_rounds=max_task_rounds,
         max_action_attempts=max_action_attempts,
-        gate=gate,
-        action=action,
-        check=check,
+        step_executor=step_executor,
+        signal_port=signal_port,
+        channel=channel,
         pr=pr_manager,
         composer=composer,
         poll_interval=poll_interval,
-        probe=probe,
+        probe=probe or RecordingProbe(),
     )
 
 
@@ -109,8 +135,7 @@ def _make_orchestrator(
 
 
 class TestSingleTaskEndToEnd:
-    """Task starts not-started, worker spawns, worker completes (pass),
-    task transitions to complete."""
+    """Task starts not-started, worker spawns, completes through phases."""
 
     def test_single_task_completes_through_full_pipeline(self) -> None:
         state = InMemoryStateStore()
@@ -119,33 +144,32 @@ class TestSingleTaskEndToEnd:
 
         orch = _make_orchestrator(state, runtime)
 
-        # Cycle 1: decide spawns implementer
+        # Cycle 1: spawn implementer
         orch.run_cycle()
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS
-        assert task.phase == Phase("implementer")
+        assert task.phase == Phase("implement")
 
         # Simulate implementer completing with pass
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", PASS_RESULT)
 
-        # Cycle 2: reap implementer, advance to verifier, spawn verifier
+        # Cycle 2: reap implementer, advance to verify, spawn verifier
         orch.run_cycle()
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS
-        assert task.phase == Phase("verifier")
+        assert task.phase == Phase("verify")
 
         # Simulate verifier completing with pass
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", PASS_RESULT)
 
-        # Cycle 3: reap verifier, pipeline complete, task complete
+        # Cycle 3: reap verifier, on_pass="done" -> COMPLETED
         orch.run_cycle()
         task = state.get_task("task-001")
-        assert task.status == TaskStatus.COMPLETE
+        assert task.status == TaskStatus.COMPLETED
 
     def test_state_store_transitions_are_committed(self) -> None:
-        """Verify that state changes are committed after each cycle."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task())
@@ -157,8 +181,7 @@ class TestSingleTaskEndToEnd:
 
 
 class TestFailedVerificationLoopsBack:
-    """Worker fails verification, task goes back through the loop
-    (round increments), worker re-spawns."""
+    """Worker fails verification, task loops back, round increments."""
 
     def test_fail_increments_round_and_restarts(self) -> None:
         state = InMemoryStateStore()
@@ -169,29 +192,28 @@ class TestFailedVerificationLoopsBack:
 
         # Cycle 1: spawn implementer
         orch.run_cycle()
-        assert state.get_task("task-001").phase == Phase("implementer")
+        assert state.get_task("task-001").phase == Phase("implement")
 
         # Implementer passes
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", PASS_RESULT)
 
-        # Cycle 2: reap implementer, advance to verifier
+        # Cycle 2: reap implementer, advance to verify
         orch.run_cycle()
-        assert state.get_task("task-001").phase == Phase("verifier")
+        assert state.get_task("task-001").phase == Phase("verify")
 
         # Verifier fails
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", FAIL_RESULT)
 
-        # Cycle 3: reap verifier, loop restarts, round increments
+        # Cycle 3: reap verifier, on_fail="implement", round increments
         orch.run_cycle()
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS
         assert task.round == 1
-        assert task.phase == Phase("implementer")  # Restarted from top of loop
+        assert task.phase == Phase("implement")
 
     def test_findings_are_stored_on_failure(self) -> None:
-        """When a worker fails, its findings detail is stored."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task())
@@ -205,7 +227,7 @@ class TestFailedVerificationLoopsBack:
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", PASS_RESULT)
 
-        # Cycle 2: advance to verifier
+        # Cycle 2: advance to verify
         orch.run_cycle()
 
         # Verifier fails
@@ -219,20 +241,25 @@ class TestFailedVerificationLoopsBack:
 
 
 class TestMaxRoundsHalts:
-    """Task hits max_task_rounds, status -> failed, loop halts."""
+    """Task hits max_task_rounds -> failed, loop halts."""
 
     def test_max_task_rounds_transitions_to_failed(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        # Task already at round max_task_rounds - 1, one more fail will exceed
-        state.add_task(_task(status=TaskStatus.IN_PROGRESS, round=2, phase=Phase("implementer")))
+        state.add_task(
+            _task(
+                status=TaskStatus.IN_PROGRESS,
+                round=2,
+                phase=Phase("implement"),
+            )
+        )
 
         orch = _make_orchestrator(state, runtime, max_task_rounds=3)
 
-        # Cycle 1: should spawn implementer (round 2, max is 3)
+        # Cycle 1: spawn implementer (round 2, max is 3)
         orch.run_cycle()
 
-        # Implementer passes, advance to verifier
+        # Implementer passes, advance to verify
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
@@ -246,7 +273,6 @@ class TestMaxRoundsHalts:
         assert task.status == TaskStatus.FAILED
 
     def test_run_loop_halts_on_max_task_rounds(self) -> None:
-        """run_loop returns a halt reason when max_task_rounds is hit via step-by-step."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task(round=2))
@@ -256,7 +282,7 @@ class TestMaxRoundsHalts:
         # Cycle 1: spawn implementer
         orch.run_cycle()
 
-        # Implementer passes -> verifier
+        # Implementer passes -> verify
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
@@ -271,7 +297,7 @@ class TestMaxRoundsHalts:
 
 
 class TestMultipleTasksInParallel:
-    """Two independent tasks both spawn (up to max_workers), both complete."""
+    """Two independent tasks spawn, both complete."""
 
     def test_two_tasks_spawn_in_parallel(self) -> None:
         state = InMemoryStateStore()
@@ -303,10 +329,10 @@ class TestMultipleTasksInParallel:
         runtime.set_poll_status("task-002", "done")
         runtime.set_result("task-002", PASS_RESULT)
 
-        # Cycle 2: reap both, advance to verifiers
+        # Cycle 2: reap both, advance to verify
         orch.run_cycle()
-        assert state.get_task("task-001").phase == Phase("verifier")
-        assert state.get_task("task-002").phase == Phase("verifier")
+        assert state.get_task("task-001").phase == Phase("verify")
+        assert state.get_task("task-002").phase == Phase("verify")
 
         # Both verifiers pass
         runtime.set_poll_status("task-001", "done")
@@ -316,8 +342,8 @@ class TestMultipleTasksInParallel:
 
         # Cycle 3: reap verifiers, both complete
         orch.run_cycle()
-        assert state.get_task("task-001").status == TaskStatus.COMPLETE
-        assert state.get_task("task-002").status == TaskStatus.COMPLETE
+        assert state.get_task("task-001").status == TaskStatus.COMPLETED
+        assert state.get_task("task-002").status == TaskStatus.COMPLETED
 
     def test_max_workers_limits_parallel_spawns(self) -> None:
         state = InMemoryStateStore()
@@ -339,7 +365,7 @@ class TestMultipleTasksInParallel:
 
 
 class TestDependencyOrdering:
-    """task-002 depends on task-001. task-001 completes first, then task-002 spawns."""
+    """task-002 depends on task-001. task-001 completes first."""
 
     def test_dependent_task_waits_for_dependency(self) -> None:
         state = InMemoryStateStore()
@@ -349,7 +375,7 @@ class TestDependencyOrdering:
 
         orch = _make_orchestrator(state, runtime)
 
-        # Cycle 1: only task-001 spawns (task-002 dep not met)
+        # Cycle 1: only task-001 spawns
         orch.run_cycle()
         assert state.get_task("task-001").status == TaskStatus.IN_PROGRESS
         assert state.get_task("task-002").status == TaskStatus.NOT_STARTED
@@ -369,11 +395,9 @@ class TestDependencyOrdering:
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", PASS_RESULT)
 
-        # Cycle 2: reap task-001 impl, advance to verifier
-        # task-002 still not eligible (dep not complete)
+        # Cycle 2: advance to verify, task-002 still not eligible
         orch.run_cycle()
-        assert state.get_task("task-001").phase == Phase("verifier")
-        # task-002 still waiting because task-001 is not complete yet
+        assert state.get_task("task-001").phase == Phase("verify")
         assert state.get_task("task-002").status == TaskStatus.NOT_STARTED
 
         # task-001 verifier passes
@@ -382,12 +406,12 @@ class TestDependencyOrdering:
 
         # Cycle 3: task-001 complete, task-002 now eligible
         orch.run_cycle()
-        assert state.get_task("task-001").status == TaskStatus.COMPLETE
+        assert state.get_task("task-001").status == TaskStatus.COMPLETED
         assert state.get_task("task-002").status == TaskStatus.IN_PROGRESS
 
 
 class TestConvergence:
-    """All tasks complete, loop halts with reason."""
+    """All tasks complete, loop halts."""
 
     def test_run_loop_halts_when_all_complete(self) -> None:
         state = InMemoryStateStore()
@@ -396,30 +420,26 @@ class TestConvergence:
 
         orch = _make_orchestrator(state, runtime)
 
-        # Set up runtime: pass for everything
         runtime.set_result("task-001", PASS_RESULT)
         runtime.set_poll_status("task-001", "done")
 
         reason = orch.run_loop(max_cycles=20)
         assert "all tasks complete" in reason.lower()
-        assert state.get_task("task-001").status == TaskStatus.COMPLETE
+        assert state.get_task("task-001").status == TaskStatus.COMPLETED
 
     def test_run_loop_returns_safety_limit_reason(self) -> None:
-        """If max_cycles is exhausted, run_loop returns a safety reason."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task(id="task-001"))
 
         orch = _make_orchestrator(state, runtime)
-        # Workers never finish (default poll is "running"), so the loop never converges
         reason = orch.run_loop(max_cycles=3)
         assert "max_cycles" in reason.lower()
 
     def test_empty_process_halts_immediately(self) -> None:
-        """If all tasks are already complete, the loop halts immediately."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.add_task(_task(id="task-001", status=TaskStatus.COMPLETE))
+        state.add_task(_task(id="task-001", status=TaskStatus.COMPLETED))
 
         orch = _make_orchestrator(state, runtime)
         reason = orch.run_loop(max_cycles=10)
@@ -427,7 +447,7 @@ class TestConvergence:
 
 
 class TestRunCycleStepByStep:
-    """Verify that run_cycle returns whether the loop should continue."""
+    """run_cycle returns halt/None correctly."""
 
     def test_run_cycle_returns_none_when_not_halted(self) -> None:
         state = InMemoryStateStore()
@@ -436,12 +456,12 @@ class TestRunCycleStepByStep:
 
         orch = _make_orchestrator(state, runtime)
         result = orch.run_cycle()
-        assert result is None  # Not halted yet
+        assert result is None
 
     def test_run_cycle_returns_reason_when_halted(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.add_task(_task(status=TaskStatus.COMPLETE))
+        state.add_task(_task(status=TaskStatus.COMPLETED))
 
         orch = _make_orchestrator(state, runtime)
         result = orch.run_cycle()
@@ -450,34 +470,29 @@ class TestRunCycleStepByStep:
 
 
 class TestRecovery:
-    """Crash recovery: orphaned workers are cancelled, in-progress tasks are re-spawned."""
+    """Crash recovery: orphaned workers cancelled, in-progress tasks re-spawned."""
 
     def test_recover_cancels_orphaned_worker(self) -> None:
-        """An orphaned worker found by the runtime should be cancelled during recovery."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
 
-        # Simulate a task that was in progress when the orchestrator crashed
         state.add_task(
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
-                phase=Phase("implementer"),
+                phase=Phase("implement"),
                 branch="hyperloop/task-001",
             )
         )
 
-        # Simulate an orphaned worker left in the runtime
         runtime.spawn("task-001", "implementer", "", "hyperloop/task-001")
 
         orch = _make_orchestrator(state, runtime)
         orch.recover()
 
-        # The orphan should have been cancelled
         assert "task-001" in runtime.cancelled
 
     def test_recover_respawns_in_progress_task_next_cycle(self) -> None:
-        """After recovery, the next cycle should spawn a worker for the in-progress task."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
 
@@ -485,7 +500,7 @@ class TestRecovery:
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
-                phase=Phase("implementer"),
+                phase=Phase("implement"),
                 branch="hyperloop/task-001",
             )
         )
@@ -493,34 +508,29 @@ class TestRecovery:
         orch = _make_orchestrator(state, runtime)
         orch.recover()
 
-        # Next cycle should spawn a worker for this task
         orch.run_cycle()
 
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS
-        # Should have spawned a fresh worker
         handle = runtime.handles.get("task-001")
         assert handle is not None
 
     def test_recover_ignores_non_in_progress_tasks(self) -> None:
-        """Recovery should only process IN_PROGRESS tasks."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
 
         state.add_task(_task(id="task-001", status=TaskStatus.NOT_STARTED))
-        state.add_task(_task(id="task-002", status=TaskStatus.COMPLETE))
+        state.add_task(_task(id="task-002", status=TaskStatus.COMPLETED))
         state.add_task(_task(id="task-003", status=TaskStatus.FAILED))
 
         orch = _make_orchestrator(state, runtime)
         orch.recover()
 
-        # No orphan checks for these tasks
         assert "task-001" not in runtime.cancelled
         assert "task-002" not in runtime.cancelled
         assert "task-003" not in runtime.cancelled
 
     def test_recover_handles_no_orphan(self) -> None:
-        """When runtime finds no orphan, recovery proceeds without cancellation."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
 
@@ -528,498 +538,300 @@ class TestRecovery:
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
-                phase=Phase("implementer"),
+                phase=Phase("implement"),
                 branch="hyperloop/task-001",
             )
         )
 
-        # No orphan in runtime — the worker process already exited
         orch = _make_orchestrator(state, runtime)
         orch.recover()
 
-        # No cancellation should have happened
         assert "task-001" not in runtime.cancelled
 
-        # But the task should still be re-spawned on next cycle
         orch.run_cycle()
         handle = runtime.handles.get("task-001")
         assert handle is not None
 
 
-class TestGateStub:
-    """Gate polling without PRManager is a no-op."""
+class TestActionStep:
+    """Action steps execute via StepExecutor and transition based on outcome."""
 
-    def test_gate_stub_does_not_crash(self) -> None:
-        """Running a cycle without a PRManager should not raise."""
+    def test_action_advance_completes_task(self) -> None:
+        """Action ADVANCE at terminal phase completes the task."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
+        step_exec = FakeStepExecutor()
+        step_exec.set_default(StepResult(outcome=StepOutcome.ADVANCE, detail="merged"))
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge"),
+                branch="hyperloop/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            process=MERGE_PROCESS,
+            step_executor=step_exec,
+        )
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.COMPLETED
+
+    def test_action_retry_loops_back(self) -> None:
+        """Action RETRY transitions to on_fail phase."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        step_exec = FakeStepExecutor()
+        step_exec.set_default(StepResult(outcome=StepOutcome.RETRY, detail="merge conflict"))
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge"),
+                branch="hyperloop/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            process=MERGE_PROCESS,
+            step_executor=step_exec,
+        )
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.phase == Phase("implement")
+        assert task.round == 1
+
+    def test_action_wait_stays_at_phase(self) -> None:
+        """Action WAIT keeps the task at current phase."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        step_exec = FakeStepExecutor()
+        step_exec.set_default(StepResult(outcome=StepOutcome.WAIT, detail="CI pending"))
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge"),
+                branch="hyperloop/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            process=MERGE_PROCESS,
+            step_executor=step_exec,
+        )
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.IN_PROGRESS
+        assert task.phase == Phase("merge")
+
+    def test_action_advance_stores_pr_url(self) -> None:
+        """When StepResult includes pr_url, it is stored on the task."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        step_exec = FakeStepExecutor()
+        step_exec.set_default(
+            StepResult(
+                outcome=StepOutcome.ADVANCE,
+                detail="merged",
+                pr_url="https://github.com/org/repo/pull/99",
+            )
+        )
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("merge"),
+                branch="hyperloop/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            process=MERGE_PROCESS,
+            step_executor=step_exec,
+        )
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.pr == "https://github.com/org/repo/pull/99"
+
+
+class TestSignalStep:
+    """Signal steps poll SignalPort and transition accordingly."""
+
+    def test_signal_approved_advances(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        signal = FakeSignalPort()
+        signal.set_signal(
+            "task-001",
+            "human-approval",
+            Signal(status=SignalStatus.APPROVED, message="lgtm"),
+        )
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("await-review"),
+                branch="hyperloop/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime, process=SIGNAL_PROCESS, signal_port=signal)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.phase == Phase("merge")
+
+    def test_signal_rejected_retries(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        signal = FakeSignalPort()
+        signal.set_signal(
+            "task-001",
+            "human-approval",
+            Signal(status=SignalStatus.REJECTED, message="needs timeout"),
+        )
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("await-review"),
+                branch="hyperloop/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime, process=SIGNAL_PROCESS, signal_port=signal)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.phase == Phase("implement")
+        assert task.round == 1
+
+    def test_signal_pending_waits(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        signal = FakeSignalPort()
+        # Default is PENDING
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("await-review"),
+                branch="hyperloop/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime, process=SIGNAL_PROCESS, signal_port=signal)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.phase == Phase("await-review")
+        assert task.round == 0
+
+    def test_signal_rejected_stores_finding(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        signal = FakeSignalPort()
+        signal.set_signal(
+            "task-001",
+            "human-approval",
+            Signal(status=SignalStatus.REJECTED, message="add timeout handling"),
+        )
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("await-review"),
+                branch="hyperloop/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime, process=SIGNAL_PROCESS, signal_port=signal)
+        orch.run_cycle()
+
+        findings = state.get_findings("task-001")
+        assert "add timeout handling" in findings
+
+
+class TestWorkerCrash:
+    """Worker crash defaults to FAIL + channel notification."""
+
+    def test_worker_crash_defaults_to_fail(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        channel = FakeChannelPort()
+        probe = RecordingProbe()
+
         state.add_task(_task())
 
-        orch = _make_orchestrator(state, runtime)
-        # This should succeed without errors — the stub just logs
-        result = orch.run_cycle()
-        assert result is None
+        orch = _make_orchestrator(state, runtime, channel=channel, probe=probe)
+
+        # Cycle 1: spawn implementer
+        orch.run_cycle()
+
+        # Worker crashes (no verdict)
+        runtime.set_poll_status("task-001", "done")
+        runtime.set_result(
+            "task-001",
+            WorkerResult(
+                verdict=Verdict.FAIL,
+                detail="worker completed without writing verdict",
+            ),
+        )
+
+        # Cycle 2: reap crash
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        # Should retry (on_fail = implement)
+        assert task.phase == Phase("implement")
+        assert task.round == 1
 
 
-class TestDecideIntegration:
-    """The loop uses decide() for eligibility, not ad-hoc logic."""
+class TestDeadlockDetection:
+    """Deadlock detection when failed deps block remaining work."""
 
-    def test_decide_controls_spawning(self) -> None:
-        """Spawning decisions flow through decide(), not internal _find_eligible_tasks."""
+    def test_deadlock_halts(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.add_task(_task(id="task-001"))
+
+        state.add_task(_task(id="task-001", status=TaskStatus.FAILED))
         state.add_task(_task(id="task-002", deps=("task-001",)))
 
         orch = _make_orchestrator(state, runtime)
+        reason = orch.run_cycle()
 
-        # Verify the orchestrator no longer has _find_eligible_tasks
-        assert not hasattr(orch, "_find_eligible_tasks")
-        assert not hasattr(orch, "_deps_met")
-
-        # Cycle 1: only task-001 should spawn (task-002 dep unmet per decide())
-        orch.run_cycle()
-        assert state.get_task("task-001").status == TaskStatus.IN_PROGRESS
-        assert state.get_task("task-002").status == TaskStatus.NOT_STARTED
-
-
-class TestGatePolling:
-    """Gate polling with PRManager: tasks at a gate advance when lgtm label is present."""
-
-    GATE_PROCESS = Process(
-        name="gate-process",
-        pipeline=(
-            LoopStep(
-                steps=(
-                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
-                ),
-            ),
-            GateStep(gate="pr-require-label"),
-            ActionStep(action="merge-pr"),
-        ),
-    )
-
-    def test_gate_cleared_advances_task(self) -> None:
-        """When lgtm label is found, the gate clears and task advances past it."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        # Create a PR for the task
-        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-
-        # Task is at the gate step
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("pr-require-label"),
-                branch="hyperloop/task-001",
-            )
-        )
-        # Store the PR URL on the task
-        state.set_task_pr("task-001", pr_url)
-
-        # Human adds lgtm label
-        pr_mgr.add_label(pr_url, "lgtm")
-
-        orch = _make_orchestrator(state, runtime, process=self.GATE_PROCESS, pr_manager=pr_mgr)
-        orch.run_cycle()
-
-        # Gate should have cleared, task should advance past the gate
-        task = state.get_task("task-001")
-        assert task.phase != Phase("pr-require-label")
-
-    def test_gate_not_cleared_task_stays(self) -> None:
-        """When no lgtm label, the task stays at the gate."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("pr-require-label"),
-                branch="hyperloop/task-001",
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(state, runtime, process=self.GATE_PROCESS, pr_manager=pr_mgr)
-        orch.run_cycle()
-
-        task = state.get_task("task-001")
-        assert task.phase == Phase("pr-require-label")
-
-    def test_no_pr_manager_gates_are_noop(self) -> None:
-        """Without a PRManager, gate polling is a no-op (backward compat)."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("pr-require-label"),
-                branch="hyperloop/task-001",
-            )
-        )
-
-        orch = _make_orchestrator(state, runtime, process=self.GATE_PROCESS, pr_manager=None)
-        # Should not crash
-        orch.run_cycle()
-        task = state.get_task("task-001")
-        assert task.phase == Phase("pr-require-label")
-
-
-class TestMergeWithPRManager:
-    """Merge step with PRManager: rebase, then squash-merge."""
-
-    MERGE_PROCESS = Process(
-        name="merge-process",
-        pipeline=(
-            LoopStep(
-                steps=(
-                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
-                ),
-            ),
-            ActionStep(action="merge-pr"),
-        ),
-    )
-
-    def test_merge_succeeds_marks_task_complete(self) -> None:
-        """When rebase is clean and merge succeeds, task becomes COMPLETE."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
-                branch="hyperloop/task-001",
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
-        orch.run_cycle()
-
-        task = state.get_task("task-001")
-        assert task.status == TaskStatus.COMPLETE
-
-    def test_not_mergeable_stays_in_progress(self) -> None:
-        """When PR is not mergeable (conflicts), task stays IN_PROGRESS at merge-pr."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        pr_mgr.set_merge_fails(pr_url)
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
-                branch="hyperloop/task-001",
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
-        orch.run_cycle()
-
-        task = state.get_task("task-001")
-        assert task.status == TaskStatus.IN_PROGRESS
-        assert task.phase == Phase("merge-pr")
-
-    def test_merge_conflict_stays_in_progress(self) -> None:
-        """When merge fails, task stays IN_PROGRESS at merge-pr."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        pr_mgr.set_merge_fails(pr_url)
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
-                branch="hyperloop/task-001",
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
-        orch.run_cycle()
-
-        task = state.get_task("task-001")
-        assert task.status == TaskStatus.IN_PROGRESS
-        assert task.phase == Phase("merge-pr")
-
-    def test_no_pr_manager_merge_does_not_crash(self) -> None:
-        """Without a PRManager, local merge is attempted — should not crash."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
-                branch="hyperloop/task-001",
-            )
-        )
-
-        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=None)
-        # Should not crash — _merge_local handles both success and failure
-        orch.run_cycle()
-        task = state.get_task("task-001")
-        # Result depends on whether branch exists locally: COMPLETE (merged)
-        # or IN_PROGRESS (conflict/missing branch — adapter handles rebase internally).
-        assert task.status in (
-            TaskStatus.COMPLETE,
-            TaskStatus.IN_PROGRESS,
-        )
-
-
-class TestPRStateResilience:
-    """PR state checks: handle CLOSED/MERGED PRs without crashing."""
-
-    GATE_PROCESS = Process(
-        name="gate-process",
-        pipeline=(
-            LoopStep(
-                steps=(
-                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
-                ),
-            ),
-            GateStep(gate="pr-require-label"),
-            ActionStep(action="merge-pr"),
-        ),
-    )
-
-    MERGE_PROCESS = Process(
-        name="merge-process",
-        pipeline=(
-            LoopStep(
-                steps=(
-                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
-                ),
-            ),
-            ActionStep(action="merge-pr"),
-        ),
-    )
-
-    # -- merge-pr phase: CLOSED PR -------------------------------------------
-
-    def test_merge_closed_pr_creates_new_pr(self) -> None:
-        """When a PR was closed, _merge_via_pr creates a new one and merges it."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        pr_mgr.close_pr(pr_url)
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
-                branch="hyperloop/task-001",
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
-        orch.run_cycle()
-
-        task = state.get_task("task-001")
-        assert task.status == TaskStatus.COMPLETE
-        # A new PR was created (different URL)
-        assert task.pr != pr_url
-
-    # -- merge-pr phase: MERGED PR with all work captured --------------------
-
-    def test_merge_already_merged_pr_marks_complete(self) -> None:
-        """When a PR was already merged and branch tip matches, task completes."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        # Simulate: PR was merged at head_sha "abc123"
-        pr_mgr.set_head_sha(pr_url, "abc123")
-        pr_mgr.merge(pr_url, "task-001", "specs/widget.md")
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
-                branch="hyperloop/task-001",
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
-        # _get_branch_tip returns None (branch not on remote in test env)
-        # → treated as "branch deleted, all work captured"
-        orch.run_cycle()
-
-        task = state.get_task("task-001")
-        assert task.status == TaskStatus.COMPLETE
-
-    # -- gate phase: CLOSED PR -----------------------------------------------
-
-    def test_gate_closed_pr_stays_at_gate(self) -> None:
-        """When a PR is closed while at gate, gate returns False and task stays."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        pr_mgr.close_pr(pr_url)
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("pr-require-label"),
-                branch="hyperloop/task-001",
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(state, runtime, process=self.GATE_PROCESS, pr_manager=pr_mgr)
-        orch.run_cycle()
-
-        task = state.get_task("task-001")
-        # PR stays the same (CLOSED PR not recreated at gate level)
-        assert task.pr == pr_url
-        # Still at gate (gate returned False for CLOSED PR)
-        assert task.phase == Phase("pr-require-label")
-
-    # -- gate phase: MERGED PR -----------------------------------------------
-
-    def test_gate_merged_pr_completes_task(self) -> None:
-        """When a PR is merged externally while at gate, task completes."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        pr_mgr.merge(pr_url, "task-001", "specs/widget.md")
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("pr-require-label"),
-                branch="hyperloop/task-001",
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(state, runtime, process=self.GATE_PROCESS, pr_manager=pr_mgr)
-        orch.run_cycle()
-
-        task = state.get_task("task-001")
-        assert task.status == TaskStatus.COMPLETE
-
-    # -- mark_ready does not crash on closed PR ------------------------------
-
-    def test_mark_ready_does_not_crash_on_closed_pr(self) -> None:
-        """mark_ready is best-effort — should not raise on failure.
-
-        The real PRManager already handles this (removed check=True).
-        The fake always succeeds, so this tests the fake contract.
-        """
-        pr_mgr = FakePRManager(repo="org/repo")
-        pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        pr_mgr.mark_ready(pr_url)
-        assert not pr_mgr.is_draft(pr_url)
-
-
-BASE_DIR = Path(__file__).parent.parent / "base"
-
-
-class TestPollInterval:
-    """poll_interval causes a sleep between cycles."""
-
-    def test_run_loop_sleeps_between_cycles(self) -> None:
-        """run_loop sleeps poll_interval seconds between cycles."""
-        import time
-
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        state.add_task(_task())
-
-        orch = _make_orchestrator(state, runtime, poll_interval=0.05)
-
-        start = time.monotonic()
-        # Workers never finish, so 3 cycles means 3 sleeps
-        orch.run_loop(max_cycles=3)
-        elapsed = time.monotonic() - start
-
-        # 3 cycles * 0.05s = 0.15s minimum
-        assert elapsed >= 0.1
-
-    def test_run_loop_no_sleep_when_zero(self) -> None:
-        """poll_interval=0 means no sleep (for tests)."""
-        import time
-
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        state.add_task(_task())
-
-        orch = _make_orchestrator(state, runtime, poll_interval=0)
-
-        start = time.monotonic()
-        orch.run_loop(max_cycles=5)
-        elapsed = time.monotonic() - start
-
-        # Should be nearly instant
-        assert elapsed < 1.0
-
-    def test_no_sleep_after_halt(self) -> None:
-        """When the loop halts, it does not sleep after the final cycle."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        state.add_task(_task(status=TaskStatus.COMPLETE))
-
-        orch = _make_orchestrator(state, runtime, poll_interval=10.0)
-
-        import time
-
-        start = time.monotonic()
-        reason = orch.run_loop(max_cycles=100)
-        elapsed = time.monotonic() - start
-
-        assert "all tasks complete" in reason.lower()
-        # Should not have slept 10s
-        assert elapsed < 2.0
+        assert reason is not None
+        assert "deadlock" in reason.lower()
 
 
 class TestEarlyExitNoTasks:
-    """Loop halts immediately when there are no tasks and no intake."""
+    """Loop halts immediately when no tasks."""
 
     def test_empty_world_halts_immediately(self) -> None:
-        """No tasks at all -> immediate halt with clear message."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
 
@@ -1028,7 +840,6 @@ class TestEarlyExitNoTasks:
         assert "no tasks" in reason.lower()
 
     def test_empty_world_single_cycle(self) -> None:
-        """run_cycle returns halt reason on empty world."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
 
@@ -1042,7 +853,6 @@ class TestProbeIntegration:
     """Probe is invoked during orchestrator lifecycle."""
 
     def test_cycle_started_fires_each_cycle(self) -> None:
-        """cycle_started is emitted once per cycle."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task())
@@ -1055,7 +865,6 @@ class TestProbeIntegration:
         assert len(cycle_calls) == 3
 
     def test_cycle_started_receives_cycle_number(self) -> None:
-        """cycle_started carries the cycle number."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task())
@@ -1068,18 +877,7 @@ class TestProbeIntegration:
         assert cycle_calls[0]["cycle"] == 1
         assert cycle_calls[1]["cycle"] == 2
 
-    def test_no_probe_does_not_crash(self) -> None:
-        """Omitting probe works fine (NullProbe default)."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        state.add_task(_task())
-
-        orch = _make_orchestrator(state, runtime)
-        orch.run_loop(max_cycles=2)
-        # No crash
-
     def test_orchestrator_halted_fires_on_completion(self) -> None:
-        """orchestrator_halted is emitted when run_loop returns."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(_task())
@@ -1096,14 +894,13 @@ class TestProbeIntegration:
         assert "complete" in str(halted[0]["reason"])
 
     def test_recovery_started_fires(self) -> None:
-        """recovery_started is emitted during recover()."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         state.add_task(
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
-                phase=Phase("implementer"),
+                phase=Phase("implement"),
                 branch="hyperloop/task-001",
             )
         )
@@ -1116,188 +913,102 @@ class TestProbeIntegration:
         assert len(recovery) == 1
         assert recovery[0]["in_progress_tasks"] == 1
 
-
-class TestPromptComposition:
-    """PromptComposer is wired into the spawn path when provided."""
-
-    def test_spawn_uses_composed_prompt(self) -> None:
-        """When a PromptComposer is provided, spawn receives a composed prompt."""
+    def test_step_executed_fires_for_action(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        state.add_task(_task())
-        state.set_file("specs/task-001.md", "Build a widget.")
-
-        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
-        orch = _make_orchestrator(state, runtime, composer=composer)
-
-        # Cycle 1: spawn implementer
-        orch.run_cycle()
-
-        task = state.get_task("task-001")
-        assert task.status == TaskStatus.IN_PROGRESS
-
-    def test_spawn_without_composer_uses_empty_prompt(self) -> None:
-        """Backward compat: without a composer, spawn uses an empty prompt."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        state.add_task(_task())
-
-        orch = _make_orchestrator(state, runtime, composer=None)
-        orch.run_cycle()
-
-        task = state.get_task("task-001")
-        assert task.status == TaskStatus.IN_PROGRESS
-
-    def test_spawn_with_findings_includes_them_in_prompt(self) -> None:
-        """When a task has findings from a prior round, they are included in the prompt."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        state.add_task(_task())
-        state.set_file("specs/task-001.md", "Build a widget.")
-        state.store_review("task-001", 1, "verifier", "fail", "Missing null check.")
-
-        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
-        orch = _make_orchestrator(state, runtime, composer=composer)
-
-        orch.run_cycle()
-
-        task = state.get_task("task-001")
-        assert task.status == TaskStatus.IN_PROGRESS
-
-
-class TestPRLifecycle:
-    """PR lifecycle: draft created at first review step, marked ready on completion."""
-
-    MERGE_PROCESS = Process(
-        name="merge-process",
-        pipeline=(
-            LoopStep(
-                steps=(
-                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
-                ),
-            ),
-            ActionStep(action="merge-pr"),
-        ),
-    )
-
-    def test_draft_pr_created_when_task_advances_to_verifier(self) -> None:
-        """A draft PR is created when a task advances from implementer to verifier."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        state.add_task(_task(id="task-001", branch="hyperloop/task-001"))
-
-        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
-
-        # Cycle 1: spawn implementer
-        orch.run_cycle()
-        assert state.get_task("task-001").phase == Phase("implementer")
-        assert state.get_task("task-001").pr is None
-
-        # Implementer passes
-        runtime.set_poll_status("task-001", "done")
-        runtime.set_result("task-001", PASS_RESULT)
-
-        # Cycle 2: reap implementer, advance to verifier -> draft PR created
-        orch.run_cycle()
-        task = state.get_task("task-001")
-        assert task.phase == Phase("verifier")
-        assert task.pr is not None
-        assert "github.com" in task.pr
-
-        # The PR should be a draft
-        assert pr_mgr.is_draft(task.pr)
-
-    def test_mark_ready_not_called_implicitly_by_merge(self) -> None:
-        """mark_ready is NOT called by the merge action — it requires an explicit step."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
+        step_exec = FakeStepExecutor()
+        probe = RecordingProbe()
 
         state.add_task(
             _task(
                 id="task-001",
                 status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
+                phase=Phase("merge"),
                 branch="hyperloop/task-001",
             )
         )
-        pr_url = pr_mgr.create_draft(
-            "task-001", "hyperloop/task-001", "Task task-001", "specs/task-001.md"
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            process=MERGE_PROCESS,
+            step_executor=step_exec,
+            probe=probe,
         )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
         orch.run_cycle()
 
-        assert pr_url not in pr_mgr.marked_ready
-        assert state.get_task("task-001").status == TaskStatus.COMPLETE
+        step_calls = probe.of_method("step_executed")
+        assert len(step_calls) >= 1
+        assert step_calls[0]["step_name"] == "merge"
 
-    def test_no_pr_created_when_pr_manager_is_none(self) -> None:
-        """No PR is created when pr_manager is not set."""
+    def test_signal_checked_fires_for_signal(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
+        signal = FakeSignalPort()
+        probe = RecordingProbe()
 
-        state.add_task(_task(id="task-001", branch="hyperloop/task-001"))
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("await-review"),
+                branch="hyperloop/task-001",
+            )
+        )
 
-        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=None)
-
-        # Cycle 1: spawn implementer
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            process=SIGNAL_PROCESS,
+            signal_port=signal,
+            probe=probe,
+        )
         orch.run_cycle()
 
-        # Implementer passes
-        runtime.set_poll_status("task-001", "done")
-        runtime.set_result("task-001", PASS_RESULT)
+        sig_calls = probe.of_method("signal_checked")
+        assert len(sig_calls) >= 1
+        assert sig_calls[0]["signal_name"] == "human-approval"
 
-        # Cycle 2: advance to verifier — no PR should be created
-        orch.run_cycle()
-        task = state.get_task("task-001")
-        assert task.phase == Phase("verifier")
-        assert task.pr is None
 
-    def test_draft_pr_not_recreated_on_loop_back(self) -> None:
-        """When a task loops back (verifier fails), the existing PR is reused."""
+class TestPollInterval:
+    """poll_interval causes a sleep between cycles."""
+
+    def test_run_loop_sleeps_between_cycles(self) -> None:
+        import time
+
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
+        state.add_task(_task())
 
-        state.add_task(_task(id="task-001", branch="hyperloop/task-001"))
+        orch = _make_orchestrator(state, runtime, poll_interval=0.05)
 
-        orch = _make_orchestrator(state, runtime, process=self.MERGE_PROCESS, pr_manager=pr_mgr)
+        start = time.monotonic()
+        orch.run_loop(max_cycles=3)
+        elapsed = time.monotonic() - start
 
-        # Cycle 1: spawn implementer
-        orch.run_cycle()
+        assert elapsed >= 0.1
 
-        # Implementer passes -> advance to verifier, create draft
-        runtime.set_poll_status("task-001", "done")
-        runtime.set_result("task-001", PASS_RESULT)
-        orch.run_cycle()
+    def test_no_sleep_after_halt(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        state.add_task(_task(status=TaskStatus.COMPLETED))
 
-        first_pr = state.get_task("task-001").pr
-        assert first_pr is not None
+        orch = _make_orchestrator(state, runtime, poll_interval=10.0)
 
-        # Verifier fails -> loops back to implementer
-        runtime.set_poll_status("task-001", "done")
-        runtime.set_result("task-001", FAIL_RESULT)
-        orch.run_cycle()
+        import time
 
-        # Implementer passes again -> advance to verifier again
-        runtime.set_poll_status("task-001", "done")
-        runtime.set_result("task-001", PASS_RESULT)
-        orch.run_cycle()
+        start = time.monotonic()
+        reason = orch.run_loop(max_cycles=100)
+        elapsed = time.monotonic() - start
 
-        # PR should be the same (not recreated)
-        assert state.get_task("task-001").pr == first_pr
+        assert "all tasks complete" in reason.lower()
+        assert elapsed < 2.0
 
 
 class TestRecoverCycleDetection:
-    """recover() raises RuntimeError if the task graph has dependency cycles."""
+    """recover() raises RuntimeError on dependency cycles."""
 
     def test_recover_raises_on_cyclic_deps(self) -> None:
-        """Given tasks A->B and B->A (a cycle), recover() raises RuntimeError
-        containing both task IDs before any orphan logic runs."""
         import pytest
 
         state = InMemoryStateStore()
@@ -1312,7 +1023,6 @@ class TestRecoverCycleDetection:
             orch.recover()
 
     def test_recover_does_not_raise_on_acyclic_deps(self) -> None:
-        """Given tasks with no cycles, recover() completes without raising."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
 
@@ -1320,550 +1030,117 @@ class TestRecoverCycleDetection:
         state.add_task(_task(id="task-B", status=TaskStatus.IN_PROGRESS, deps=()))
 
         orch = _make_orchestrator(state, runtime)
-        # Should not raise
         orch.recover()
 
 
-class TestMaxActionAttempts:
-    """max_action_attempts: after N consecutive action failures, task loops back."""
+class TestHookIntegration:
+    """CycleHooks are called after reap."""
 
-    MERGE_PROCESS = Process(
-        name="merge-process",
-        pipeline=(
-            LoopStep(
-                steps=(
-                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
-                ),
-            ),
-            ActionStep(action="merge-pr"),
-        ),
-    )
-
-    def test_merge_failure_exceeds_max_attempts_resets_task(self) -> None:
-        """After max_action_attempts consecutive merge failures, task is reset.
-
-        The reset happens mid-cycle (in ADVANCE), and then SPAWN picks it up
-        immediately, so the task ends the cycle as IN_PROGRESS with a fresh
-        branch and round 0.
-        """
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        pr_url = pr_mgr.create_draft(
-            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
-        )
-        pr_mgr.set_merge_fails(pr_url)
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
-                branch="hyperloop/task-001",
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(
-            state,
-            runtime,
-            process=self.MERGE_PROCESS,
-            pr_manager=pr_mgr,
-            max_action_attempts=3,
-        )
-
-        # First two failures: task stays IN_PROGRESS at merge-pr
-        for _ in range(2):
-            orch.run_cycle()
-            task = state.get_task("task-001")
-            assert task.status == TaskStatus.IN_PROGRESS
-            assert task.phase == Phase("merge-pr")
-
-        # Third failure: merge error -> task reset then re-spawned in same cycle
-        orch.run_cycle()
-        task = state.get_task("task-001")
-        # Task was reset to NOT_STARTED then immediately re-spawned
-        assert task.status == TaskStatus.IN_PROGRESS
-        assert task.round == 0  # round reset to 0
-        assert task.phase == Phase("implementer")  # fresh start from pipeline top
-        # Old branch/PR were cleared; new branch assigned
-        assert task.branch is not None
-        assert task.pr is None
-
-    def test_successful_merge_resets_error_counter(self) -> None:
-        """A successful merge resets the error attempt counter for a task."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        pr_url = pr_mgr.create_draft(
-            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
-        )
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
-                branch="hyperloop/task-001",
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(
-            state,
-            runtime,
-            process=self.MERGE_PROCESS,
-            pr_manager=pr_mgr,
-            max_action_attempts=3,
-        )
-
-        # Merge succeeds
-        orch.run_cycle()
-        task = state.get_task("task-001")
-        assert task.status == TaskStatus.COMPLETE
-
-        # The counter should be reset (no external way to verify directly,
-        # but the task completed successfully — that's the behavior we want)
-
-
-class TestPoisonedBranchReset:
-    """When a branch has persistent conflicts, the task is reset to NOT_STARTED."""
-
-    MERGE_PROCESS = Process(
-        name="merge-process",
-        pipeline=(
-            LoopStep(
-                steps=(
-                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
-                ),
-            ),
-            ActionStep(action="merge-pr"),
-        ),
-    )
-
-    def test_conflict_error_resets_task(self) -> None:
-        """After max_action_attempts consecutive conflict errors, task is reset and re-spawned.
-
-        The reset sets status=NOT_STARTED, round=0, branch=None, pr=None.
-        The SPAWN phase in the same cycle then picks it up immediately.
-        """
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-        probe = RecordingProbe()
-
-        pr_url = pr_mgr.create_draft(
-            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
-        )
-        pr_mgr.set_merge_fails(pr_url)
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
-                branch="hyperloop/task-001",
-                round=5,
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(
-            state,
-            runtime,
-            process=self.MERGE_PROCESS,
-            pr_manager=pr_mgr,
-            max_action_attempts=3,
-            probe=probe,
-        )
-
-        # Run 3 cycles to exhaust max_action_attempts
-        for _ in range(3):
-            orch.run_cycle()
-
-        task = state.get_task("task-001")
-        # Task was reset then re-spawned in the same cycle
-        assert task.status == TaskStatus.IN_PROGRESS
-        assert task.round == 0  # round was reset to 0
-        assert task.phase == Phase("implementer")  # fresh start
-        assert task.pr is None  # PR was cleared
-        # New branch was assigned (old one was cleared)
-        assert task.branch is not None
-
-    def test_conflict_error_fires_task_reset_probe(self) -> None:
-        """The task_reset probe event fires when a branch is reset."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-        probe = RecordingProbe()
-
-        pr_url = pr_mgr.create_draft(
-            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
-        )
-        pr_mgr.set_merge_fails(pr_url)
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
-                branch="hyperloop/task-001",
-                round=3,
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(
-            state,
-            runtime,
-            process=self.MERGE_PROCESS,
-            pr_manager=pr_mgr,
-            max_action_attempts=3,
-            probe=probe,
-        )
-
-        for _ in range(3):
-            orch.run_cycle()
-
-        reset_calls = probe.of_method("task_reset")
-        assert len(reset_calls) == 1
-        assert reset_calls[0]["task_id"] == "task-001"
-        assert reset_calls[0]["prior_round"] == 3
-        assert "conflict" in str(reset_calls[0]["reason"]).lower()
-
-    def test_conflict_error_stores_review(self) -> None:
-        """A review record is stored documenting the branch reset."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        pr_url = pr_mgr.create_draft(
-            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
-        )
-        pr_mgr.set_merge_fails(pr_url)
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
-                branch="hyperloop/task-001",
-                round=2,
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(
-            state,
-            runtime,
-            process=self.MERGE_PROCESS,
-            pr_manager=pr_mgr,
-            max_action_attempts=3,
-        )
-
-        for _ in range(3):
-            orch.run_cycle()
-
-        findings = state.get_findings("task-001")
-        assert "Branch reset" in findings
-        assert "conflict" in findings.lower()
-
-    def test_non_conflict_error_loops_back(self) -> None:
-        """Non-conflict errors (e.g. merge failed) still loop back to implementer."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        pr_url = pr_mgr.create_draft(
-            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
-        )
-        # set_merge_only_fails causes merge() to return False but
-        # wait_mergeable() still succeeds, producing "Merge failed" detail
-        # which has no "rebase" or "conflict" keywords
-        pr_mgr.set_merge_only_fails(pr_url)
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
-                branch="hyperloop/task-001",
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(
-            state,
-            runtime,
-            process=self.MERGE_PROCESS,
-            pr_manager=pr_mgr,
-            max_action_attempts=3,
-        )
-
-        for _ in range(3):
-            orch.run_cycle()
-
-        task = state.get_task("task-001")
-        # Non-conflict error: loops back to implementer instead of resetting
-        assert task.status == TaskStatus.IN_PROGRESS
-        assert task.phase == Phase("implementer")
-        assert task.round == 1
-
-    def test_reset_task_is_immediately_re_spawned(self) -> None:
-        """After reset, the task is immediately re-spawned in the same cycle."""
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        pr_mgr = FakePRManager(repo="org/repo")
-
-        pr_url = pr_mgr.create_draft(
-            "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
-        )
-        pr_mgr.set_merge_fails(pr_url)
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("merge-pr"),
-                branch="hyperloop/task-001",
-            )
-        )
-        state.set_task_pr("task-001", pr_url)
-
-        orch = _make_orchestrator(
-            state,
-            runtime,
-            process=self.MERGE_PROCESS,
-            pr_manager=pr_mgr,
-            max_action_attempts=3,
-        )
-
-        # Exhaust attempts -> reset and re-spawn in same cycle
-        for _ in range(3):
-            orch.run_cycle()
-
-        task = state.get_task("task-001")
-        # Task was reset then immediately picked up by SPAWN
-        assert task.status == TaskStatus.IN_PROGRESS
-        assert task.phase == Phase("implementer")
-        assert task.round == 0
-        assert task.branch is not None  # New branch assigned
-        assert task.pr is None  # PR was cleared
-
-
-# ---------------------------------------------------------------------------
-# Agent-backed check tests
-# ---------------------------------------------------------------------------
-
-
-class FakeCheck:
-    """Fake CheckPort that returns configurable results per task."""
-
-    def __init__(self) -> None:
-        self._results: dict[str, CheckResult] = {}
-        self._default = CheckResult.PASS
-
-    def set_result(self, task_id: str, result: CheckResult) -> None:
-        self._results[task_id] = result
-
-    def set_default(self, result: CheckResult) -> None:
-        self._default = result
-
-    def evaluate(self, task: Task, check_name: str, args: dict[str, object]) -> CheckResult:
-        return self._results.get(task.id, self._default)
-
-
-class TestAgentBackedCheck:
-    """Check steps with an evaluator agent: pre-conditions, spawn, reap, advance."""
-
-    CHECK_PROCESS = Process(
-        name="check-process",
-        pipeline=(
-            LoopStep(
-                steps=(
-                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                    CheckStep(check="pr-review", agent="pr-reviewer"),
-                ),
-            ),
-        ),
-    )
-
-    def test_check_wait_does_not_spawn_or_advance(self) -> None:
-        """WAIT result keeps the task at the check phase without spawning."""
+    def test_hook_after_reap_called(self) -> None:
+        from tests.fakes.hook import FakeHook
 
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        fake_check = FakeCheck()
-        fake_check.set_default(CheckResult.WAIT)
+        hook = FakeHook()
 
-        state.add_task(
-            _task(id="task-001", status=TaskStatus.IN_PROGRESS, phase=Phase("pr-review"))
-        )
+        state.add_task(_task())
 
-        orch = _make_orchestrator(state, runtime, process=self.CHECK_PROCESS, check=fake_check)
+        orch = _make_orchestrator(state, runtime)
+        orch._hooks = [hook]
+
+        # Cycle 1: spawn
         orch.run_cycle()
 
-        task = state.get_task("task-001")
-        assert task.status == TaskStatus.IN_PROGRESS
-        assert task.phase == Phase("pr-review")
-
-    def test_check_pass_with_agent_transitions_to_agent_phase(self) -> None:
-        """PASS on a check with an evaluator transitions to the agent phase for spawning."""
-
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        fake_check = FakeCheck()
-        fake_check.set_default(CheckResult.PASS)
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("pr-review"),
-                branch="hyperloop/task-001",
-            )
-        )
-
-        orch = _make_orchestrator(state, runtime, process=self.CHECK_PROCESS, check=fake_check)
-        orch.run_cycle()
-
-        task = state.get_task("task-001")
-        assert task.phase == Phase("pr-reviewer")
-
-    def test_check_agent_pass_advances_past_check(self) -> None:
-        """When the check agent passes, the task advances past the check step."""
-
-        state = InMemoryStateStore()
-        runtime = InMemoryRuntime()
-        fake_check = FakeCheck()
-        fake_check.set_default(CheckResult.PASS)
-
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("pr-reviewer"),
-                branch="hyperloop/task-001",
-            )
-        )
-
-        orch = _make_orchestrator(state, runtime, process=self.CHECK_PROCESS, check=fake_check)
-
-        # Cycle 1: spawn the check agent
-        orch.run_cycle()
-
-        # Check agent passes
+        # Worker finishes
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", PASS_RESULT)
 
-        # Cycle 2: reap check agent, advance past check -> loop exits -> COMPLETE
+        # Cycle 2: reap -> hook fires
         orch.run_cycle()
 
-        task = state.get_task("task-001")
-        assert task.status == TaskStatus.COMPLETE
+        assert len(hook.after_reap_calls) == 1
+        results, _cycle = hook.after_reap_calls[0]
+        assert "task-001" in results
 
-    def test_check_agent_fail_restarts_loop(self) -> None:
-        """When the check agent fails, the enclosing loop restarts."""
 
+BASE_DIR = Path(__file__).parent.parent / "base"
+
+
+class TestPromptComposition:
+    """PromptComposer is wired into the spawn path."""
+
+    def test_spawn_uses_composed_prompt(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        fake_check = FakeCheck()
-        fake_check.set_default(CheckResult.PASS)
+        state.add_task(_task())
+        state.set_file("specs/task-001.md", "Build a widget.")
 
-        state.add_task(
-            _task(
-                id="task-001",
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase("pr-reviewer"),
-                branch="hyperloop/task-001",
-            )
-        )
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+        orch = _make_orchestrator(state, runtime, composer=composer)
 
-        orch = _make_orchestrator(state, runtime, process=self.CHECK_PROCESS, check=fake_check)
-
-        # Cycle 1: spawn check agent
-        orch.run_cycle()
-
-        # Check agent fails
-        runtime.set_poll_status("task-001", "done")
-        runtime.set_result("task-001", FAIL_RESULT)
-
-        # Cycle 2: reap check agent -> FAIL -> loop restarts at implementer
         orch.run_cycle()
 
         task = state.get_task("task-001")
         assert task.status == TaskStatus.IN_PROGRESS
-        assert task.phase == Phase("implementer")
-        assert task.round == 1
 
-    def test_check_fail_without_agent_restarts_loop(self) -> None:
-        """A mechanical check (no agent) that FAILs restarts the loop."""
-
-        mechanical_process = Process(
-            name="mech-check",
-            pipeline=(
-                LoopStep(
-                    steps=(
-                        AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                        CheckStep(check="ci-check"),
-                    ),
-                ),
-            ),
-        )
-
+    def test_spawn_without_composer_uses_empty_prompt(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        fake_check = FakeCheck()
-        fake_check.set_default(CheckResult.FAIL)
+        state.add_task(_task())
 
-        state.add_task(_task(id="task-001", status=TaskStatus.IN_PROGRESS, phase=Phase("ci-check")))
-
-        orch = _make_orchestrator(state, runtime, process=mechanical_process, check=fake_check)
+        orch = _make_orchestrator(state, runtime, composer=None)
         orch.run_cycle()
 
         task = state.get_task("task-001")
-        assert task.phase == Phase("implementer")
-        assert task.round == 1
+        assert task.status == TaskStatus.IN_PROGRESS
 
-    def test_full_cycle_implementer_then_check_agent(self) -> None:
-        """End-to-end: implementer passes -> check pre-conditions pass ->
-        check agent spawns -> check agent passes -> task completes."""
 
+class TestPRLifecycle:
+    """PR lifecycle: draft created at first advancing step."""
+
+    def test_draft_pr_created_when_task_advances(self) -> None:
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        fake_check = FakeCheck()
-        fake_check.set_default(CheckResult.PASS)
+        pr_mgr = FakePRManager(repo="org/repo")
 
         state.add_task(_task(id="task-001", branch="hyperloop/task-001"))
 
-        orch = _make_orchestrator(state, runtime, process=self.CHECK_PROCESS, check=fake_check)
+        orch = _make_orchestrator(state, runtime, process=MERGE_PROCESS, pr_manager=pr_mgr)
 
         # Cycle 1: spawn implementer
         orch.run_cycle()
-        assert state.get_task("task-001").phase == Phase("implementer")
+        assert state.get_task("task-001").phase == Phase("implement")
+        assert state.get_task("task-001").pr is None
 
         # Implementer passes
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", PASS_RESULT)
 
-        # Cycle 2: reap implementer -> advance to check phase
+        # Cycle 2: reap implementer, advance to verify -> draft PR created
         orch.run_cycle()
-        assert state.get_task("task-001").phase == Phase("pr-review")
+        task = state.get_task("task-001")
+        assert task.phase == Phase("verify")
+        assert task.pr is not None
+        assert "github.com" in task.pr
+        assert pr_mgr.is_draft(task.pr)
 
-        # Cycle 3: check pre-conditions pass -> transition to pr-reviewer -> spawn agent
+    def test_no_pr_created_when_pr_manager_is_none(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+
+        state.add_task(_task(id="task-001", branch="hyperloop/task-001"))
+
+        orch = _make_orchestrator(state, runtime, process=MERGE_PROCESS, pr_manager=None)
+
+        # Cycle 1: spawn implementer
         orch.run_cycle()
-        assert state.get_task("task-001").phase == Phase("pr-reviewer")
 
-        # Check agent passes
+        # Implementer passes
         runtime.set_poll_status("task-001", "done")
         runtime.set_result("task-001", PASS_RESULT)
 
-        # Cycle 4: reap check agent -> PASS -> advance past check -> loop exits -> COMPLETE
+        # Cycle 2: advance to verify -- no PR
         orch.run_cycle()
-
         task = state.get_task("task-001")
-        assert task.status == TaskStatus.COMPLETE
+        assert task.phase == Phase("verify")
+        assert task.pr is None

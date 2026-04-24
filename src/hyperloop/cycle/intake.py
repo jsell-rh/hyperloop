@@ -11,8 +11,6 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import structlog
-
 from hyperloop.domain.model import IntakeContext, SpecIntakeEntry
 
 if TYPE_CHECKING:
@@ -20,8 +18,6 @@ if TYPE_CHECKING:
     from hyperloop.ports.runtime import Runtime
     from hyperloop.ports.spec_source import SpecSource
     from hyperloop.ports.state import StateStore
-
-logger: structlog.stdlib.BoundLogger = structlog.get_logger()
 
 
 @dataclass(frozen=True)
@@ -103,21 +99,13 @@ def run_intake(
     )
 
     if composer is None:
-        logger.debug("intake: no composer -- skipping")
         return not_ran
 
     entries = _detect_spec_entries(state, spec_source)
     if not entries and not has_failures:
-        logger.debug("intake: no unprocessed specs or failures -- skipping")
         return not_ran
 
     spec_paths = tuple(e.path for e in entries)
-
-    logger.info(
-        "intake: running PM (unprocessed=%d, failures=%s)",
-        len(entries),
-        has_failures,
-    )
 
     # Collect failed task IDs when re-triggering on failures
     failed_task_ids: tuple[str, ...] = ()

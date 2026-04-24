@@ -1,6 +1,6 @@
 """Orchestrator loop -- thin coordinator that delegates to cycle phases.
 
-Runs a 4-phase cycle: COLLECT, INTAKE, ADVANCE, SPAWN.
+Runs a 4-phase cycle: COLLECT, RECONCILE, ADVANCE, SPAWN.
 Each phase returns a result dataclass; the Orchestrator applies mutations.
 """
 
@@ -9,16 +9,12 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-import structlog
-
-from hyperloop.adapters.notification.null import NullNotification
 from hyperloop.adapters.probe import NullProbe
 from hyperloop.cycle import (
     BRANCH_PREFIX,
     advance,
     collect,
-    collect_roles,
-    collect_steps_of_type,
+    extract_roles_from_phases,
     plan_spawns,
     run_intake,
 )
@@ -26,34 +22,26 @@ from hyperloop.cycle.helpers import build_world
 from hyperloop.cycle.intake import _detect_spec_entries
 from hyperloop.domain.deps import detect_cycles
 from hyperloop.domain.model import (
-    ActionStep,
-    CheckStep,
-    GateStep,
-    PipelinePosition,
     TaskContext,
     TaskStatus,
     Verdict,
     WorkerHandle,
 )
-from hyperloop.domain.pipeline import PipelineExecutor
 
 if TYPE_CHECKING:
     from hyperloop.compose import PromptComposer
     from hyperloop.cycle.intake import IntakeResult
     from hyperloop.cycle.spawn import SpawnPlan
     from hyperloop.domain.model import Process, Task, WorkerResult
-    from hyperloop.ports.action import ActionPort
-    from hyperloop.ports.check import CheckPort
-    from hyperloop.ports.gate import GatePort
+    from hyperloop.ports.channel import ChannelPort
     from hyperloop.ports.hook import CycleHook
-    from hyperloop.ports.notification import NotificationPort
     from hyperloop.ports.pr import PRPort
     from hyperloop.ports.probe import OrchestratorProbe
     from hyperloop.ports.runtime import Runtime
+    from hyperloop.ports.signal import SignalPort
     from hyperloop.ports.spec_source import SpecSource
     from hyperloop.ports.state import StateStore
-
-logger: structlog.stdlib.BoundLogger = structlog.get_logger()
+    from hyperloop.ports.step_executor import StepExecutor
 
 
 class Orchestrator:
@@ -68,16 +56,18 @@ class Orchestrator:
         max_task_rounds: int = 50,
         max_action_attempts: int = 3,
         base_branch: str = "main",
-        gate: GatePort | None = None,
-        action: ActionPort | None = None,
-        check: CheckPort | None = None,
+        step_executor: StepExecutor | None = None,
+        signal_port: SignalPort | None = None,
+        channel: ChannelPort | None = None,
         pr: PRPort | None = None,
         spec_source: SpecSource | None = None,
-        hooks: tuple[CycleHook, ...] = (),
-        notification: NotificationPort | None = None,
+        hooks: list[CycleHook] | None = None,
         composer: PromptComposer | None = None,
         poll_interval: float = 30.0,
         probe: OrchestratorProbe | None = None,
+        gc_retention_days: int = 30,
+        gc_run_every_cycles: int = 10,
+        pm_max_failures: int = 5,
     ) -> None:
         self._state = state
         self._runtime = runtime
@@ -86,68 +76,43 @@ class Orchestrator:
         self._max_task_rounds = max_task_rounds
         self._max_action_attempts = max_action_attempts
         self._base_branch = base_branch
-        self._gate = gate
-        self._action = action
-        self._check = check
+        self._step_executor = step_executor
+        self._signal_port = signal_port
+        self._channel = channel
         self._pr = pr
         self._spec_source = spec_source
-        self._hooks = hooks
-        self._notification: NotificationPort = notification or NullNotification()
+        self._hooks: list[CycleHook] = hooks if hooks is not None else []
         self._composer = composer
         self._poll_interval = poll_interval
         self._probe: OrchestratorProbe = probe or NullProbe()
+        self._gc_retention_days = gc_retention_days
+        self._gc_run_every_cycles = gc_run_every_cycles
+        self._pm_max_failures = pm_max_failures
 
-        self._workers: dict[str, tuple[WorkerHandle, PipelinePosition, float]] = {}
-        self._action_attempts: dict[str, int] = {}
+        self._workers: dict[str, tuple[WorkerHandle, float]] = {}
         self._current_cycle: int = 0
         self._spawn_failures: int = 0
         self._spawn_skip_until: int = 0
         self._spawn_task_failures: dict[str, int] = {}
-        self._notified_gates: set[str] = set()
         self._has_failures_since_intake: bool = False
 
     def validate_templates(self) -> None:
-        """Validate that every role in the pipeline has a resolved template."""
+        """Validate that every role in the phase map has a resolved template."""
         if self._composer is None:
             return
-        roles = collect_roles(self._process.pipeline)
+        roles = extract_roles_from_phases(self._process.phases)
         missing = [r for r in roles if r not in self._composer._templates]
         if missing:
             msg = (
-                f"Pipeline references roles with no agent template: {sorted(missing)}. "
+                f"Phase map references roles with no agent template: {sorted(missing)}. "
                 "Check that base/ has definitions for these roles and "
                 "kustomize build resolves them."
             )
             raise ValueError(msg)
 
-    def validate_ports(self) -> None:
-        """Validate that pipeline steps have matching port adapters."""
-        gates = collect_steps_of_type(self._process.pipeline, GateStep)
-        actions = collect_steps_of_type(self._process.pipeline, ActionStep)
-        checks = collect_steps_of_type(self._process.pipeline, CheckStep)
-        if gates and self._gate is None:
-            names = sorted({s.gate for s in gates})  # type: ignore[union-attr]
-            raise ValueError(
-                f"Pipeline has gate steps {names} but no gate adapter is configured. "
-                "Set --repo to enable PR-based gates, or remove gate steps from the pipeline."
-            )
-        if actions and self._action is None:
-            names = sorted({s.action for s in actions})  # type: ignore[union-attr]
-            raise ValueError(
-                f"Pipeline has action steps {names} but no action adapter is configured. "
-                "Set --repo to enable PR-based actions, or remove action steps from the pipeline."
-            )
-        if checks and self._check is None:
-            names = sorted({s.check for s in checks})  # type: ignore[union-attr]
-            raise ValueError(
-                f"Pipeline has check steps {names} but no check adapter is configured. "
-                "Set --repo to enable PR-based checks, or remove check steps from the pipeline."
-            )
-
     def run_loop(self, max_cycles: int = 200) -> str:
         """Run the orchestrator loop until halt or max_cycles."""
         self.validate_templates()
-        self.validate_ports()
         world = self._state.get_world()
         self._probe.orchestrator_started(
             task_count=len(world.tasks),
@@ -185,13 +150,11 @@ class Orchestrator:
             if orphan is not None:
                 self._runtime.cancel(orphan)
                 self._probe.orphan_found(task_id=task.id, branch=branch)
-            logger.info("recover: task %s at phase %s, will re-spawn", task.id, task.phase)
 
     def run_cycle(self, cycle_num: int = 0) -> str | None:
-        """Run one 4-phase cycle. Returns halt reason or None."""
+        """Run one cycle. Returns halt reason or None."""
         self._current_cycle = cycle_num
         cycle_start = time.monotonic()
-        executor = PipelineExecutor(self._process.pipeline)
 
         # Early exit on zero tasks
         world = build_world(self._workers, self._state, self._runtime)
@@ -214,7 +177,11 @@ class Orchestrator:
             active_workers=len(self._workers),
             not_started=sum(1 for t in world.tasks.values() if t.status == TaskStatus.NOT_STARTED),
             in_progress=sum(1 for t in world.tasks.values() if t.status == TaskStatus.IN_PROGRESS),
-            complete=sum(1 for t in world.tasks.values() if t.status == TaskStatus.COMPLETE),
+            completed=sum(
+                1
+                for t in world.tasks.values()
+                if t.status in (TaskStatus.COMPLETE, TaskStatus.COMPLETED)
+            ),
             failed=sum(1 for t in world.tasks.values() if t.status == TaskStatus.FAILED),
         )
 
@@ -235,7 +202,7 @@ class Orchestrator:
             for hook in self._hooks:
                 hook.after_reap(results=collected.reaped, cycle=cycle_num)
 
-        # INTAKE
+        # RECONCILE (intake for now)
         self._apply_intake(
             run_intake(self._state, self._runtime, self._composer, self._has_failures_since_intake)
         )
@@ -245,23 +212,18 @@ class Orchestrator:
             state=self._state,
             reaped=collected.reaped,
             reaped_metadata=collected.reaped_metadata,
-            executor=executor,
-            gate=self._gate,
-            action=self._action,
-            check=self._check,
+            phases=self._process.phases,
+            step_executor=self._step_executor,
+            signal_port=self._signal_port,
+            channel=self._channel,
             pr=self._pr,
-            notification=self._notification,
             probe=self._probe,
             max_task_rounds=self._max_task_rounds,
-            max_action_attempts=self._max_action_attempts,
-            action_attempts=dict(self._action_attempts),
-            notified_gates=set(self._notified_gates),
             cycle=cycle_num,
             running_tasks=frozenset(self._workers.keys()),
         )
         for t in advanced.transitions:
             if t.reset_branch:
-                # Poisoned branch — delete remote branch and reset task
                 task = self._state.get_task(t.task_id)
                 if task.branch is not None:
                     self._delete_remote_branch(task.branch)
@@ -274,17 +236,15 @@ class Orchestrator:
                 )
             if t.pr_url is not None:
                 self._state.set_task_pr(t.task_id, t.pr_url)
-        self._action_attempts = advanced.action_attempts
-        self._notified_gates = advanced.notified_gates
         if advanced.halt_reason:
             self._state.persist("orchestrator: halt")
             return advanced.halt_reason
 
         # SPAWN
-        plans = plan_spawns(
+        spawn_result = plan_spawns(
             state=self._state,
             workers=self._workers,
-            executor=executor,
+            phases=self._process.phases,
             runtime=self._runtime,
             max_workers=self._max_workers,
             max_task_rounds=self._max_task_rounds,
@@ -292,8 +252,10 @@ class Orchestrator:
         self._state.persist("orchestrator: cycle update")
         self._state.sync()
         self._probe.state_synced()
-        self._execute_spawns(plans, cycle_num)
-        self._emit_cycle_completed(cycle_num, cycle_start, plans, collected.reaped)
+        self._execute_spawns(spawn_result.plans, cycle_num)
+        self._emit_cycle_completed(cycle_num, cycle_start, spawn_result.plans, collected.reaped)
+        if spawn_result.halt_reason is not None:
+            return spawn_result.halt_reason
         return self._check_convergence()
 
     # -- Apply helpers -------------------------------------------------------
@@ -302,11 +264,6 @@ class Orchestrator:
         """Apply intake result: pin spec_refs, emit probe, reset failure flag."""
         if not result.ran:
             return
-        if result.unprocessed_specs:
-            self._probe.intake_specs_detected(
-                specs=result.unprocessed_specs,
-                cycle=self._current_cycle,
-            )
         self._has_failures_since_intake = False
         if self._spec_source is not None:
             version = self._spec_source.current_version()
@@ -316,11 +273,7 @@ class Orchestrator:
                 for task in world.tasks.values():
                     if task.id not in result.tasks_before and "@" not in task.spec_ref:
                         self._state.set_spec_ref(task.id, f"{task.spec_ref}@{version}")
-            # Re-pin pre-existing tasks whose specs were modified.
-            # Only re-pin if the PM created new tasks for the spec (covering
-            # the delta) OR the task is still in-progress (will see the new
-            # spec when it runs). Complete/failed tasks with no new work keep
-            # their old SHA so intake keeps re-triggering until the PM acts.
+            # Re-pin pre-existing tasks whose specs were modified
             new_task_specs = {
                 t.spec_ref.split("@")[0]
                 for t in world.tasks.values()
@@ -372,12 +325,9 @@ class Orchestrator:
                 )
             prompt = self._compose_prompt(task, plan.role, cycle=cycle_num)
             try:
-                # Rebase existing branches onto trunk before spawning so workers
-                # see the latest process-improver changes and state files.
                 if task.branch is not None and self._pr is not None:
                     self._pr.rebase_branch(branch, self._base_branch)
                 self._runtime.push_branch(branch)
-                self._probe.branch_pushed(branch=branch)
                 handle = self._runtime.spawn(plan.task_id, plan.role, prompt=prompt, branch=branch)
             except Exception:
                 self._handle_spawn_failure(plan, task, branch, cycle_num)
@@ -386,7 +336,7 @@ class Orchestrator:
                 continue
             self._spawn_failures = 0
             self._spawn_task_failures.pop(plan.task_id, None)
-            self._workers[plan.task_id] = (handle, plan.position, time.monotonic())
+            self._workers[plan.task_id] = (handle, time.monotonic())
             self._probe.worker_spawned(
                 task_id=plan.task_id,
                 role=plan.role,
@@ -476,10 +426,13 @@ class Orchestrator:
         if not all_tasks:
             return None
         all_done = all(
-            t.status in (TaskStatus.COMPLETE, TaskStatus.FAILED) for t in all_tasks.values()
+            t.status in (TaskStatus.COMPLETE, TaskStatus.COMPLETED, TaskStatus.FAILED)
+            for t in all_tasks.values()
         )
         if all_done and not self._workers:
-            if all(t.status == TaskStatus.COMPLETE for t in all_tasks.values()):
+            if all(
+                t.status in (TaskStatus.COMPLETE, TaskStatus.COMPLETED) for t in all_tasks.values()
+            ):
                 return "all tasks complete"
             return "all tasks resolved (some failed)"
         return None
@@ -489,7 +442,11 @@ class Orchestrator:
         self._probe.orchestrator_halted(
             reason=reason,
             total_cycles=total_cycles,
-            completed_tasks=sum(1 for t in world.tasks.values() if t.status == TaskStatus.COMPLETE),
+            completed_tasks=sum(
+                1
+                for t in world.tasks.values()
+                if t.status in (TaskStatus.COMPLETE, TaskStatus.COMPLETED)
+            ),
             failed_tasks=sum(1 for t in world.tasks.values() if t.status == TaskStatus.FAILED),
         )
 
@@ -506,7 +463,11 @@ class Orchestrator:
             active_workers=len(self._workers),
             not_started=sum(1 for t in all_tasks.values() if t.status == TaskStatus.NOT_STARTED),
             in_progress=sum(1 for t in all_tasks.values() if t.status == TaskStatus.IN_PROGRESS),
-            complete=sum(1 for t in all_tasks.values() if t.status == TaskStatus.COMPLETE),
+            completed=sum(
+                1
+                for t in all_tasks.values()
+                if t.status in (TaskStatus.COMPLETE, TaskStatus.COMPLETED)
+            ),
             failed=sum(1 for t in all_tasks.values() if t.status == TaskStatus.FAILED),
             spawned_ids=tuple(p.task_id for p in plans),
             reaped_ids=tuple(reaped_results.keys()),

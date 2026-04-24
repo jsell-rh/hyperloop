@@ -1,11 +1,11 @@
-"""ADVANCE phase -- process reaped results and handle gates/actions.
+"""ADVANCE phase -- process reaped results and handle action/signal steps.
 
-Returns a list of transitions and spawn requests. Does NOT call
-state.transition_task, state.store_review, state.set_task_pr, or
-state.set_task_branch. Those are Orchestrator responsibilities.
+Uses flat phase map and task_processor domain functions.
+Returns a list of transitions. Does NOT call state.transition_task,
+state.store_review, or state.set_task_pr. Those are Orchestrator responsibilities.
 
-CAN call gate.check(), action.execute(), pr.create_draft(), pr.get_pr_state()
-as those are external queries/operations whose results inform the transitions.
+CAN call step_executor.execute(), signal_port.check() as those are external
+queries whose results inform the transitions.
 """
 
 from __future__ import annotations
@@ -14,45 +14,29 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import structlog
-
-from hyperloop.cycle.helpers import (
-    BRANCH_PREFIX,
-    find_position_for_step,
-    phase_for_action,
-    phase_for_pipe_action,
-)
+from hyperloop.cycle.helpers import BRANCH_PREFIX
 from hyperloop.domain.model import (
-    ActionStep,
-    CheckStep,
-    GateStep,
     Phase,
-    PipelinePosition,
+    StepOutcome,
     TaskStatus,
-    Verdict,
     WorkerHandle,
     WorkerResult,
 )
-from hyperloop.domain.pipeline import (
-    PipelineComplete,
-    PipelineExecutor,
-    PipelineFailed,
-    SpawnAgent,
+from hyperloop.domain.task_processor import (
+    determine_step_type,
+    extract_role,
+    is_terminal,
+    process_result,
 )
-from hyperloop.ports.action import ActionOutcome
-from hyperloop.ports.check import CheckResult
 
 if TYPE_CHECKING:
-    from hyperloop.domain.model import Task
-    from hyperloop.ports.action import ActionPort
-    from hyperloop.ports.check import CheckPort
-    from hyperloop.ports.gate import GatePort
-    from hyperloop.ports.notification import NotificationPort
+    from hyperloop.domain.model import PhaseMap, Task
+    from hyperloop.ports.channel import ChannelPort
     from hyperloop.ports.pr import PRPort
     from hyperloop.ports.probe import OrchestratorProbe
+    from hyperloop.ports.signal import SignalPort
     from hyperloop.ports.state import StateStore
-
-logger: structlog.stdlib.BoundLogger = structlog.get_logger()
+    from hyperloop.ports.step_executor import StepExecutor
 
 
 @dataclass(frozen=True)
@@ -83,69 +67,59 @@ class AdvanceResult:
     """Result of the ADVANCE phase."""
 
     transitions: list[TaskTransition]
-    to_spawn: list[tuple[str, str, PipelinePosition]]
     halt_reason: str | None
-    action_attempts: dict[str, int]
-    notified_gates: set[str]
     had_failures: bool
 
 
 def advance(
     state: StateStore,
     reaped: dict[str, WorkerResult],
-    reaped_metadata: dict[str, tuple[WorkerHandle, PipelinePosition, float]],
-    executor: PipelineExecutor,
-    gate: GatePort | None,
-    action: ActionPort | None,
-    check: CheckPort | None,
+    reaped_metadata: dict[str, tuple[WorkerHandle, float]],
+    phases: PhaseMap,
+    step_executor: StepExecutor | None,
+    signal_port: SignalPort | None,
+    channel: ChannelPort | None,
     pr: PRPort | None,
-    notification: NotificationPort,
     probe: OrchestratorProbe,
     max_task_rounds: int,
-    max_action_attempts: int,
-    action_attempts: dict[str, int],
-    notified_gates: set[str],
     cycle: int,
     running_tasks: frozenset[str] = frozenset(),
 ) -> AdvanceResult:
-    """Advance tasks: process reaped results, then gates/actions.
+    """Advance tasks: process reaped results, then handle action/signal steps.
 
     Args:
         state: State store for reading task state (not mutating).
         reaped: Reaped worker results: task_id -> WorkerResult.
-        reaped_metadata: Reaped worker metadata: task_id -> (handle, pos, spawn_time).
-        executor: Pipeline executor for walking the pipeline.
-        gate: Gate port for checking gate signals (may be None).
-        action: Action port for executing actions (may be None).
-        pr: PR port for creating/checking PRs (may be None).
-        notification: Notification port for gate-blocked alerts.
+        reaped_metadata: Reaped worker metadata: task_id -> (handle, spawn_time).
+        phases: Flat phase map from the process.
+        step_executor: StepExecutor port (may be None).
+        signal_port: SignalPort (may be None).
+        channel: ChannelPort for notifications (may be None).
+        pr: PR port for creating drafts (may be None).
         probe: Probe for observability events.
         max_task_rounds: Maximum rounds per task.
-        max_action_attempts: Maximum action retry attempts.
-        action_attempts: Current action attempt counts (copy -- will be updated).
-        notified_gates: Current gate notification set (copy -- will be updated).
         cycle: Current cycle number.
+        running_tasks: Set of task IDs with active workers.
 
     Returns:
-        AdvanceResult with transitions, spawn requests, and updated tracking state.
+        AdvanceResult with transitions and halt reason.
     """
     transitions: list[TaskTransition] = []
-    to_spawn: list[tuple[str, str, PipelinePosition]] = []
     halt_reason: str | None = None
     had_failures = False
 
-    # -- Step 1: Process reaped results through the pipeline --
+    # -- Step 1: Process reaped agent results through the phase map --
     for task_id, result in reaped.items():
         worker_info = reaped_metadata.get(task_id)
         if worker_info is None:
             continue
 
-        _handle, position, spawn_time = worker_info
+        handle, spawn_time = worker_info
         task = state.get_task(task_id)
 
         probe.worker_reaped(
             task_id=task_id,
-            role=_handle.role,
+            role=handle.role,
             verdict=result.verdict.value,
             round=task.round,
             cycle=cycle,
@@ -154,11 +128,19 @@ def advance(
             duration_s=time.monotonic() - spawn_time,
         )
 
-        pipe_action, _new_pos = executor.next_action(position, result)
+        if task.phase is None or task.phase not in phases:
+            continue
 
-        if isinstance(pipe_action, PipelineComplete):
+        phase_step = phases[task.phase]
+        outcome, next_phase = process_result(phase_step, result, task.phase)
+
+        if is_terminal(next_phase):
             transitions.append(
-                TaskTransition(task_id=task_id, status=TaskStatus.COMPLETE, phase=None)
+                TaskTransition(
+                    task_id=task_id,
+                    status=TaskStatus.COMPLETED,
+                    phase=None,
+                )
             )
             probe.task_completed(
                 task_id=task_id,
@@ -167,142 +149,72 @@ def advance(
                 total_cycles=cycle,
                 cycle=cycle,
             )
+            continue
 
-        elif isinstance(pipe_action, PipelineFailed):
-            transitions.append(
-                TaskTransition(
-                    task_id=task_id,
-                    status=TaskStatus.FAILED,
-                    phase=None,
-                    review=ReviewRecord(
-                        round=task.round,
-                        role=_handle.role,
-                        verdict=result.verdict.value,
-                        detail=result.detail,
-                    ),
-                )
-            )
-            halt_reason = f"task {task_id} pipeline failed: {pipe_action.reason}"
-            had_failures = True
-            probe.task_failed(
-                task_id=task_id,
-                spec_ref=task.spec_ref,
-                reason=pipe_action.reason,
-                round=task.round,
-                cycle=cycle,
-            )
-
-        elif isinstance(pipe_action, SpawnAgent):
-            if result.verdict == Verdict.FAIL:
-                new_round = task.round + 1
-                if new_round >= max_task_rounds:
-                    transitions.append(
-                        TaskTransition(
-                            task_id=task_id,
-                            status=TaskStatus.FAILED,
-                            phase=None,
-                            round=new_round,
-                        )
-                    )
-                    halt_reason = f"task {task_id} exceeded max_task_rounds ({max_task_rounds})"
-                    had_failures = True
-                    probe.task_failed(
-                        task_id=task_id,
-                        spec_ref=task.spec_ref,
-                        reason=f"exceeded max_task_rounds ({max_task_rounds})",
-                        round=new_round,
-                        cycle=cycle,
-                    )
-                    continue
-
+        if outcome == StepOutcome.RETRY:
+            new_round = task.round + 1
+            if new_round >= max_task_rounds:
                 transitions.append(
                     TaskTransition(
                         task_id=task_id,
-                        status=TaskStatus.IN_PROGRESS,
-                        phase=Phase(pipe_action.agent),
+                        status=TaskStatus.FAILED,
+                        phase=None,
                         round=new_round,
-                        review=ReviewRecord(
-                            round=task.round,
-                            role=_handle.role,
-                            verdict=result.verdict.value,
-                            detail=result.detail,
-                        ),
                     )
                 )
+                halt_reason = f"task {task_id} exceeded max_task_rounds ({max_task_rounds})"
                 had_failures = True
-                probe.task_looped_back(
+                probe.task_failed(
                     task_id=task_id,
                     spec_ref=task.spec_ref,
+                    reason=f"exceeded max_task_rounds ({max_task_rounds})",
                     round=new_round,
                     cycle=cycle,
-                    findings_preview=result.detail[:200],
                 )
-            else:
-                # Advancing forward on PASS -- create draft PR if needed
-                pr_url: str | None = None
-                if task.pr is None and pr is not None:
-                    branch = task.branch or f"{BRANCH_PREFIX}/{task_id}"
-                    draft_url = pr.create_draft(
-                        task_id,
-                        branch,
-                        task.title,
-                        task.spec_ref,
-                        pr_title=task.pr_title,
-                        pr_description=task.pr_description,
-                    )
-                    if draft_url:
-                        pr_url = draft_url
+                continue
 
-                transitions.append(
-                    TaskTransition(
-                        task_id=task_id,
-                        status=TaskStatus.IN_PROGRESS,
-                        phase=Phase(pipe_action.agent),
-                        pr_url=pr_url,
-                    )
-                )
-                probe.task_advanced(
-                    task_id=task_id,
-                    spec_ref=task.spec_ref,
-                    from_phase=str(task.phase) if task.phase else None,
-                    to_phase=pipe_action.agent,
-                    from_status=task.status.value,
-                    to_status=TaskStatus.IN_PROGRESS.value,
-                    round=task.round,
-                    cycle=cycle,
-                )
+            # Create draft PR on advancing past first agent phase
+            pr_url = _maybe_create_pr(task, pr)
 
-        else:
-            # WaitForGate, PerformAction -- record phase, don't spawn
-            # Ensure PR exists before task reaches gate/action steps
-            pr_url_ga: str | None = None
-            if task.pr is None and pr is not None:
-                branch = task.branch or f"{BRANCH_PREFIX}/{task_id}"
-                draft_url = pr.create_draft(
-                    task_id,
-                    branch,
-                    task.title,
-                    task.spec_ref,
-                    pr_title=task.pr_title,
-                    pr_description=task.pr_description,
-                )
-                if draft_url:
-                    pr_url_ga = draft_url
-
-            phase_name = phase_for_action(pipe_action)
             transitions.append(
                 TaskTransition(
                     task_id=task_id,
                     status=TaskStatus.IN_PROGRESS,
-                    phase=Phase(phase_name) if phase_name else None,
-                    pr_url=pr_url_ga,
+                    phase=Phase(next_phase),
+                    round=new_round,
+                    review=ReviewRecord(
+                        round=task.round,
+                        role=handle.role,
+                        verdict=result.verdict.value,
+                        detail=result.detail,
+                    ),
+                    pr_url=pr_url,
+                )
+            )
+            had_failures = True
+            probe.task_retried(
+                task_id=task_id,
+                spec_ref=task.spec_ref,
+                round=new_round,
+                cycle=cycle,
+                findings_preview=result.detail[:200],
+            )
+        else:
+            # ADVANCE
+            pr_url = _maybe_create_pr(task, pr)
+            transitions.append(
+                TaskTransition(
+                    task_id=task_id,
+                    status=TaskStatus.IN_PROGRESS,
+                    phase=Phase(next_phase),
+                    pr_url=pr_url,
                 )
             )
             probe.task_advanced(
                 task_id=task_id,
                 spec_ref=task.spec_ref,
                 from_phase=str(task.phase) if task.phase else None,
-                to_phase=phase_name,
+                to_phase=next_phase,
                 from_status=task.status.value,
                 to_status=TaskStatus.IN_PROGRESS.value,
                 round=task.round,
@@ -313,14 +225,11 @@ def advance(
     if halt_reason is not None:
         return AdvanceResult(
             transitions=transitions,
-            to_spawn=to_spawn,
             halt_reason=halt_reason,
-            action_attempts=action_attempts,
-            notified_gates=notified_gates,
             had_failures=had_failures,
         )
 
-    # -- Step 2: Advance tasks at gate and action steps --
+    # -- Step 2: Handle tasks at action/signal/check steps --
     all_tasks = state.get_world().tasks
 
     for task in all_tasks.values():
@@ -328,432 +237,113 @@ def advance(
             continue
         if task.phase is None:
             continue
-        # Skip tasks that were just transitioned (they may have been reaped above)
+        # Skip tasks that were just transitioned
         if any(t.task_id == task.id for t in transitions):
             continue
-
-        pos = find_position_for_step(executor, str(task.phase))
-        if pos is None:
+        # Skip tasks with active workers
+        if task.id in running_tasks:
             continue
 
-        step = PipelineExecutor.resolve_step(executor.pipeline, pos.path)
+        if task.phase not in phases:
+            continue
 
-        # -- Gate step --
-        if isinstance(step, GateStep):
-            gate_result = _advance_gate(
+        phase_step = phases[task.phase]
+        step_type = determine_step_type(phase_step)
+
+        if step_type == "agent":
+            # Agent steps are handled by SPAWN, not ADVANCE
+            continue
+
+        if step_type in ("action", "check"):
+            t = _advance_action(
                 task=task,
-                step=step,
-                pos=pos,
-                executor=executor,
-                gate=gate,
+                phase_step=phase_step,
+                step_executor=step_executor,
                 pr=pr,
-                notification=notification,
-                probe=probe,
-                notified_gates=notified_gates,
-                cycle=cycle,
-            )
-            transitions.extend(gate_result.transitions)
-            if gate_result.halt_reason is not None:
-                halt_reason = gate_result.halt_reason
-                break
-
-        # -- Check step --
-        elif isinstance(step, CheckStep):
-            check_result = _advance_check(
-                task=task,
-                step=step,
-                pos=pos,
-                executor=executor,
-                check=check,
                 probe=probe,
                 max_task_rounds=max_task_rounds,
                 cycle=cycle,
-                running_tasks=running_tasks,
             )
-            transitions.extend(check_result.transitions)
-            if check_result.halt_reason is not None:
-                halt_reason = check_result.halt_reason
+            transitions.extend(t.transitions)
+            if t.halt_reason is not None:
+                halt_reason = t.halt_reason
                 had_failures = True
                 break
 
-        # -- Action step --
-        elif isinstance(step, ActionStep):
-            action_result = _advance_action(
+        elif step_type == "signal":
+            t = _advance_signal(
                 task=task,
-                step=step,
-                pos=pos,
-                executor=executor,
-                action=action,
-                notification=notification,
+                phase_step=phase_step,
+                signal_port=signal_port,
+                channel=channel,
                 probe=probe,
-                action_attempts=action_attempts,
-                max_action_attempts=max_action_attempts,
+                max_task_rounds=max_task_rounds,
                 cycle=cycle,
             )
-            transitions.extend(action_result.transitions)
-            if action_result.halt_reason is not None:
-                halt_reason = action_result.halt_reason
+            transitions.extend(t.transitions)
+            if t.halt_reason is not None:
+                halt_reason = t.halt_reason
+                had_failures = True
                 break
 
     return AdvanceResult(
         transitions=transitions,
-        to_spawn=to_spawn,
         halt_reason=halt_reason,
-        action_attempts=action_attempts,
-        notified_gates=notified_gates,
         had_failures=had_failures,
     )
 
 
 @dataclass(frozen=True)
 class _StepResult:
-    """Internal result from processing a single gate, action, or check step."""
+    """Internal result from processing a single step."""
 
     transitions: list[TaskTransition]
     halt_reason: str | None = None
 
 
-def _advance_gate(
+def _advance_action(
     task: Task,
-    step: GateStep,
-    pos: PipelinePosition,
-    executor: PipelineExecutor,
-    gate: GatePort | None,
+    phase_step: object,
+    step_executor: StepExecutor | None,
     pr: PRPort | None,
-    notification: NotificationPort,
     probe: OrchestratorProbe,
-    notified_gates: set[str],
+    max_task_rounds: int,
     cycle: int,
 ) -> _StepResult:
-    """Handle a task at a gate step. Returns transitions."""
-    if gate is None:
-        logger.debug("gates: no gate adapter -- skipping gate polling")
+    """Handle a task at an action/check step."""
+    from hyperloop.domain.model import PhaseStep
+
+    assert isinstance(phase_step, PhaseStep)
+
+    if step_executor is None:
         return _StepResult(transitions=[])
 
-    # Notification deduplication: notify once per gate entry
-    if task.id not in notified_gates:
-        notification.gate_blocked(task=task, gate_name=step.gate)
-        if task.pr is not None and pr is not None:
-            pr.add_label(task.pr, "hyperloop/needs-approval")
-        notified_gates.add(task.id)
+    step_name = extract_role(phase_step)
+    result = step_executor.execute(task, step_name, phase_step.args)
 
-    cleared = gate.check(task, step.gate)
-    probe.gate_checked(
+    probe.step_executed(
         task_id=task.id,
-        gate=step.gate,
-        cleared=cleared,
+        step_name=step_name,
+        outcome=result.outcome.value,
+        detail=result.detail,
         cycle=cycle,
     )
 
-    if not cleared:
-        return _StepResult(transitions=[])
+    outcome, next_phase = process_result(phase_step, result, str(task.phase))
 
-    # Gate cleared -- remove from notified set and remove needs-approval label
-    notified_gates.discard(task.id)
-    if task.pr is not None and pr is not None:
-        pr.remove_label(task.pr, "hyperloop/needs-approval")
-
-    # Check if the gate check returned True because PR was merged
-    if task.pr is not None and pr is not None:
-        pr_state_check = pr.get_pr_state(task.pr)
-        if pr_state_check is not None and pr_state_check.state == "MERGED":
-            probe.merge_attempted(
-                task_id=task.id,
-                branch=task.branch or f"{BRANCH_PREFIX}/{task.id}",
-                spec_ref=task.spec_ref,
-                outcome="merged_externally",
-                attempt=0,
-                cycle=cycle,
-            )
-            return _StepResult(
-                transitions=[
-                    TaskTransition(
-                        task_id=task.id,
-                        status=TaskStatus.COMPLETE,
-                        phase=None,
-                    )
-                ]
-            )
-
-    advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
-    if advanced is not None:
-        next_action, _new_pos = advanced
-        phase_name = phase_for_pipe_action(next_action)
+    if is_terminal(next_phase):
         return _StepResult(
             transitions=[
                 TaskTransition(
                     task_id=task.id,
-                    status=TaskStatus.IN_PROGRESS,
-                    phase=Phase(phase_name) if phase_name else None,
-                )
-            ]
-        )
-    return _StepResult(
-        transitions=[
-            TaskTransition(
-                task_id=task.id,
-                status=TaskStatus.COMPLETE,
-                phase=None,
-            )
-        ]
-    )
-
-
-def _advance_action(
-    task: Task,
-    step: ActionStep,
-    pos: PipelinePosition,
-    executor: PipelineExecutor,
-    action: ActionPort | None,
-    notification: NotificationPort,
-    probe: OrchestratorProbe,
-    action_attempts: dict[str, int],
-    max_action_attempts: int,
-    cycle: int,
-) -> _StepResult:
-    """Handle a task at an action step. Returns transitions."""
-    if action is None:
-        logger.debug(
-            "actions: no action adapter -- skipping action %s",
-            step.action,
-        )
-        return _StepResult(transitions=[])
-
-    result = action.execute(task, step.action, step.args)
-
-    if result.outcome == ActionOutcome.SUCCESS:
-        action_attempts.pop(task.id, None)
-        if step.action == "merge-pr":
-            probe.merge_attempted(
-                task_id=task.id,
-                branch=task.branch or f"{BRANCH_PREFIX}/{task.id}",
-                spec_ref=task.spec_ref,
-                outcome="merged",
-                attempt=0,
-                cycle=cycle,
-            )
-
-        # Advance past action or complete
-        advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
-        if advanced is not None:
-            next_act, _new_pos = advanced
-            phase_name = phase_for_pipe_action(next_act)
-            return _StepResult(
-                transitions=[
-                    TaskTransition(
-                        task_id=task.id,
-                        status=TaskStatus.IN_PROGRESS,
-                        phase=Phase(phase_name) if phase_name else None,
-                        pr_url=result.pr_url,
-                    )
-                ]
-            )
-        return _StepResult(
-            transitions=[
-                TaskTransition(
-                    task_id=task.id,
-                    status=TaskStatus.COMPLETE,
+                    status=TaskStatus.COMPLETED,
                     phase=None,
                     pr_url=result.pr_url,
                 )
             ]
         )
 
-    if result.outcome == ActionOutcome.RETRY:
-        # Stay at current step, try again next cycle
-        transitions: list[TaskTransition] = []
-        if result.pr_url is not None:
-            transitions.append(
-                TaskTransition(
-                    task_id=task.id,
-                    status=TaskStatus.IN_PROGRESS,
-                    phase=Phase(step.action),
-                    pr_url=result.pr_url,
-                )
-            )
-        return _StepResult(transitions=transitions)
-
-    # ActionOutcome.ERROR
-    attempts = action_attempts.get(task.id, 0) + 1
-    action_attempts[task.id] = attempts
-
-    looping_back = attempts >= max_action_attempts
-    probe.rebase_conflict(
-        task_id=task.id,
-        branch=task.branch or f"{BRANCH_PREFIX}/{task.id}",
-        attempt=attempts,
-        max_attempts=max_action_attempts,
-        looping_back=looping_back,
-        cycle=cycle,
-    )
-
-    if looping_back:
-        action_attempts.pop(task.id, None)
-        notification.task_errored(
-            task=task,
-            attempts=attempts,
-            detail=result.detail,
-        )
-
-        # Detect rebase/conflict errors — these indicate a poisoned branch
-        detail_lower = result.detail.lower()
-        is_rebase_error = "rebase" in detail_lower or "conflict" in detail_lower
-
-        if is_rebase_error:
-            # Branch is poisoned — reset task to start fresh
-            detail = (
-                f"Branch reset: {max_action_attempts} consecutive rebase/merge failures. "
-                f"The branch likely has state files in its commit history that cause "
-                f"permanent conflicts. Task reset to not-started for a fresh attempt."
-            )
-            probe.task_reset(
-                task_id=task.id,
-                spec_ref=task.spec_ref,
-                reason=detail,
-                prior_round=task.round,
-                cycle=cycle,
-            )
-            return _StepResult(
-                transitions=[
-                    TaskTransition(
-                        task_id=task.id,
-                        status=TaskStatus.NOT_STARTED,
-                        phase=None,
-                        round=0,
-                        review=ReviewRecord(
-                            round=task.round,
-                            role="orchestrator",
-                            verdict="fail",
-                            detail=detail,
-                        ),
-                        reset_branch=True,
-                    )
-                ]
-            )
-
-        # Non-rebase error — loop back to implementer as before
-        detail = f"Action error after {max_action_attempts} attempts: {result.detail}"
-        return _StepResult(
-            transitions=[
-                TaskTransition(
-                    task_id=task.id,
-                    status=TaskStatus.IN_PROGRESS,
-                    phase=Phase("implementer"),
-                    round=task.round + 1,
-                    review=ReviewRecord(
-                        round=task.round,
-                        role="orchestrator",
-                        verdict="fail",
-                        detail=detail,
-                    ),
-                )
-            ]
-        )
-
-    # Stay at merge-pr, retry next cycle
-    return _StepResult(
-        transitions=[
-            TaskTransition(
-                task_id=task.id,
-                status=TaskStatus.IN_PROGRESS,
-                phase=Phase(step.action),
-            )
-        ]
-    )
-
-
-def _advance_check(
-    task: Task,
-    step: CheckStep,
-    pos: PipelinePosition,
-    executor: PipelineExecutor,
-    check: CheckPort | None,
-    probe: OrchestratorProbe,
-    max_task_rounds: int,
-    cycle: int,
-    running_tasks: frozenset[str] = frozenset(),
-) -> _StepResult:
-    """Handle a task at a check step. Returns transitions and optional spawn requests.
-
-    Three-outcome logic:
-    - WAIT: stay at step, re-evaluate next cycle (like a gate)
-    - PASS: advance (or spawn check agent if step has an evaluator)
-    - FAIL: restart enclosing loop
-    """
-    # If a check agent is already running for this task, skip evaluation
-    if task.id in running_tasks:
-        return _StepResult(transitions=[])
-
-    if check is None:
-        # No check adapter — pass through
-        return _check_advance(task, pos, executor)
-
-    result = check.evaluate(task, step.check, step.args)
-    probe.gate_checked(
-        task_id=task.id,
-        gate=step.check,
-        cleared=result == CheckResult.PASS,
-        cycle=cycle,
-    )
-
-    if result == CheckResult.WAIT:
-        return _StepResult(transitions=[])
-
-    if result == CheckResult.PASS:
-        # If check has an evaluator agent, transition to the agent phase
-        # so the SPAWN phase picks it up
-        if step.agent is not None:
-            return _StepResult(
-                transitions=[
-                    TaskTransition(
-                        task_id=task.id,
-                        status=TaskStatus.IN_PROGRESS,
-                        phase=Phase(step.agent),
-                    )
-                ],
-            )
-        return _check_advance(task, pos, executor)
-
-    # FAIL — restart enclosing loop
-    return _check_fail(task, step, pos, executor, max_task_rounds)
-
-
-def _check_advance(
-    task: Task,
-    pos: PipelinePosition,
-    executor: PipelineExecutor,
-) -> _StepResult:
-    """Advance past a check step that passed."""
-    advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
-    if advanced is not None:
-        next_action, _new_pos = advanced
-        phase_name = phase_for_pipe_action(next_action)
-        return _StepResult(
-            transitions=[
-                TaskTransition(
-                    task_id=task.id,
-                    status=TaskStatus.IN_PROGRESS,
-                    phase=Phase(phase_name) if phase_name else None,
-                )
-            ]
-        )
-    return _StepResult(
-        transitions=[TaskTransition(task_id=task.id, status=TaskStatus.COMPLETE, phase=None)]
-    )
-
-
-def _check_fail(
-    task: Task,
-    step: CheckStep,
-    pos: PipelinePosition,
-    executor: PipelineExecutor,
-    max_task_rounds: int,
-) -> _StepResult:
-    """Handle a check failure — restart enclosing loop or fail pipeline."""
-    fail_result = WorkerResult(verdict=Verdict.FAIL, detail=f"Check '{step.check}' failed")
-    pipe_action, _new_pos = executor.next_action(pos, fail_result)
-
-    if isinstance(pipe_action, SpawnAgent):
+    if outcome == StepOutcome.RETRY:
         new_round = task.round + 1
         if new_round >= max_task_rounds:
             return _StepResult(
@@ -772,34 +362,134 @@ def _check_fail(
                 TaskTransition(
                     task_id=task.id,
                     status=TaskStatus.IN_PROGRESS,
-                    phase=Phase(pipe_action.agent),
+                    phase=Phase(next_phase),
                     round=new_round,
                     review=ReviewRecord(
                         round=task.round,
-                        role="check",
+                        role="step:" + step_name,
                         verdict="fail",
-                        detail=f"Check '{step.check}' failed — looping back",
+                        detail=result.detail,
+                    ),
+                    pr_url=result.pr_url,
+                )
+            ]
+        )
+
+    if outcome == StepOutcome.WAIT:
+        # Stay at current phase
+        return _StepResult(transitions=[])
+
+    # ADVANCE
+    return _StepResult(
+        transitions=[
+            TaskTransition(
+                task_id=task.id,
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase(next_phase),
+                pr_url=result.pr_url,
+            )
+        ]
+    )
+
+
+def _advance_signal(
+    task: Task,
+    phase_step: object,
+    signal_port: SignalPort | None,
+    channel: ChannelPort | None,
+    probe: OrchestratorProbe,
+    max_task_rounds: int,
+    cycle: int,
+) -> _StepResult:
+    """Handle a task at a signal step."""
+    from hyperloop.domain.model import PhaseStep
+
+    assert isinstance(phase_step, PhaseStep)
+
+    if signal_port is None:
+        return _StepResult(transitions=[])
+
+    signal_name = extract_role(phase_step)
+    signal = signal_port.check(task, signal_name, phase_step.args)
+
+    probe.signal_checked(
+        task_id=task.id,
+        signal_name=signal_name,
+        status=signal.status.value,
+        message=signal.message,
+        cycle=cycle,
+    )
+
+    outcome, next_phase = process_result(phase_step, signal, str(task.phase))
+
+    if outcome == StepOutcome.WAIT:
+        return _StepResult(transitions=[])
+
+    if is_terminal(next_phase):
+        return _StepResult(
+            transitions=[
+                TaskTransition(
+                    task_id=task.id,
+                    status=TaskStatus.COMPLETED,
+                    phase=None,
+                )
+            ]
+        )
+
+    if outcome == StepOutcome.RETRY:
+        new_round = task.round + 1
+        if new_round >= max_task_rounds:
+            return _StepResult(
+                transitions=[
+                    TaskTransition(
+                        task_id=task.id,
+                        status=TaskStatus.FAILED,
+                        phase=None,
+                        round=new_round,
+                    )
+                ],
+                halt_reason=f"task {task.id} exceeded max_task_rounds ({max_task_rounds})",
+            )
+        return _StepResult(
+            transitions=[
+                TaskTransition(
+                    task_id=task.id,
+                    status=TaskStatus.IN_PROGRESS,
+                    phase=Phase(next_phase),
+                    round=new_round,
+                    review=ReviewRecord(
+                        round=task.round,
+                        role="signal:" + signal_name,
+                        verdict="rejected",
+                        detail=signal.message,
                     ),
                 )
             ]
         )
 
-    if isinstance(pipe_action, PipelineFailed):
-        return _StepResult(
-            transitions=[
-                TaskTransition(
-                    task_id=task.id,
-                    status=TaskStatus.FAILED,
-                    phase=None,
-                    review=ReviewRecord(
-                        round=task.round,
-                        role="check",
-                        verdict="fail",
-                        detail=f"Check '{step.check}' failed with no enclosing loop",
-                    ),
-                )
-            ],
-            halt_reason=f"task {task.id} check failed: {pipe_action.reason}",
-        )
+    # ADVANCE
+    return _StepResult(
+        transitions=[
+            TaskTransition(
+                task_id=task.id,
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase(next_phase),
+            )
+        ]
+    )
 
-    return _StepResult(transitions=[])
+
+def _maybe_create_pr(task: Task, pr: PRPort | None) -> str | None:
+    """Create a draft PR if the task doesn't have one and pr port is available."""
+    if task.pr is not None or pr is None:
+        return None
+    branch = task.branch or f"{BRANCH_PREFIX}/{task.id}"
+    draft_url = pr.create_draft(
+        task.id,
+        branch,
+        task.title,
+        task.spec_ref,
+        pr_title=task.pr_title,
+        pr_description=task.pr_description,
+    )
+    return draft_url if draft_url else None

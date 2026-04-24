@@ -13,9 +13,8 @@ from hyperloop.adapters.hook.process_improver import ProcessImproverHook
 from hyperloop.adapters.probe import NullProbe
 from hyperloop.compose import PromptComposer, load_templates_from_dir
 from hyperloop.domain.model import (
-    AgentStep,
-    LoopStep,
     Phase,
+    PhaseStep,
     Process,
     Task,
     TaskStatus,
@@ -37,14 +36,10 @@ FAIL_CRASH_RESULT = WorkerResult(verdict=Verdict.FAIL, detail="Agent crashed")
 
 DEFAULT_PROCESS = Process(
     name="default",
-    pipeline=(
-        LoopStep(
-            steps=(
-                AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                AgentStep(agent="verifier", on_pass=None, on_fail=None),
-            ),
-        ),
-    ),
+    phases={
+        "implement": PhaseStep(run="agent implementer", on_pass="verify", on_fail="implement"),
+        "verify": PhaseStep(run="agent verifier", on_pass="done", on_fail="implement"),
+    },
 )
 
 BASE_DIR = Path(__file__).parent.parent / "base"
@@ -78,18 +73,21 @@ def _make_orchestrator(
     max_task_rounds: int = 50,
     spec_source: FakeSpecSource | None = None,
 ) -> Orchestrator:
+    probe = NullProbe()
     hooks: list[ProcessImproverHook] = []
     if composer is not None:
-        hooks.append(ProcessImproverHook(runtime, composer, NullProbe()))
+        hooks.append(ProcessImproverHook(runtime, composer, probe))
     return Orchestrator(
         state=state,
         runtime=runtime,
         process=DEFAULT_PROCESS,
         max_workers=6,
         max_task_rounds=max_task_rounds,
-        hooks=tuple(hooks),
+        hooks=hooks,
         composer=composer,
         spec_source=spec_source,
+        poll_interval=0,
+        probe=probe,
     )
 
 

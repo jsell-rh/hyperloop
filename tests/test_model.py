@@ -31,7 +31,7 @@ class TestTaskStatus:
 
     def test_all_members(self):
         members = {s.name for s in TaskStatus}
-        assert members == {"NOT_STARTED", "IN_PROGRESS", "COMPLETE", "FAILED"}
+        assert members == {"NOT_STARTED", "IN_PROGRESS", "COMPLETE", "COMPLETED", "FAILED"}
 
 
 class TestVerdict:

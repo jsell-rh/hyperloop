@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from hyperloop.adapters.git.state import GitStateStore
 from hyperloop.adapters.probe import NullProbe
-from hyperloop.domain.model import ActionStep, AgentStep, LoopStep, Process
+from hyperloop.domain.model import PhaseStep, Process
 from hyperloop.loop import Orchestrator
 
 if TYPE_CHECKING:
@@ -24,15 +24,11 @@ if TYPE_CHECKING:
 
 DEFAULT_PROCESS = Process(
     name="default",
-    pipeline=(
-        LoopStep(
-            steps=(
-                AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                AgentStep(agent="verifier", on_pass=None, on_fail=None),
-            )
-        ),
-        ActionStep(action="merge-pr"),
-    ),
+    phases={
+        "implement": PhaseStep(run="agent implementer", on_pass="verify", on_fail="implement"),
+        "verify": PhaseStep(run="agent verifier", on_pass="merge", on_fail="implement"),
+        "merge": PhaseStep(run="action merge", on_pass="done", on_fail="implement"),
+    },
 )
 
 
@@ -73,28 +69,23 @@ def wire_orchestrator(
             base_branch=cfg.base_branch,
         )
 
-    # Build gate + action + check adapters from PRPort
-    gate = None
-    action = None
-    check = None
+    # Build StepExecutor, SignalPort, ChannelPort bridge adapters
+    # These wrap existing adapters (PRMergeAction, LabelGate, etc.)
+    # until Agent I2 creates proper implementations.
+    step_executor = None
+    signal_port = None
+    channel = None
+
     if pr_manager is not None:
         from hyperloop.adapters.action.pr_merge import PRMergeAction
-        from hyperloop.adapters.check.pr_feedback import PRReviewCheck
-        from hyperloop.adapters.gate.label import LabelGate
 
-        gate = LabelGate(pr_manager)
-        action = PRMergeAction(
+        # Bridge: wrap PRMergeAction as a StepExecutor
+        pr_merge = PRMergeAction(
             pr_manager,
             base_branch=cfg.base_branch,
             repo_path=str(repo_path),
         )
-        check = PRReviewCheck(repo=cfg.repo or "")
-
-    # Build notification adapter
-    notification = None
-    if cfg.notifications_type == "github-comment":
-        # GitHubCommentNotification not yet implemented; fall back to null
-        pass
+        step_executor = _BridgeStepExecutor(pr_merge)
 
     # Build hooks
     hooks: list[CycleHook] = []
@@ -112,16 +103,47 @@ def wire_orchestrator(
         max_workers=cfg.max_workers,
         max_task_rounds=cfg.max_task_rounds,
         max_action_attempts=cfg.max_action_attempts,
-        gate=gate,
-        action=action,
-        check=check,
+        step_executor=step_executor,
+        signal_port=signal_port,
+        channel=channel,
         pr=pr_manager,
-        hooks=tuple(hooks),
-        notification=notification,
+        hooks=hooks,
         composer=composer,
         poll_interval=cfg.poll_interval,
         probe=resolved_probe,
     )
+
+
+class _BridgeStepExecutor:
+    """Temporary bridge wrapping PRMergeAction as a StepExecutor."""
+
+    def __init__(self, pr_merge: object) -> None:
+        self._pr_merge = pr_merge
+
+    def execute(self, task: object, step_name: str, args: dict[str, object]) -> object:
+        from hyperloop.domain.model import StepOutcome, StepResult, Task
+        from hyperloop.ports.action import ActionOutcome
+
+        assert isinstance(task, Task)
+        result = self._pr_merge.execute(task, step_name, args)  # type: ignore[attr-defined]
+        if result.outcome == ActionOutcome.SUCCESS:
+            return StepResult(
+                outcome=StepOutcome.ADVANCE,
+                detail="merged",
+                pr_url=result.pr_url,
+            )
+        if result.outcome == ActionOutcome.RETRY:
+            return StepResult(
+                outcome=StepOutcome.WAIT,
+                detail=result.detail,
+                pr_url=result.pr_url,
+            )
+        # ERROR
+        return StepResult(
+            outcome=StepOutcome.RETRY,
+            detail=result.detail,
+            pr_url=result.pr_url,
+        )
 
 
 def _build_runtime(cfg: Config, repo_path: Path, probe: OrchestratorProbe) -> Runtime:
