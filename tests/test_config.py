@@ -302,6 +302,70 @@ ambient:
         assert cfg.max_workers == 3
 
 
+class TestGCConfig:
+    """Garbage collection config fields."""
+
+    def test_gc_defaults(self) -> None:
+        cfg = load_config(None)
+
+        assert cfg.gc_retention_days == 30
+        assert cfg.gc_summarize is True
+        assert cfg.gc_run_every_cycles == 100
+
+    def test_gc_from_yaml(self, tmp_path: Path) -> None:
+        config_file = tmp_path / ".hyperloop.yaml"
+        config_file.write_text(
+            """\
+gc:
+  retention_days: 14
+  summarize: false
+  run_every_cycles: 50
+"""
+        )
+
+        cfg = load_config(config_file)
+
+        assert cfg.gc_retention_days == 14
+        assert cfg.gc_summarize is False
+        assert cfg.gc_run_every_cycles == 50
+
+    def test_gc_partial_yaml_uses_defaults(self, tmp_path: Path) -> None:
+        config_file = tmp_path / ".hyperloop.yaml"
+        config_file.write_text(
+            """\
+gc:
+  retention_days: 7
+"""
+        )
+
+        cfg = load_config(config_file)
+
+        assert cfg.gc_retention_days == 7
+        assert cfg.gc_summarize is True
+        assert cfg.gc_run_every_cycles == 100
+
+
+class TestPMConfig:
+    """Phase map config fields."""
+
+    def test_pm_max_failures_default(self) -> None:
+        cfg = load_config(None)
+
+        assert cfg.pm_max_failures == 5
+
+    def test_pm_max_failures_from_yaml(self, tmp_path: Path) -> None:
+        config_file = tmp_path / ".hyperloop.yaml"
+        config_file.write_text(
+            """\
+pm_max_failures: 10
+"""
+        )
+
+        cfg = load_config(config_file)
+
+        assert cfg.pm_max_failures == 10
+
+
 class TestConfigFrozen:
     """Config should be immutable."""
 

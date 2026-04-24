@@ -58,7 +58,7 @@ def _composer(state: InMemoryStateStore) -> PromptComposer:
         "process-improver": AgentTemplate(
             name="process-improver",
             prompt="You are the process-improver.",
-            guidelines="Improve the process.",
+            guidelines=["Improve the process."],
             annotations={},
         ),
     }

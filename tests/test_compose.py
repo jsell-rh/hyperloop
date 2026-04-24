@@ -11,11 +11,22 @@ from pathlib import Path
 
 import pytest
 
-from hyperloop.compose import AgentTemplate, PromptComposer, load_templates_from_dir
+from hyperloop.compose import (
+    AgentTemplate,
+    PromptComposer,
+    _parse_multi_doc,
+    _parse_phase_map,
+    load_templates_from_dir,
+    parse_process,
+    validate_process,
+)
 from hyperloop.domain.model import (
     ComposedPrompt,
     ImprovementContext,
     IntakeContext,
+    PhaseMap,
+    PhaseStep,
+    Process,
     PromptSection,
     TaskContext,
 )
@@ -36,7 +47,8 @@ def _templates() -> dict[str, AgentTemplate]:
 
 
 def _state_with_spec(
-    spec_ref: str = "specs/widget.md", spec_content: str = "Build a widget."
+    spec_ref: str = "specs/widget.md",
+    spec_content: str = "Build a widget.",
 ) -> InMemoryStateStore:
     """Return an InMemoryStateStore with a spec file pre-loaded."""
     state = InMemoryStateStore()
@@ -56,7 +68,12 @@ class TestBasePromptOnly:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
         assert isinstance(result, ComposedPrompt)
@@ -68,17 +85,26 @@ class TestBasePromptOnly:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
-        # Base prompt content should be present
         assert "You are a worker agent implementing a task" in result.text
 
     def test_compose_includes_spec_content(self) -> None:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
         assert "Build a widget." in result.text
@@ -87,10 +113,14 @@ class TestBasePromptOnly:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
-        # Should not have a findings section with content
         has_findings = "## Findings" in result.text
         if has_findings:
             assert result.text.split("## Findings")[-1].strip() == ""
@@ -103,7 +133,12 @@ class TestTemplateVariables:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-027", spec_ref="specs/persistence.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-027",
+            spec_ref="specs/persistence.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
         assert "specs/persistence.md" in result.text
@@ -113,11 +148,184 @@ class TestTemplateVariables:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-027", spec_ref="specs/persistence.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-027",
+            spec_ref="specs/persistence.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
         assert "task-027" in result.text
         assert "{task_id}" not in result.text
+
+
+class TestGuidelinesAsList:
+    """Guidelines field is list[str], composed as bulleted list."""
+
+    def test_guidelines_list_rendered_as_bullets(self) -> None:
+        state = _state_with_spec()
+        templates = _templates()
+        templates["implementer"] = AgentTemplate(
+            name="implementer",
+            prompt=templates["implementer"].prompt,
+            guidelines=["Always write tests", "Follow existing patterns"],
+            annotations=templates["implementer"].annotations,
+        )
+
+        composer = PromptComposer(templates=templates, state=state)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
+        result = composer.compose(role="implementer", context=ctx)
+
+        assert "## Guidelines" in result.text
+        assert "- Always write tests" in result.text
+        assert "- Follow existing patterns" in result.text
+
+    def test_empty_guidelines_omits_section(self) -> None:
+        state = _state_with_spec()
+        templates = _templates()
+        templates["implementer"] = AgentTemplate(
+            name="implementer",
+            prompt=templates["implementer"].prompt,
+            guidelines=[],
+            annotations=templates["implementer"].annotations,
+        )
+
+        composer = PromptComposer(templates=templates, state=state)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
+        result = composer.compose(role="implementer", context=ctx)
+
+        assert "## Guidelines" not in result.text
+
+    def test_single_guideline_rendered(self) -> None:
+        state = _state_with_spec()
+        templates = _templates()
+        templates["implementer"] = AgentTemplate(
+            name="implementer",
+            prompt=templates["implementer"].prompt,
+            guidelines=["Only one rule"],
+            annotations=templates["implementer"].annotations,
+        )
+
+        composer = PromptComposer(templates=templates, state=state)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
+        result = composer.compose(role="implementer", context=ctx)
+
+        assert "## Guidelines" in result.text
+        assert "- Only one rule" in result.text
+
+    def test_guidelines_in_intake_compose(self) -> None:
+        state = _state_with_spec()
+        templates = _templates()
+        templates["pm"] = AgentTemplate(
+            name="pm",
+            prompt=templates["pm"].prompt,
+            guidelines=["Review deps carefully"],
+            annotations=templates["pm"].annotations,
+        )
+
+        composer = PromptComposer(templates=templates, state=state)
+        ctx = IntakeContext(unprocessed_specs=("specs/widget.md",))
+        result = composer.compose(role="pm", context=ctx)
+
+        assert "## Guidelines" in result.text
+        assert "- Review deps carefully" in result.text
+
+    def test_guidelines_in_improvement_compose(self) -> None:
+        state = _state_with_spec()
+        templates = _templates()
+        templates["process-improver"] = AgentTemplate(
+            name="process-improver",
+            prompt=templates["process-improver"].prompt,
+            guidelines=["Be conservative"],
+            annotations=templates["process-improver"].annotations,
+        )
+
+        composer = PromptComposer(templates=templates, state=state)
+        ctx = ImprovementContext(findings="Some findings")
+        result = composer.compose(role="process-improver", context=ctx)
+
+        assert "## Guidelines" in result.text
+        assert "- Be conservative" in result.text
+
+
+class TestGuidelinesYAMLParsing:
+    """_parse_multi_doc handles guidelines as YAML list or string."""
+
+    def test_guidelines_yaml_list_parsed_as_list(self) -> None:
+        raw = """\
+apiVersion: hyperloop.io/v1
+kind: Agent
+metadata:
+  name: implementer
+prompt: |
+  You are a worker.
+guidelines:
+  - Always write tests
+  - Follow existing patterns
+annotations: {}
+"""
+        templates = _parse_multi_doc(raw)
+        assert templates["implementer"].guidelines == [
+            "Always write tests",
+            "Follow existing patterns",
+        ]
+
+    def test_guidelines_yaml_string_wrapped_in_list(self) -> None:
+        raw = """\
+apiVersion: hyperloop.io/v1
+kind: Agent
+metadata:
+  name: implementer
+prompt: |
+  You are a worker.
+guidelines: "Run the linter"
+annotations: {}
+"""
+        templates = _parse_multi_doc(raw)
+        assert templates["implementer"].guidelines == ["Run the linter"]
+
+    def test_guidelines_yaml_empty_string_becomes_empty_list(self) -> None:
+        raw = """\
+apiVersion: hyperloop.io/v1
+kind: Agent
+metadata:
+  name: implementer
+prompt: |
+  You are a worker.
+guidelines: ""
+annotations: {}
+"""
+        templates = _parse_multi_doc(raw)
+        assert templates["implementer"].guidelines == []
+
+    def test_guidelines_yaml_missing_becomes_empty_list(self) -> None:
+        raw = """\
+apiVersion: hyperloop.io/v1
+kind: Agent
+metadata:
+  name: implementer
+prompt: |
+  You are a worker.
+annotations: {}
+"""
+        templates = _parse_multi_doc(raw)
+        assert templates["implementer"].guidelines == []
 
 
 class TestProcessOverlay:
@@ -125,34 +333,41 @@ class TestProcessOverlay:
 
     def test_overlay_content_is_included(self) -> None:
         state = _state_with_spec()
-        # Guidelines now come from the kustomize-resolved template, not a file read
         templates = _templates()
         templates["implementer"] = AgentTemplate(
             name="implementer",
             prompt=templates["implementer"].prompt,
-            guidelines="Always run linter before submitting.",
+            guidelines=["Always run linter before submitting."],
             annotations=templates["implementer"].annotations,
         )
 
         composer = PromptComposer(templates=templates, state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
         assert "## Guidelines" in result.text
-        assert "Always run linter before submitting." in result.text
+        assert "- Always run linter before submitting." in result.text
 
     def test_no_overlay_still_composes(self) -> None:
         """When no overlay file exists, composition still succeeds."""
         state = _state_with_spec()
-        # No overlay file set
 
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
-        # Should still have the base prompt
         assert "You are a worker agent implementing a task" in result.text
 
 
@@ -166,7 +381,7 @@ class TestFindings:
         ctx = TaskContext(
             task_id="task-001",
             spec_ref="specs/widget.md",
-            findings="Test suite failed: missing null check in widget.py line 42",
+            findings=("Test suite failed: missing null check in widget.py line 42"),
             round=0,
         )
         result = composer.compose(role="implementer", context=ctx)
@@ -182,7 +397,12 @@ class TestSectionProvenance:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
         prompt_sections = [s for s in result.sections if s.label == "prompt"]
@@ -193,7 +413,12 @@ class TestSectionProvenance:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
         spec_sections = [s for s in result.sections if s.label == "spec"]
@@ -207,18 +432,23 @@ class TestSectionProvenance:
         templates["implementer"] = AgentTemplate(
             name="implementer",
             prompt=templates["implementer"].prompt,
-            guidelines="Run tests first.",
+            guidelines=["Run tests first."],
             annotations=templates["implementer"].annotations,
         )
         composer = PromptComposer(templates=templates, state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
         guidelines_sections = [s for s in result.sections if s.label == "guidelines"]
         assert len(guidelines_sections) == 1
         assert guidelines_sections[0].source == "process-overlay"
-        assert "Run tests first." in guidelines_sections[0].content
+        assert "- Run tests first." in guidelines_sections[0].content
 
     def test_task_findings_has_findings_source(self) -> None:
         state = _state_with_spec()
@@ -241,7 +471,12 @@ class TestSectionProvenance:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx, epilogue="Push your branch.")
 
         epilogue_sections = [s for s in result.sections if s.label == "epilogue"]
@@ -253,7 +488,12 @@ class TestSectionProvenance:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
         findings_sections = [s for s in result.sections if s.label == "findings"]
@@ -263,7 +503,12 @@ class TestSectionProvenance:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
         epilogue_sections = [s for s in result.sections if s.label == "epilogue"]
@@ -275,12 +520,17 @@ class TestSectionProvenance:
         templates["implementer"] = AgentTemplate(
             name="implementer",
             prompt=templates["implementer"].prompt,
-            guidelines="",
+            guidelines=[],
             annotations={"hyperloop.io/source": "project-overlay"},
         )
         composer = PromptComposer(templates=templates, state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
         prompt_sections = [s for s in result.sections if s.label == "prompt"]
@@ -316,33 +566,45 @@ class TestUnknownRole:
         state = _state_with_spec()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
         with pytest.raises(ValueError, match=r"(?i)unknown.*role.*nonexistent"):
             composer.compose(role="nonexistent", context=ctx)
 
 
 class TestMissingSpecRef:
-    """Missing spec_ref file is gracefully handled — still composes, notes missing spec."""
+    """Missing spec_ref file is gracefully handled."""
 
     def test_missing_spec_still_composes(self) -> None:
         state = InMemoryStateStore()
-        # No spec file set — spec_ref points to nothing
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/nonexistent.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/nonexistent.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
-        # Should still compose with the base prompt
         assert "You are a worker agent implementing a task" in result.text
 
     def test_missing_spec_notes_absence(self) -> None:
         state = InMemoryStateStore()
         composer = PromptComposer(templates=_templates(), state=state)
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/nonexistent.md", findings="", round=0)
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/nonexistent.md",
+            findings="",
+            round=0,
+        )
         result = composer.compose(role="implementer", context=ctx)
 
-        # Should note that the spec file could not be read
         assert (
             "not found" in result.text.lower()
             or "could not" in result.text.lower()
@@ -354,7 +616,14 @@ class TestAllRoles:
     """All base agent roles can be composed."""
 
     @pytest.mark.parametrize(
-        "role", ["implementer", "verifier", "pm", "process-improver", "rebase-resolver"]
+        "role",
+        [
+            "implementer",
+            "verifier",
+            "pm",
+            "process-improver",
+            "rebase-resolver",
+        ],
     )
     def test_all_base_roles_compose(self, role: str) -> None:
         state = _state_with_spec()
@@ -367,7 +636,12 @@ class TestAllRoles:
         elif role == "process-improver":
             ctx = ImprovementContext(findings="Some findings")
         else:
-            ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
+            ctx = TaskContext(
+                task_id="task-001",
+                spec_ref="specs/widget.md",
+                findings="",
+                round=0,
+            )
 
         result = composer.compose(role=role, context=ctx)
 
@@ -377,7 +651,7 @@ class TestAllRoles:
 
 
 class TestLoadTemplatesFromDir:
-    """load_templates_from_dir reads YAML files and builds AgentTemplate objects."""
+    """load_templates_from_dir reads YAML files and builds AgentTemplate."""
 
     def test_loads_all_base_agents(self) -> None:
         templates = load_templates_from_dir(BASE_DIR)
@@ -388,9 +662,8 @@ class TestLoadTemplatesFromDir:
         assert "rebase-resolver" in templates
 
     def test_skips_non_agent_kinds(self) -> None:
-        """Process definitions (kind: Process) are not loaded as templates."""
         templates = load_templates_from_dir(BASE_DIR)
-        assert "default" not in templates  # process.yaml has name: default
+        assert "default" not in templates
 
     def test_template_has_prompt(self) -> None:
         templates = load_templates_from_dir(BASE_DIR)
@@ -402,27 +675,40 @@ class TestLoadTemplatesFromDir:
         impl = templates["implementer"]
         assert impl.annotations == {}
 
+    def test_base_templates_have_list_guidelines(self) -> None:
+        """Guidelines should be list[str] even from base dir loading."""
+        templates = load_templates_from_dir(BASE_DIR)
+        impl = templates["implementer"]
+        assert isinstance(impl.guidelines, list)
+
 
 class TestAgentTemplate:
     """AgentTemplate is a frozen dataclass."""
 
     def test_frozen(self) -> None:
-        t = AgentTemplate(name="test", prompt="hello", guidelines="", annotations={})
+        t = AgentTemplate(name="test", prompt="hello", guidelines=[], annotations={})
         with pytest.raises(AttributeError):
             t.name = "other"  # type: ignore[misc]
 
     def test_equality(self) -> None:
-        a = AgentTemplate(name="x", prompt="p", guidelines="", annotations={"k": "v"})
-        b = AgentTemplate(name="x", prompt="p", guidelines="", annotations={"k": "v"})
+        a = AgentTemplate(name="x", prompt="p", guidelines=[], annotations={"k": "v"})
+        b = AgentTemplate(name="x", prompt="p", guidelines=[], annotations={"k": "v"})
         assert a == b
+
+    def test_guidelines_is_list(self) -> None:
+        t = AgentTemplate(
+            name="test",
+            prompt="hello",
+            guidelines=["a", "b"],
+            annotations={},
+        )
+        assert t.guidelines == ["a", "b"]
 
 
 class TestParseMultiDoc:
-    """_parse_multi_doc extracts Agent definitions from multi-document YAML."""
+    """_parse_multi_doc extracts Agent definitions from multi-doc YAML."""
 
     def test_parses_agent_definitions(self) -> None:
-        from hyperloop.compose import _parse_multi_doc
-
         raw = """\
 apiVersion: hyperloop.io/v1
 kind: Agent
@@ -430,7 +716,7 @@ metadata:
   name: implementer
 prompt: |
   You are a worker.
-guidelines: ""
+guidelines: []
 annotations:
   ambient.io/persona: ""
 ---
@@ -438,8 +724,11 @@ apiVersion: hyperloop.io/v1
 kind: Process
 metadata:
   name: default
-pipeline:
-  - role: implementer
+phases:
+  implement:
+    run: agent implementer
+    on_pass: done
+    on_fail: implement
 ---
 apiVersion: hyperloop.io/v1
 kind: Agent
@@ -447,139 +736,152 @@ metadata:
   name: verifier
 prompt: |
   You are a reviewer.
-guidelines: ""
+guidelines: []
 annotations: {}
 """
         templates = _parse_multi_doc(raw)
         assert "implementer" in templates
         assert "verifier" in templates
-        assert "default" not in templates  # Process kind skipped
+        assert "default" not in templates
 
     def test_handles_empty_input(self) -> None:
-        from hyperloop.compose import _parse_multi_doc
-
         templates = _parse_multi_doc("")
         assert templates == {}
 
 
-class TestKustomizeIntegration:
-    """Integration tests that require kustomize on PATH."""
+class TestParsePhaseMap:
+    """_parse_phase_map converts flat phase map YAML into PhaseMap."""
 
-    @pytest.mark.skipif(
-        not shutil.which("kustomize"),
-        reason="kustomize CLI not available",
-    )
-    def test_from_kustomize_with_local_base(self, tmp_path: Path) -> None:
-        """Build from a local kustomization that references the base dir."""
-        import os
+    def test_basic_phase_map(self) -> None:
+        phases_raw: dict[str, object] = {
+            "implement": {
+                "run": "agent implementer",
+                "on_pass": "verify",
+                "on_fail": "implement",
+            },
+            "verify": {
+                "run": "agent verifier",
+                "on_pass": "merge",
+                "on_fail": "implement",
+            },
+            "merge": {
+                "run": "action merge",
+                "on_pass": "done",
+                "on_fail": "implement",
+            },
+        }
 
-        # kustomize requires relative paths for local resources
-        rel_base = os.path.relpath(BASE_DIR, tmp_path)
-        kustomization = tmp_path / "kustomization.yaml"
-        kustomization.write_text(f"resources:\n  - {rel_base}\n")
+        result = _parse_phase_map(phases_raw)
 
-        state = _state_with_spec()
-        composer = PromptComposer.from_kustomize(str(tmp_path), state)
+        assert len(result) == 3
+        assert result["implement"] == PhaseStep(
+            run="agent implementer",
+            on_pass="verify",
+            on_fail="implement",
+        )
+        assert result["verify"] == PhaseStep(
+            run="agent verifier",
+            on_pass="merge",
+            on_fail="implement",
+        )
+        assert result["merge"] == PhaseStep(
+            run="action merge",
+            on_pass="done",
+            on_fail="implement",
+        )
 
-        ctx = TaskContext(task_id="task-001", spec_ref="specs/widget.md", findings="", round=0)
-        result = composer.compose(role="implementer", context=ctx)
-        assert "You are a worker agent implementing a task" in result.text
+    def test_phase_with_on_wait(self) -> None:
+        phases_raw: dict[str, object] = {
+            "await-review": {
+                "run": "signal pr-review",
+                "on_pass": "merge",
+                "on_fail": "implement",
+                "on_wait": "await-review",
+            },
+        }
 
+        result = _parse_phase_map(phases_raw)
 
-class TestCheckKustomize:
-    """check_kustomize_available raises SystemExit when kustomize is missing."""
+        assert result["await-review"].on_wait == "await-review"
 
-    def test_raises_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from hyperloop.compose import check_kustomize_available
+    def test_phase_with_args(self) -> None:
+        phases_raw: dict[str, object] = {
+            "merge": {
+                "run": "action merge",
+                "on_pass": "done",
+                "on_fail": "implement",
+                "args": {"strategy": "squash"},
+            },
+        }
 
-        monkeypatch.setattr(shutil, "which", lambda _name: None)  # type: ignore[arg-type]
+        result = _parse_phase_map(phases_raw)
 
-        with pytest.raises(SystemExit, match="kustomize CLI not found"):
-            check_kustomize_available()
+        assert result["merge"].args == {"strategy": "squash"}
+
+    def test_on_wait_defaults_to_none(self) -> None:
+        phases_raw: dict[str, object] = {
+            "implement": {
+                "run": "agent implementer",
+                "on_pass": "verify",
+                "on_fail": "implement",
+            },
+        }
+
+        result = _parse_phase_map(phases_raw)
+
+        assert result["implement"].on_wait is None
+
+    def test_args_defaults_to_empty_dict(self) -> None:
+        phases_raw: dict[str, object] = {
+            "implement": {
+                "run": "agent implementer",
+                "on_pass": "verify",
+                "on_fail": "implement",
+            },
+        }
+
+        result = _parse_phase_map(phases_raw)
+
+        assert result["implement"].args == {}
+
+    def test_empty_phases_map(self) -> None:
+        result = _parse_phase_map({})
+        assert result == {}
 
 
 class TestParseProcess:
-    """parse_process converts a multi-doc YAML string into Process domain objects."""
+    """parse_process converts multi-doc YAML with flat phase map."""
 
-    BASE_PROCESS_YAML = """\
+    def test_phase_map_process(self) -> None:
+        yaml_input = """\
 apiVersion: hyperloop.io/v1
 kind: Process
 metadata:
   name: default
-
-pipeline:
-  - loop:
-      - agent: implementer
-      - agent: verifier
-  - action: merge-pr
-"""
-
-    def test_base_process_yaml_produces_correct_process(self) -> None:
-        """parse_process on the base process.yaml produces correct Process with nested LoopStep."""
-        from hyperloop.compose import parse_process
-        from hyperloop.domain.model import ActionStep, AgentStep, LoopStep, Process
-
-        process = parse_process(self.BASE_PROCESS_YAML)
-
-        assert process is not None
-        assert isinstance(process, Process)
-        assert process.name == "default"
-
-        # pipeline: [loop([implementer, verifier]), action(merge-pr)]
-        assert len(process.pipeline) == 2
-        loop = process.pipeline[0]
-        assert isinstance(loop, LoopStep)
-        assert len(loop.steps) == 2
-        assert isinstance(loop.steps[0], AgentStep)
-        assert loop.steps[0].agent == "implementer"
-        assert isinstance(loop.steps[1], AgentStep)
-        assert loop.steps[1].agent == "verifier"
-
-        action = process.pipeline[1]
-        assert isinstance(action, ActionStep)
-        assert action.action == "merge-pr"
-
-    def test_base_dir_process_yaml_matches(self) -> None:
-        """parse_process on the real base/process.yaml file produces the default Process."""
-        from hyperloop.compose import parse_process
-        from hyperloop.domain.model import ActionStep, LoopStep
-
-        process_yaml = (BASE_DIR / "process.yaml").read_text()
-        process = parse_process(process_yaml)
-
-        assert process is not None
-        assert process.name == "default"
-        assert len(process.pipeline) == 2
-        assert isinstance(process.pipeline[0], LoopStep)
-        assert isinstance(process.pipeline[1], ActionStep)
-
-    def test_overridden_pipeline_no_loop(self) -> None:
-        """parse_process with an overridden pipeline (no loop, just implementer + action)."""
-        from hyperloop.compose import parse_process
-        from hyperloop.domain.model import ActionStep, AgentStep
-
-        yaml_input = """\
-kind: Process
-metadata:
-  name: simple
-pipeline:
-  - agent: implementer
-  - action: merge-pr
+phases:
+  implement:
+    run: agent implementer
+    on_pass: verify
+    on_fail: implement
+  verify:
+    run: agent verifier
+    on_pass: merge
+    on_fail: implement
+  merge:
+    run: action merge
+    on_pass: done
+    on_fail: implement
 """
         process = parse_process(yaml_input)
 
         assert process is not None
-        assert process.name == "simple"
-        assert len(process.pipeline) == 2
-        assert isinstance(process.pipeline[0], AgentStep)
-        assert process.pipeline[0].agent == "implementer"
-        assert isinstance(process.pipeline[1], ActionStep)
-        assert process.pipeline[1].action == "merge-pr"
+        assert process.name == "default"
+        assert len(process.phases) == 3
+        assert process.phases["implement"].run == "agent implementer"
+        assert process.phases["verify"].on_pass == "merge"
+        assert process.phases["merge"].on_pass == "done"
 
     def test_no_process_doc_returns_none(self) -> None:
-        """parse_process on YAML with no kind: Process doc returns None."""
-        from hyperloop.compose import parse_process
-
         yaml_input = """\
 kind: Agent
 metadata:
@@ -591,31 +893,10 @@ prompt: |
         assert result is None
 
     def test_empty_yaml_returns_none(self) -> None:
-        """parse_process on empty string returns None."""
-        from hyperloop.compose import parse_process
-
         result = parse_process("")
         assert result is None
 
-    def test_unknown_primitive_key_raises_value_error(self) -> None:
-        """parse_process with an unknown primitive key raises ValueError."""
-        from hyperloop.compose import parse_process
-
-        yaml_input = """\
-kind: Process
-metadata:
-  name: bad
-pipeline:
-  - unknown_key: something
-"""
-        with pytest.raises(ValueError, match="unknown_key"):
-            parse_process(yaml_input)
-
     def test_multi_doc_yaml_finds_process(self) -> None:
-        """parse_process finds the Process doc in multi-document YAML."""
-        from hyperloop.compose import parse_process
-        from hyperloop.domain.model import AgentStep
-
         yaml_input = """\
 kind: Agent
 metadata:
@@ -626,85 +907,228 @@ prompt: |
 kind: Process
 metadata:
   name: default
-pipeline:
-  - agent: implementer
+phases:
+  implement:
+    run: agent implementer
+    on_pass: done
+    on_fail: implement
 """
         process = parse_process(yaml_input)
         assert process is not None
         assert process.name == "default"
-        assert len(process.pipeline) == 1
-        assert isinstance(process.pipeline[0], AgentStep)
-        assert process.pipeline[0].agent == "implementer"
+        assert "implement" in process.phases
 
-    def test_nested_loops_parsed_recursively(self) -> None:
-        """parse_process handles nested loops (loop within loop)."""
-        from hyperloop.compose import parse_process
-        from hyperloop.domain.model import ActionStep, AgentStep, LoopStep
-
-        yaml_input = """\
-kind: Process
-metadata:
-  name: nested
-pipeline:
-  - loop:
-      - loop:
-          - agent: implementer
-          - agent: verifier
-      - agent: reviewer
-  - action: merge-pr
-"""
-        process = parse_process(yaml_input)
-        assert process is not None
-        outer_loop = process.pipeline[0]
-        assert isinstance(outer_loop, LoopStep)
-        inner_loop = outer_loop.steps[0]
-        assert isinstance(inner_loop, LoopStep)
-        assert isinstance(inner_loop.steps[0], AgentStep)
-        assert inner_loop.steps[0].agent == "implementer"
-        assert isinstance(outer_loop.steps[1], AgentStep)
-        assert outer_loop.steps[1].agent == "reviewer"
-        assert isinstance(process.pipeline[1], ActionStep)
-
-    def test_gate_step_parsed(self) -> None:
-        """parse_process handles gate steps."""
-        from hyperloop.compose import parse_process
-        from hyperloop.domain.model import GateStep
-
+    def test_process_with_on_wait(self) -> None:
         yaml_input = """\
 kind: Process
 metadata:
   name: gated
-intake: []
-pipeline:
-  - gate: pr-require-label
+phases:
+  implement:
+    run: agent implementer
+    on_pass: await-review
+    on_fail: implement
+  await-review:
+    run: signal pr-review
+    on_pass: merge
+    on_fail: implement
+    on_wait: await-review
+  merge:
+    run: action merge
+    on_pass: done
+    on_fail: implement
 """
         process = parse_process(yaml_input)
         assert process is not None
-        assert len(process.pipeline) == 1
-        assert isinstance(process.pipeline[0], GateStep)
-        assert process.pipeline[0].gate == "pr-require-label"
+        assert process.phases["await-review"].on_wait == "await-review"
 
-    def test_agent_step_with_on_pass_on_fail(self) -> None:
-        """parse_process populates on_pass and on_fail when present."""
-        from hyperloop.compose import parse_process
-        from hyperloop.domain.model import AgentStep
 
-        yaml_input = """\
-kind: Process
-metadata:
-  name: routing
-pipeline:
-  - agent: implementer
-    on_pass: next
-    on_fail: retry
-"""
-        process = parse_process(yaml_input)
-        assert process is not None
-        step = process.pipeline[0]
-        assert isinstance(step, AgentStep)
-        assert step.agent == "implementer"
-        assert step.on_pass == "next"
-        assert step.on_fail == "retry"
+class TestValidateProcess:
+    """validate_process catches undefined agent roles."""
+
+    def test_valid_process_returns_empty_list(self) -> None:
+        phases: PhaseMap = {
+            "implement": PhaseStep(
+                run="agent implementer",
+                on_pass="verify",
+                on_fail="implement",
+            ),
+            "verify": PhaseStep(
+                run="agent verifier",
+                on_pass="merge",
+                on_fail="implement",
+            ),
+            "merge": PhaseStep(
+                run="action merge",
+                on_pass="done",
+                on_fail="implement",
+            ),
+        }
+        process = Process(name="default", phases=phases)
+        templates = {
+            "implementer": AgentTemplate(
+                name="implementer",
+                prompt="p",
+                guidelines=[],
+                annotations={},
+            ),
+            "verifier": AgentTemplate(
+                name="verifier",
+                prompt="p",
+                guidelines=[],
+                annotations={},
+            ),
+        }
+
+        errors = validate_process(process, templates)
+        assert errors == []
+
+    def test_undefined_agent_role_returns_error(self) -> None:
+        phases: PhaseMap = {
+            "implement": PhaseStep(
+                run="agent implementer",
+                on_pass="audit",
+                on_fail="implement",
+            ),
+            "audit": PhaseStep(
+                run="agent auditor",
+                on_pass="done",
+                on_fail="implement",
+            ),
+        }
+        process = Process(name="default", phases=phases)
+        templates = {
+            "implementer": AgentTemplate(
+                name="implementer",
+                prompt="p",
+                guidelines=[],
+                annotations={},
+            ),
+        }
+
+        errors = validate_process(process, templates)
+        assert len(errors) == 1
+        assert "auditor" in errors[0]
+
+    def test_action_steps_not_validated_as_agents(self) -> None:
+        phases: PhaseMap = {
+            "merge": PhaseStep(
+                run="action merge",
+                on_pass="done",
+                on_fail="implement",
+            ),
+        }
+        process = Process(name="default", phases=phases)
+        templates: dict[str, AgentTemplate] = {}
+
+        errors = validate_process(process, templates)
+        assert errors == []
+
+    def test_multiple_undefined_roles(self) -> None:
+        phases: PhaseMap = {
+            "implement": PhaseStep(
+                run="agent implementer",
+                on_pass="audit",
+                on_fail="implement",
+            ),
+            "audit": PhaseStep(
+                run="agent auditor",
+                on_pass="review",
+                on_fail="implement",
+            ),
+            "review": PhaseStep(
+                run="agent reviewer",
+                on_pass="done",
+                on_fail="implement",
+            ),
+        }
+        process = Process(name="default", phases=phases)
+        templates: dict[str, AgentTemplate] = {}
+
+        errors = validate_process(process, templates)
+        assert len(errors) == 3
+
+
+class TestRebuildFailureRetainsPrevious:
+    """Kustomize build failure retains previous templates."""
+
+    def test_rebuild_failure_keeps_old_templates(self) -> None:
+        state = _state_with_spec()
+        original_templates = {
+            "implementer": AgentTemplate(
+                name="implementer",
+                prompt="Original prompt",
+                guidelines=["Original guideline"],
+                annotations={},
+            ),
+        }
+        composer = PromptComposer(
+            templates=original_templates,
+            state=state,
+            overlay="/nonexistent/path/that/will/fail",
+        )
+
+        result = composer.rebuild()
+
+        assert result is False
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
+        composed = composer.compose(role="implementer", context=ctx)
+        assert "Original prompt" in composed.text
+
+    def test_rebuild_no_overlay_returns_false(self) -> None:
+        state = _state_with_spec()
+        composer = PromptComposer(templates={}, state=state, overlay=None)
+
+        result = composer.rebuild()
+        assert result is False
+
+
+class TestKustomizeIntegration:
+    """Integration tests that require kustomize on PATH."""
+
+    @pytest.mark.skipif(
+        not shutil.which("kustomize"),
+        reason="kustomize CLI not available",
+    )
+    def test_from_kustomize_with_local_base(self, tmp_path: Path) -> None:
+        import os
+
+        rel_base = os.path.relpath(BASE_DIR, tmp_path)
+        kustomization = tmp_path / "kustomization.yaml"
+        kustomization.write_text(f"resources:\n  - {rel_base}\n")
+
+        state = _state_with_spec()
+        composer = PromptComposer.from_kustomize(str(tmp_path), state)
+
+        ctx = TaskContext(
+            task_id="task-001",
+            spec_ref="specs/widget.md",
+            findings="",
+            round=0,
+        )
+        result = composer.compose(role="implementer", context=ctx)
+        assert "You are a worker agent implementing a task" in result.text
+
+
+class TestCheckKustomize:
+    """check_kustomize_available raises SystemExit when missing."""
+
+    def test_raises_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from hyperloop.compose import check_kustomize_available
+
+        monkeypatch.setattr(
+            shutil,
+            "which",
+            lambda _name: None,  # type: ignore[arg-type]
+        )
+
+        with pytest.raises(SystemExit, match="kustomize CLI not found"):
+            check_kustomize_available()
 
 
 class TestLoadFromKustomize:
@@ -714,8 +1138,7 @@ class TestLoadFromKustomize:
         not shutil.which("kustomize"),
         reason="kustomize CLI not available",
     )
-    def test_returns_composer_and_process_when_process_doc_present(self, tmp_path: Path) -> None:
-        """load_from_kustomize returns (PromptComposer, Process) when Process doc present."""
+    def test_returns_composer_and_process(self, tmp_path: Path) -> None:
         import os
 
         rel_base = os.path.relpath(BASE_DIR, tmp_path)
@@ -728,18 +1151,12 @@ class TestLoadFromKustomize:
         assert isinstance(composer, PromptComposer)
         assert process is not None
         assert process.name == "default"
-        from hyperloop.domain.model import ActionStep, LoopStep
-
-        assert len(process.pipeline) == 2
-        assert isinstance(process.pipeline[0], LoopStep)
-        assert isinstance(process.pipeline[1], ActionStep)
 
     @pytest.mark.skipif(
         not shutil.which("kustomize"),
         reason="kustomize CLI not available",
     )
     def test_returns_none_process_when_no_process_doc(self, tmp_path: Path) -> None:
-        """load_from_kustomize returns (PromptComposer, None) when no Process doc."""
         agent_yaml = tmp_path / "agent.yaml"
         agent_yaml.write_text(
             "kind: Agent\nmetadata:\n  name: test\nprompt: hello\nannotations: {}\n"

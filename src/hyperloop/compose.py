@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -26,16 +26,12 @@ import structlog
 import yaml
 
 from hyperloop.domain.model import (
-    ActionStep,
     AgentContext,
-    AgentStep,
-    CheckStep,
     ComposedPrompt,
-    GateStep,
     ImprovementContext,
     IntakeContext,
-    LoopStep,
-    PipelineStep,
+    PhaseMap,
+    PhaseStep,
     Process,
     PromptSection,
     TaskContext,
@@ -53,8 +49,13 @@ class AgentTemplate:
 
     name: str
     prompt: str
-    guidelines: str
-    annotations: dict[str, str]
+    guidelines: list[str] = field(default_factory=list)
+    annotations: dict[str, str] = field(default_factory=dict)
+
+
+def _format_guidelines(guidelines: list[str]) -> str:
+    """Format guidelines as a bulleted list string."""
+    return "\n".join(f"- {g}" for g in guidelines)
 
 
 class PromptComposer:
@@ -66,12 +67,6 @@ class PromptComposer:
         state: StateStore,
         overlay: str | None = None,
     ) -> None:
-        """
-        Args:
-            templates: role name -> resolved agent definition (from kustomize build).
-            state: StateStore for reading spec files at spawn time.
-            overlay: Path to the kustomization directory (for rebuild).
-        """
         self._templates = templates
         self._state = state
         self._overlay = overlay
@@ -83,11 +78,6 @@ class PromptComposer:
         state: StateStore,
     ) -> tuple[PromptComposer, Process | None]:
         """Resolve templates and parse Process via kustomize build.
-
-        Args:
-            overlay: Path to the kustomization directory
-                     (e.g. ``.hyperloop/agents/``).
-            state: StateStore for reading spec files at spawn time.
 
         Returns:
             A tuple of (PromptComposer, Process | None). Process is None when
@@ -109,11 +99,6 @@ class PromptComposer:
     ) -> PromptComposer:
         """Resolve templates via kustomize build, then construct.
 
-        Args:
-            overlay: Path to the kustomization directory
-                     (e.g. ``.hyperloop/agents/``).
-            state: StateStore for reading spec files at spawn time.
-
         Returns:
             A PromptComposer with resolved templates.
 
@@ -123,17 +108,25 @@ class PromptComposer:
         composer, _ = cls.load_from_kustomize(overlay, state)
         return composer
 
-    def rebuild(self) -> None:
+    def rebuild(self) -> bool:
         """Re-run kustomize build and update templates in place.
 
         Called after the process-improver modifies overlay files so that
         any agent spawned afterward sees the updated guidelines.
+
+        Returns:
+            True if rebuild succeeded, False if it failed (previous templates retained).
         """
         if self._overlay is None:
             logger.warning("rebuild: no overlay path — skipping")
-            return
-        raw_yaml = _run_kustomize(self._overlay)
-        self._templates = _parse_multi_doc(raw_yaml)
+            return False
+        try:
+            raw_yaml = _run_kustomize(self._overlay)
+            self._templates = _parse_multi_doc(raw_yaml)
+            return True
+        except RuntimeError:
+            logger.warning("rebuild: kustomize build failed — retaining previous templates")
+            return False
 
     def compose(
         self,
@@ -142,21 +135,6 @@ class PromptComposer:
         epilogue: str = "",
     ) -> ComposedPrompt:
         """Compose the full prompt for a worker.
-
-        Layers:
-        1. Resolved template prompt + guidelines (from kustomize build,
-           includes base + project overlay + process overlay)
-        2. Context-specific injection (spec content, findings, spec list)
-        3. Optional runtime epilogue (for task workers only)
-
-        Args:
-            role: Agent role name (e.g. "implementer", "verifier", "pm").
-            context: Typed context object -- TaskContext, IntakeContext, or
-                     ImprovementContext -- carrying the data needed for this spawn.
-            epilogue: Runtime-specific instructions appended to task worker prompts.
-
-        Returns:
-            A ComposedPrompt with section provenance and flattened text.
 
         Raises:
             ValueError: If the role has no resolved template.
@@ -180,18 +158,16 @@ class PromptComposer:
         context: TaskContext,
         epilogue: str = "",
     ) -> ComposedPrompt:
-        """Compose prompt for a per-task worker (implementer, verifier, rebase-resolver)."""
+        """Compose prompt for a per-task worker."""
         prompt = (
             template.prompt.replace("{spec_ref}", context.spec_ref)
             .replace("{task_id}", context.task_id)
             .replace("{round}", str(context.round))
         )
 
-        # Read spec content — strip @sha suffix for filesystem lookup
         spec_path = context.spec_ref.split("@")[0] if "@" in context.spec_ref else context.spec_ref
         spec_content = self._state.read_file(spec_path)
 
-        # Assemble: prompt + guidelines + spec + findings + epilogue
         text_parts: list[str] = [prompt.rstrip()]
         prompt_source = template.annotations.get("hyperloop.io/source", "base")
         sections: list[PromptSection] = [
@@ -199,10 +175,13 @@ class PromptComposer:
         ]
 
         if template.guidelines:
-            text_parts.append(f"## Guidelines\n{template.guidelines}")
+            guidelines_text = _format_guidelines(template.guidelines)
+            text_parts.append(f"## Guidelines\n{guidelines_text}")
             sections.append(
                 PromptSection(
-                    source="process-overlay", label="guidelines", content=template.guidelines
+                    source="process-overlay",
+                    label="guidelines",
+                    content=guidelines_text,
                 )
             )
 
@@ -251,10 +230,13 @@ class PromptComposer:
         ]
 
         if template.guidelines:
-            text_parts.append(f"## Guidelines\n{template.guidelines}")
+            guidelines_text = _format_guidelines(template.guidelines)
+            text_parts.append(f"## Guidelines\n{guidelines_text}")
             sections.append(
                 PromptSection(
-                    source="process-overlay", label="guidelines", content=template.guidelines
+                    source="process-overlay",
+                    label="guidelines",
+                    content=guidelines_text,
                 )
             )
 
@@ -305,10 +287,13 @@ class PromptComposer:
         ]
 
         if template.guidelines:
-            text_parts.append(f"## Guidelines\n{template.guidelines}")
+            guidelines_text = _format_guidelines(template.guidelines)
+            text_parts.append(f"## Guidelines\n{guidelines_text}")
             sections.append(
                 PromptSection(
-                    source="process-overlay", label="guidelines", content=template.guidelines
+                    source="process-overlay",
+                    label="guidelines",
+                    content=guidelines_text,
                 )
             )
 
@@ -341,11 +326,7 @@ def _run_kustomize(target: str) -> str:
 
 
 def _extract_name(doc: dict[str, object]) -> str:
-    """Extract the resource name from a YAML document.
-
-    Supports both kustomize-style ``metadata.name`` and legacy top-level
-    ``name`` for backward compatibility.
-    """
+    """Extract the resource name from a YAML document."""
     metadata = doc.get("metadata")
     if isinstance(metadata, dict) and "name" in metadata:
         meta = cast("dict[str, object]", metadata)
@@ -353,17 +334,24 @@ def _extract_name(doc: dict[str, object]) -> str:
     return str(doc.get("name", ""))
 
 
+def _parse_guidelines(raw_guidelines: object) -> list[str]:
+    """Parse guidelines from YAML — supports list or string."""
+    if isinstance(raw_guidelines, list):
+        return [str(g) for g in raw_guidelines]
+    if isinstance(raw_guidelines, str):
+        stripped = raw_guidelines.strip()
+        if stripped:
+            return [stripped]
+        return []
+    if raw_guidelines is None:
+        return []
+    return [str(raw_guidelines)]
+
+
 def _parse_multi_doc(raw: str) -> dict[str, AgentTemplate]:
     """Parse multi-document YAML output into AgentTemplate objects.
 
-    Only documents with ``kind: Agent`` are extracted. Process definitions
-    and other kinds are ignored for prompt composition purposes.
-
-    Args:
-        raw: Multi-document YAML string from kustomize build.
-
-    Returns:
-        A dict mapping agent name -> AgentTemplate.
+    Only documents with ``kind: Agent`` are extracted.
     """
     templates: dict[str, AgentTemplate] = {}
     for raw_doc in yaml.safe_load_all(raw):
@@ -374,7 +362,7 @@ def _parse_multi_doc(raw: str) -> dict[str, AgentTemplate]:
             continue
         name = _extract_name(doc)
         prompt = doc.get("prompt", "")
-        guidelines = doc.get("guidelines", "")
+        guidelines = _parse_guidelines(doc.get("guidelines"))
         raw_annotations = doc.get("annotations", {})
         if not isinstance(raw_annotations, dict):
             raw_annotations = {}
@@ -382,97 +370,42 @@ def _parse_multi_doc(raw: str) -> dict[str, AgentTemplate]:
         templates[name] = AgentTemplate(
             name=name,
             prompt=str(prompt),
-            guidelines=str(guidelines).strip(),
+            guidelines=guidelines,
             annotations={str(k): str(v) for k, v in annotations.items()},
         )
     return templates
 
 
-def _parse_steps(steps_raw: object) -> list[PipelineStep]:
-    """Parse a list of YAML step maps into pipeline primitives recursively.
-
-    Args:
-        steps_raw: A list of step maps from YAML.
-
-    Returns:
-        A list of PipelineStep objects.
-
-    Raises:
-        ValueError: If a step has an unrecognised primitive key or malformed structure.
-    """
-    if not isinstance(steps_raw, list):
-        msg = f"Expected a list of pipeline steps, got {type(steps_raw).__name__}"
-        raise ValueError(msg)
-
-    result: list[PipelineStep] = []
-    known_primitives = {"agent", "gate", "check", "loop", "action"}
-    meta_keys = {"on_pass", "on_fail", "args", "evaluator"}
-
-    for raw_step in cast("list[object]", steps_raw):
-        if not isinstance(raw_step, dict):
-            msg = f"Pipeline step must be a mapping, got {type(raw_step).__name__}"
+def _parse_phase_map(phases_raw: dict[str, object]) -> PhaseMap:
+    """Parse a flat phase map dict into a PhaseMap (dict[str, PhaseStep])."""
+    result: PhaseMap = {}
+    for phase_name, step_raw in phases_raw.items():
+        if not isinstance(step_raw, dict):
+            msg = f"Phase '{phase_name}' must be a mapping, got {type(step_raw).__name__}"
             raise ValueError(msg)
-
-        step = cast("dict[str, object]", raw_step)
-        step_dict: dict[str, object] = {str(k): v for k, v in step.items()}
-        primitive_keys = set(step_dict.keys()) & known_primitives
-
-        if not primitive_keys:
-            unknown = sorted(set(step_dict.keys()) - meta_keys)
-            msg = (
-                f"Unrecognised pipeline primitive key(s): {unknown!r}. "
-                "Expected one of: agent, gate, check, loop, action"
-            )
-            raise ValueError(msg)
-
-        if len(primitive_keys) > 1:
-            msg = f"Pipeline step has multiple primitive keys: {sorted(primitive_keys)!r}"
-            raise ValueError(msg)
-
-        key = next(iter(primitive_keys))
-        value = step_dict[key]
+        step_dict = cast("dict[str, object]", step_raw)
         raw_args = step_dict.get("args")
-        step_args: dict[str, object] = (
+        args: dict[str, object] = (
             cast("dict[str, object]", raw_args) if isinstance(raw_args, dict) else {}
         )
-
-        if key == "agent":
-            on_pass_val = step_dict.get("on_pass")
-            on_fail_val = step_dict.get("on_fail")
-            result.append(
-                AgentStep(
-                    agent=str(value),
-                    on_pass=str(on_pass_val) if on_pass_val is not None else None,
-                    on_fail=str(on_fail_val) if on_fail_val is not None else None,
-                )
-            )
-        elif key == "gate":
-            result.append(GateStep(gate=str(value)))
-        elif key == "check":
-            evaluator_val = step_dict.get("evaluator")
-            check_agent = str(evaluator_val) if evaluator_val is not None else None
-            result.append(CheckStep(check=str(value), args=step_args, agent=check_agent))
-        elif key == "loop":
-            nested = _parse_steps(value)
-            result.append(LoopStep(steps=tuple(nested)))
-        elif key == "action":
-            result.append(ActionStep(action=str(value), args=step_args))
-
+        on_wait_val = step_dict.get("on_wait")
+        result[phase_name] = PhaseStep(
+            run=str(step_dict.get("run", "")),
+            on_pass=str(step_dict.get("on_pass", "")),
+            on_fail=str(step_dict.get("on_fail", "")),
+            on_wait=str(on_wait_val) if on_wait_val is not None else None,
+            args=args,
+        )
     return result
 
 
 def parse_process(raw: str) -> Process | None:
     """Parse a Process document from multi-document YAML.
 
-    Args:
-        raw: Multi-document YAML string (e.g., from ``kustomize build`` or a
-             ``process.yaml`` file).
+    Supports the flat phase map format (``phases`` key).
 
     Returns:
         A ``Process`` if a ``kind: Process`` document is found; ``None`` otherwise.
-
-    Raises:
-        ValueError: If an unrecognised pipeline primitive key is encountered.
     """
     for raw_doc in yaml.safe_load_all(raw):
         if not isinstance(raw_doc, dict):
@@ -481,10 +414,28 @@ def parse_process(raw: str) -> Process | None:
         if doc.get("kind") != "Process":
             continue
         name = _extract_name(doc)
-        pipeline_raw: object = doc.get("pipeline") or []
-        pipeline = tuple(_parse_steps(pipeline_raw))
-        return Process(name=name, pipeline=pipeline)
+        phases_raw = doc.get("phases")
+        if isinstance(phases_raw, dict):
+            phases = _parse_phase_map(cast("dict[str, object]", phases_raw))
+        else:
+            phases = {}
+        return Process(name=name, phases=phases)
     return None
+
+
+def validate_process(process: Process, templates: dict[str, AgentTemplate]) -> list[str]:
+    """Validate that all agent roles referenced in the process have templates.
+
+    Returns:
+        A list of error messages for undefined roles. Empty list means valid.
+    """
+    errors: list[str] = []
+    for phase_name, step in process.phases.items():
+        if step.run.startswith("agent "):
+            role = step.run[len("agent ") :]
+            if role not in templates:
+                errors.append(f"Phase '{phase_name}' references undefined agent role '{role}'")
+    return errors
 
 
 def check_kustomize_available() -> None:
@@ -496,22 +447,18 @@ def check_kustomize_available() -> None:
     if shutil.which("kustomize") is None:
         msg = (
             "Error: kustomize CLI not found. "
-            "Install it: https://kubectl.docs.kubernetes.io/installation/kustomize/"
+            "Install it:"
+            " https://kubectl.docs.kubernetes.io/installation/kustomize/"
         )
         raise SystemExit(msg)
 
 
-def load_templates_from_dir(base_dir: str | Path) -> dict[str, AgentTemplate]:
+def load_templates_from_dir(
+    base_dir: str | Path,
+) -> dict[str, AgentTemplate]:
     """Load agent templates directly from a directory of YAML files.
 
     This is used for testing and as a fallback when kustomize is not available.
-    It reads all ``*.yaml`` files in ``base_dir`` and extracts Agent definitions.
-
-    Args:
-        base_dir: Path to the directory containing base agent YAML files.
-
-    Returns:
-        A dict mapping agent name -> AgentTemplate.
     """
     templates: dict[str, AgentTemplate] = {}
     base_path = Path(base_dir)
@@ -524,7 +471,7 @@ def load_templates_from_dir(base_dir: str | Path) -> dict[str, AgentTemplate]:
             doc = cast("dict[str, object]", raw_doc)
             if doc.get("kind") == "Agent" and "prompt" in doc:
                 name = _extract_name(doc)
-                guidelines = doc.get("guidelines", "")
+                guidelines = _parse_guidelines(doc.get("guidelines"))
                 raw_annotations = doc.get("annotations", {})
                 if not isinstance(raw_annotations, dict):
                     raw_annotations = {}
@@ -532,7 +479,7 @@ def load_templates_from_dir(base_dir: str | Path) -> dict[str, AgentTemplate]:
                 templates[name] = AgentTemplate(
                     name=name,
                     prompt=str(doc["prompt"]),
-                    guidelines=str(guidelines).strip() if guidelines else "",
+                    guidelines=guidelines,
                     annotations={str(k): str(v) for k, v in annotations.items()},
                 )
     return templates

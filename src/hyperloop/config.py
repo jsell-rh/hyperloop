@@ -88,6 +88,10 @@ class Config:
     notifications_type: str  # "null" | "github-comment", default "null"
     runtime: str  # "local" | "ambient", default "local"
     ambient: AmbientConfig | None  # required when runtime == "ambient"
+    gc_retention_days: int = 30
+    gc_summarize: bool = True
+    gc_run_every_cycles: int = 100
+    pm_max_failures: int = 5
     observability: ObservabilityConfig = field(
         default_factory=lambda: ObservabilityConfig(
             log_format="console", log_level="info", matrix=None
@@ -117,6 +121,10 @@ def _defaults() -> dict[str, object]:
         "runtime": "local",
         "log_format": "console",
         "log_level": "info",
+        "gc_retention_days": 30,
+        "gc_summarize": True,
+        "gc_run_every_cycles": 100,
+        "pm_max_failures": 5,
     }
 
 
@@ -139,6 +147,7 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
         "max_action_attempts",
         "max_workers",
         "runtime",
+        "pm_max_failures",
     ):
         if key in raw and not isinstance(raw[key], dict):
             flat[key] = raw[key]
@@ -204,6 +213,17 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
         dash = cast("dict[str, object]", dashboard)
         flat["dashboard_enabled"] = dash.get("enabled", False)
         flat["dashboard_events_limit"] = dash.get("events_limit", 1000)
+
+    # gc section
+    gc = raw.get("gc")
+    if isinstance(gc, dict):
+        gc_dict = cast("dict[str, object]", gc)
+        if "retention_days" in gc_dict:
+            flat["gc_retention_days"] = gc_dict["retention_days"]
+        if "summarize" in gc_dict:
+            flat["gc_summarize"] = gc_dict["summarize"]
+        if "run_every_cycles" in gc_dict:
+            flat["gc_run_every_cycles"] = gc_dict["run_every_cycles"]
 
     return flat
 
@@ -317,6 +337,10 @@ def load_config(
         notifications_type=str(values["notifications_type"]),
         runtime=str(values["runtime"]),
         ambient=ambient_cfg,
+        gc_retention_days=int(values["gc_retention_days"]),  # type: ignore[arg-type]
+        gc_summarize=bool(values["gc_summarize"]),
+        gc_run_every_cycles=int(values["gc_run_every_cycles"]),  # type: ignore[arg-type]
+        pm_max_failures=int(values["pm_max_failures"]),  # type: ignore[arg-type]
         observability=obs_cfg,
         dashboard=dashboard_cfg,
     )
