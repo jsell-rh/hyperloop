@@ -93,7 +93,7 @@ Framework-shipped actions and checks:
 
 | Step | Type | What it does | Config |
 |---|---|---|---|
-| `merge-pr` | action | Rebase, wait for mergeable, squash-merge | -- |
+| `merge-pr` | action | Wait for mergeable, squash-merge | -- |
 | `mark-pr-ready` | action | Mark a draft PR as ready for review | -- |
 | `post-pr-comment` | action | Post a comment on the task's PR | `args: {body: str}` |
 | `pr-review` | check | CI + reviewer pre-checks, then agent evaluates PR feedback | `evaluator: pr-reviewer`; `args: {require_reviewers: [str]}` |

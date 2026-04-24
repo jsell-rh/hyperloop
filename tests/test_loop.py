@@ -715,14 +715,14 @@ class TestMergeWithPRManager:
         task = state.get_task("task-001")
         assert task.status == TaskStatus.COMPLETE
 
-    def test_rebase_conflict_stays_in_progress(self) -> None:
-        """When rebase fails, task stays IN_PROGRESS at merge-pr."""
+    def test_not_mergeable_stays_in_progress(self) -> None:
+        """When PR is not mergeable (conflicts), task stays IN_PROGRESS at merge-pr."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
 
         pr_url = pr_mgr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        pr_mgr.set_rebase_fails("hyperloop/task-001")
+        pr_mgr.set_merge_fails(pr_url)
 
         state.add_task(
             _task(
@@ -1339,8 +1339,8 @@ class TestMaxActionAttempts:
         ),
     )
 
-    def test_rebase_failure_exceeds_max_attempts_resets_task(self) -> None:
-        """After max_action_attempts consecutive rebase failures, task is reset.
+    def test_merge_failure_exceeds_max_attempts_resets_task(self) -> None:
+        """After max_action_attempts consecutive merge failures, task is reset.
 
         The reset happens mid-cycle (in ADVANCE), and then SPAWN picks it up
         immediately, so the task ends the cycle as IN_PROGRESS with a fresh
@@ -1353,7 +1353,7 @@ class TestMaxActionAttempts:
         pr_url = pr_mgr.create_draft(
             "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
         )
-        pr_mgr.set_rebase_fails("hyperloop/task-001")
+        pr_mgr.set_merge_fails(pr_url)
 
         state.add_task(
             _task(
@@ -1378,16 +1378,9 @@ class TestMaxActionAttempts:
             orch.run_cycle()
             task = state.get_task("task-001")
             assert task.status == TaskStatus.IN_PROGRESS
+            assert task.phase == Phase("merge-pr")
 
-            # If rebase-resolver was spawned, let it complete and return to merge-pr
-            if task.phase == Phase("rebase-resolver"):
-                runtime.set_poll_status("task-001", "done")
-                runtime.set_result("task-001", PASS_RESULT)
-                orch.run_cycle()
-                # Manually transition back to merge-pr for next attempt
-                state.transition_task("task-001", TaskStatus.IN_PROGRESS, phase=Phase("merge-pr"))
-
-        # Third failure: rebase error -> task reset then re-spawned in same cycle
+        # Third failure: merge error -> task reset then re-spawned in same cycle
         orch.run_cycle()
         task = state.get_task("task-001")
         # Task was reset to NOT_STARTED then immediately re-spawned
@@ -1398,8 +1391,8 @@ class TestMaxActionAttempts:
         assert task.branch is not None
         assert task.pr is None
 
-    def test_successful_merge_resets_rebase_counter(self) -> None:
-        """A successful merge resets the rebase attempt counter for a task."""
+    def test_successful_merge_resets_error_counter(self) -> None:
+        """A successful merge resets the error attempt counter for a task."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
@@ -1436,7 +1429,7 @@ class TestMaxActionAttempts:
 
 
 class TestPoisonedBranchReset:
-    """When a branch is poisoned (rebase loops), the task is reset to NOT_STARTED."""
+    """When a branch has persistent conflicts, the task is reset to NOT_STARTED."""
 
     MERGE_PROCESS = Process(
         name="merge-process",
@@ -1451,8 +1444,8 @@ class TestPoisonedBranchReset:
         ),
     )
 
-    def test_rebase_error_resets_task(self) -> None:
-        """After max_action_attempts rebase errors, task is reset and re-spawned.
+    def test_conflict_error_resets_task(self) -> None:
+        """After max_action_attempts consecutive conflict errors, task is reset and re-spawned.
 
         The reset sets status=NOT_STARTED, round=0, branch=None, pr=None.
         The SPAWN phase in the same cycle then picks it up immediately.
@@ -1465,7 +1458,7 @@ class TestPoisonedBranchReset:
         pr_url = pr_mgr.create_draft(
             "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
         )
-        pr_mgr.set_rebase_fails("hyperloop/task-001")
+        pr_mgr.set_merge_fails(pr_url)
 
         state.add_task(
             _task(
@@ -1500,7 +1493,7 @@ class TestPoisonedBranchReset:
         # New branch was assigned (old one was cleared)
         assert task.branch is not None
 
-    def test_rebase_error_fires_task_reset_probe(self) -> None:
+    def test_conflict_error_fires_task_reset_probe(self) -> None:
         """The task_reset probe event fires when a branch is reset."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
@@ -1510,7 +1503,7 @@ class TestPoisonedBranchReset:
         pr_url = pr_mgr.create_draft(
             "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
         )
-        pr_mgr.set_rebase_fails("hyperloop/task-001")
+        pr_mgr.set_merge_fails(pr_url)
 
         state.add_task(
             _task(
@@ -1539,9 +1532,9 @@ class TestPoisonedBranchReset:
         assert len(reset_calls) == 1
         assert reset_calls[0]["task_id"] == "task-001"
         assert reset_calls[0]["prior_round"] == 3
-        assert "rebase" in str(reset_calls[0]["reason"]).lower()
+        assert "conflict" in str(reset_calls[0]["reason"]).lower()
 
-    def test_rebase_error_stores_review(self) -> None:
+    def test_conflict_error_stores_review(self) -> None:
         """A review record is stored documenting the branch reset."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
@@ -1550,7 +1543,7 @@ class TestPoisonedBranchReset:
         pr_url = pr_mgr.create_draft(
             "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
         )
-        pr_mgr.set_rebase_fails("hyperloop/task-001")
+        pr_mgr.set_merge_fails(pr_url)
 
         state.add_task(
             _task(
@@ -1576,10 +1569,10 @@ class TestPoisonedBranchReset:
 
         findings = state.get_findings("task-001")
         assert "Branch reset" in findings
-        assert "rebase" in findings.lower()
+        assert "conflict" in findings.lower()
 
-    def test_non_rebase_error_loops_back(self) -> None:
-        """Non-rebase errors (e.g. merge failed) still loop back to implementer."""
+    def test_non_conflict_error_loops_back(self) -> None:
+        """Non-conflict errors (e.g. merge failed) still loop back to implementer."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         pr_mgr = FakePRManager(repo="org/repo")
@@ -1614,7 +1607,7 @@ class TestPoisonedBranchReset:
             orch.run_cycle()
 
         task = state.get_task("task-001")
-        # Non-rebase error: loops back to implementer instead of resetting
+        # Non-conflict error: loops back to implementer instead of resetting
         assert task.status == TaskStatus.IN_PROGRESS
         assert task.phase == Phase("implementer")
         assert task.round == 1
@@ -1628,7 +1621,7 @@ class TestPoisonedBranchReset:
         pr_url = pr_mgr.create_draft(
             "task-001", "hyperloop/task-001", "Widget", "specs/task-001.md"
         )
-        pr_mgr.set_rebase_fails("hyperloop/task-001")
+        pr_mgr.set_merge_fails(pr_url)
 
         state.add_task(
             _task(

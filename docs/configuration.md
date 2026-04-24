@@ -265,7 +265,7 @@ When `evaluator:` is set, the check adapter runs mechanical pre-conditions first
 
 | Action | What it does | Args |
 |---|---|---|
-| `merge-pr` | Rebase, wait for mergeable, squash-merge | -- |
+| `merge-pr` | Wait for mergeable, squash-merge | -- |
 | `mark-pr-ready` | Mark a draft PR as ready for review | -- |
 | `post-pr-comment` | Post a comment on the task's PR | `body: str` (required) |
 

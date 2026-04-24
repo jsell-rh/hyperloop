@@ -158,9 +158,9 @@ This file is the **runtime-agnostic** verdict channel. Both the SDK runtime (rea
 
 **Collision avoidance:** The orchestrator stores reviews at `.hyperloop/state/reviews/` on trunk. Workers write to `.hyperloop/worker-result.yaml` on their branch. These paths never overlap, so rebasing the branch onto trunk cannot introduce a stale verdict.
 
-**Cleanup:** The verdict file is stripped from the branch during `rebase_branch`, which runs before both spawning and merging. After rebasing onto trunk, `_remove_verdict_file` deletes the file and commits before pushing. This ensures the file never reaches trunk via squash merge, without polluting the branch with add/delete commit churn (which breaks rebase replay). Two layers enforce this:
+**Cleanup:** The verdict file is stripped from the branch during `rebase_branch`, which runs before spawning. After rebasing onto trunk, `_remove_verdict_file` deletes the file and commits before pushing. This ensures the file never reaches trunk via squash merge, without polluting the branch with add/delete commit churn (which breaks rebase replay). Two layers enforce this:
 
-1. **Primary — clean during rebase:** `rebase_branch` removes the verdict file after rebase, before push. This runs before every spawn and before every merge.
+1. **Primary — clean during rebase:** `rebase_branch` removes the verdict file after rebase, before push. This runs before every spawn.
 2. **Secondary — clean during conflict resolution:** `_resolve_rebase_state_conflicts` deletes `worker-result.yaml` if it appears as a conflict during rebase, since trunk should never contain it.
 
 ### Task Proposal
@@ -440,7 +440,7 @@ Framework-shipped actions:
 
 | Action | What it does | Args |
 |---|---|---|
-| `merge-pr` | Rebase, wait for mergeable, squash-merge | — |
+| `merge-pr` | Wait for mergeable, squash-merge | — |
 | `mark-pr-ready` | Mark a draft PR as ready for review | — |
 | `post-pr-comment` | Post a comment on the task's PR | `body: str` (required) |
 
@@ -616,7 +616,7 @@ Implements `StateStore` using files in `.hyperloop/state/` committed to the repo
 
 Sync runs once per cycle after persist, before workers spawn. This ensures workers branch from a trunk that includes the latest task files — without sync, worker PRs would include orchestrator state changes in their diffs.
 
-State files are committed to trunk. This provides full git-history auditability but creates merge conflicts when worker branches carry stale copies. The `PRMergeAction` adapter auto-resolves these: tasks/ take trunk version, reviews/ take branch version. `.hyperloop/worker-result.yaml` is deleted during rebase if present — it should never exist on trunk.
+State files are committed to trunk. This provides full git-history auditability but creates merge conflicts when worker branches carry stale copies. The pre-spawn `rebase_branch` auto-resolves these: tasks/ take trunk version, reviews/ take branch version. `.hyperloop/worker-result.yaml` is deleted during rebase if present — it should never exist on trunk.
 
 ### AgentSdkRuntime
 
@@ -632,8 +632,7 @@ Implements `ActionPort` for `merge-pr` using the `gh` CLI:
 
 - Checks PR state (OPEN/CLOSED/MERGED) before operating
 - Recreates PRs if closed or stale-merged
-- Rebases the branch onto trunk, auto-resolving `.hyperloop/state/` file conflicts and deleting `.hyperloop/worker-result.yaml` if present
-- Polls GitHub `mergeable` status after rebase (avoids race condition)
+- Polls GitHub `mergeable` status (catches conflicts without rebasing)
 - Squash-merges with trailers preserved
 
 Returns `ActionResult` with `pr_url` if the PR was recreated.

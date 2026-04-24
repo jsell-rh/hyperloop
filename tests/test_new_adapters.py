@@ -137,13 +137,13 @@ class TestPRMergeAction:
         pr = _pr_manager()
         action = PRMergeAction(pr=pr, base_branch="main")
         pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        pr.set_rebase_fails("hyperloop/task-001")
+        pr.set_merge_fails(pr_url)
 
         task = _task(pr=pr_url)
         result = action.execute(task, "merge-pr", {})
 
         assert result.outcome == ActionOutcome.ERROR
-        assert "Rebase conflict" in result.detail
+        assert "not mergeable" in result.detail.lower()
 
     def test_closed_pr_recreated(self) -> None:
         pr = _pr_manager()
