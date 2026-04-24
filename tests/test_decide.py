@@ -85,7 +85,7 @@ class TestSingleTaskSpawning:
         assert len(spawns) == 0
 
     def test_not_started_with_met_deps_spawns_worker(self):
-        dep = _task(id="task-002", status=TaskStatus.COMPLETE)
+        dep = _task(id="task-002", status=TaskStatus.COMPLETED)
         t = _task(deps=("task-002",))
         tasks = {t.id: t, dep.id: dep}
         actions = decide(_world(tasks=tasks), max_workers=4, max_task_rounds=50)
@@ -137,8 +137,8 @@ class TestReaping:
 
 class TestConvergence:
     def test_all_complete_no_workers_halts(self):
-        t1 = _task(id="task-001", status=TaskStatus.COMPLETE)
-        t2 = _task(id="task-002", status=TaskStatus.COMPLETE)
+        t1 = _task(id="task-001", status=TaskStatus.COMPLETED)
+        t2 = _task(id="task-002", status=TaskStatus.COMPLETED)
         actions = decide(
             _world(tasks={t1.id: t1, t2.id: t2}),
             max_workers=4,
@@ -252,7 +252,7 @@ class TestMixedScenarios:
 
     def test_completed_and_failed_tasks_not_spawned(self):
         """Tasks that are already complete or failed should not be spawned."""
-        complete = _task(id="task-001", status=TaskStatus.COMPLETE)
+        complete = _task(id="task-001", status=TaskStatus.COMPLETED)
         failed = _task(id="task-002", status=TaskStatus.FAILED)
         ready = _task(id="task-003")
         tasks = {complete.id: complete, failed.id: failed, ready.id: ready}

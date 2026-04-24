@@ -6,7 +6,7 @@ All types are pure data with no I/O dependencies.
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal, NewType
 
@@ -20,7 +20,8 @@ class TaskStatus(Enum):
 
     NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"
-    COMPLETE = "complete"
+    COMPLETE = "complete"  # kept for backward compatibility
+    COMPLETED = "completed"
     FAILED = "failed"
 
 
@@ -90,7 +91,60 @@ class TaskProposal:
 
 
 # ---------------------------------------------------------------------------
-# Pipeline primitives
+# Reconciler types — flat phase map replacing nested pipelines
+# ---------------------------------------------------------------------------
+
+
+class StepOutcome(Enum):
+    """Result category from executing a phase step."""
+
+    ADVANCE = "advance"
+    RETRY = "retry"
+    WAIT = "wait"
+
+
+@dataclass(frozen=True)
+class StepResult:
+    """Value object returned by step execution."""
+
+    outcome: StepOutcome
+    detail: str
+    pr_url: str | None = None
+
+
+class SignalStatus(Enum):
+    """Status of an external signal (gate replacement)."""
+
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    PENDING = "pending"
+
+
+@dataclass(frozen=True)
+class Signal:
+    """Value object returned by signal checks."""
+
+    status: SignalStatus
+    message: str
+
+
+@dataclass(frozen=True)
+class PhaseStep:
+    """A single step in a flat phase map."""
+
+    run: str
+    on_pass: str
+    on_fail: str
+    on_wait: str | None = None
+    args: dict[str, object] = field(default_factory=dict)
+
+
+PhaseMap = dict[str, PhaseStep]
+"""Flat mapping of phase name to step definition."""
+
+
+# ---------------------------------------------------------------------------
+# Pipeline primitives (legacy — kept for backward compatibility)
 # ---------------------------------------------------------------------------
 
 
@@ -163,10 +217,16 @@ class PipelinePosition:
 
 @dataclass(frozen=True)
 class Process:
-    """A named process with a per-task pipeline."""
+    """A named process with a per-task pipeline.
+
+    Supports both the legacy nested pipeline and the new flat phase map.
+    New code should use ``phases``; ``pipeline`` is kept for backward
+    compatibility during the migration.
+    """
 
     name: str
-    pipeline: tuple[PipelineStep, ...]
+    pipeline: tuple[PipelineStep, ...] = ()
+    phases: PhaseMap = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
