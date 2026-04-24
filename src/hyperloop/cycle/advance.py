@@ -523,14 +523,15 @@ def _advance_action(
 
     if result.outcome == ActionOutcome.SUCCESS:
         action_attempts.pop(task.id, None)
-        probe.merge_attempted(
-            task_id=task.id,
-            branch=task.branch or f"{BRANCH_PREFIX}/{task.id}",
-            spec_ref=task.spec_ref,
-            outcome="merged",
-            attempt=0,
-            cycle=cycle,
-        )
+        if step.action == "merge-pr":
+            probe.merge_attempted(
+                task_id=task.id,
+                branch=task.branch or f"{BRANCH_PREFIX}/{task.id}",
+                spec_ref=task.spec_ref,
+                outcome="merged",
+                attempt=0,
+                cycle=cycle,
+            )
 
         # Advance past action or complete
         advanced = PipelineExecutor.advance_from(executor.pipeline, pos.path)
