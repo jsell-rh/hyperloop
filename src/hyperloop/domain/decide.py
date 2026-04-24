@@ -23,7 +23,7 @@ def _deps_met(task: Task, tasks: dict[str, Task]) -> bool:
     """Check if all dependencies of a task are complete."""
     for dep_id in task.deps:
         dep = tasks.get(dep_id)
-        if dep is None or dep.status != TaskStatus.COMPLETE:
+        if dep is None or dep.status != TaskStatus.COMPLETED:
             return False
     return True
 
@@ -93,7 +93,7 @@ def decide(world: World, max_workers: int, max_task_rounds: int) -> list[Action]
     no_workers = len(world.workers) == 0
 
     if world.tasks and no_workers:
-        all_complete = all(t.status == TaskStatus.COMPLETE for t in world.tasks.values())
+        all_complete = all(t.status == TaskStatus.COMPLETED for t in world.tasks.values())
         if all_complete:
             actions.append(Halt(reason="all tasks complete"))
         elif not eligible:
