@@ -29,6 +29,7 @@ from hyperloop.domain.model import (
     WorkerHandle,
 )
 from hyperloop.domain.reconciler import (
+    Summary,
     check_convergence_needed,
     detect_coverage_gaps,
     detect_freshness_drift,
@@ -368,8 +369,11 @@ class Orchestrator:
         if not current_specs:
             return
 
+        # Load summaries from state
+        summaries = self._load_summaries()
+
         # Coverage gaps
-        coverage_gaps = detect_coverage_gaps(tasks, current_specs, {})
+        coverage_gaps = detect_coverage_gaps(tasks, current_specs, summaries)
         for gap in coverage_gaps:
             self._probe.drift_detected(
                 spec_path=gap.spec_path, drift_type=gap.drift_type, detail=gap.detail
@@ -382,7 +386,7 @@ class Orchestrator:
         for spec_path in current_specs:
             spec_versions[spec_path] = current_version
 
-        freshness_drifts = detect_freshness_drift(tasks, spec_versions)
+        freshness_drifts = detect_freshness_drift(tasks, spec_versions, summaries)
         for drift in freshness_drifts:
             self._probe.drift_detected(
                 spec_path=drift.spec_path, drift_type=drift.drift_type, detail=drift.detail
@@ -413,6 +417,14 @@ class Orchestrator:
             else:
                 self._probe.audit_ran(
                     spec_ref=spec_ref, result="misaligned", cycle=cycle_num, duration_s=duration_s
+                )
+                # Store audit finding so it is available to process-improver and PM
+                self._state.store_review(
+                    task_id=f"audit-{spec_ref}",
+                    round=0,
+                    role="auditor",
+                    verdict="fail",
+                    detail=f"Alignment audit failed for {spec_ref}",
                 )
                 self._has_drift = True
 
@@ -495,6 +507,8 @@ class Orchestrator:
             task_ages=self._task_ages,
         )
         for action in gc_actions:
+            task = world.tasks[action.task_id]
+            self._write_gc_summary(task)
             self._state.delete_task(action.task_id)
         if gc_actions:
             self._probe.gc_ran(
@@ -502,6 +516,61 @@ class Orchestrator:
                 cycle=cycle_num,
             )
         self._gc_last_cycle = cycle_num
+
+    def _load_summaries(self) -> dict[str, Summary]:
+        """Load all summaries from the state store and parse into Summary objects."""
+        import yaml
+
+        raw_summaries = self._state.list_summaries()
+        summaries: dict[str, Summary] = {}
+        for spec_path, content in raw_summaries.items():
+            parsed = yaml.safe_load(content)
+            if not isinstance(parsed, dict):
+                continue
+            summaries[spec_path] = Summary(
+                spec_path=parsed.get("spec_path", spec_path),
+                spec_ref=parsed.get("spec_ref", spec_path),
+                total_tasks=parsed.get("total_tasks", 0),
+                completed=parsed.get("completed", 0),
+                failed=parsed.get("failed", 0),
+                failure_themes=parsed.get("failure_themes", []),
+                last_audit=parsed.get("last_audit"),
+                last_audit_result=parsed.get("last_audit_result"),
+            )
+        return summaries
+
+    def _write_gc_summary(self, task: Task) -> None:
+        """Build and store a Summary record for a task being pruned by GC."""
+        import yaml
+
+        spec_path = task.spec_ref.split("@")[0]
+
+        summary = Summary(
+            spec_path=spec_path,
+            spec_ref=task.spec_ref,
+            total_tasks=1,
+            completed=1 if task.status == TaskStatus.COMPLETED else 0,
+            failed=1 if task.status == TaskStatus.FAILED else 0,
+            failure_themes=[],
+            last_audit=None,
+            last_audit_result=None,
+        )
+
+        summary_yaml = yaml.dump(
+            {
+                "spec_path": summary.spec_path,
+                "spec_ref": summary.spec_ref,
+                "total_tasks": summary.total_tasks,
+                "completed": summary.completed,
+                "failed": summary.failed,
+                "failure_themes": summary.failure_themes,
+                "last_audit": summary.last_audit,
+                "last_audit_result": summary.last_audit_result,
+            },
+            default_flow_style=False,
+            sort_keys=False,
+        )
+        self._state.store_summary(spec_path, summary_yaml)
 
     # -- Apply helpers -------------------------------------------------------
 

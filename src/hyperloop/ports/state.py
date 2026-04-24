@@ -95,6 +95,18 @@ class StateStore(Protocol):
         """Remove a task from the store (used by GC pruning)."""
         ...
 
+    def store_summary(self, spec_path: str, summary_data: str) -> None:
+        """Write a summary record for a spec (YAML content)."""
+        ...
+
+    def get_summary(self, spec_path: str) -> str | None:
+        """Read a summary record for a spec. Returns None if not found."""
+        ...
+
+    def list_summaries(self) -> dict[str, str]:
+        """Return all summary records as {spec_path: yaml_content}."""
+        ...
+
     def sync(self) -> None:
         """Sync state with remote (pull then push). Called once per cycle boundary."""
         ...

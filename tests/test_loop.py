@@ -1864,3 +1864,288 @@ class TestPMReceivesFailureDetails:
         # The prompt should contain the actual failure detail, not just the task ID
         pm_prompt = pm_runs[0].prompt
         assert "timeout handling missing" in pm_prompt
+
+
+# ---------------------------------------------------------------------------
+# Gap: GC writes summaries before deleting tasks
+# ---------------------------------------------------------------------------
+
+
+class TestGCWritesSummary:
+    """GC must write a summary record before deleting a task."""
+
+    def test_gc_writes_summary_before_delete(self) -> None:
+        """After GC prunes a completed task, a summary exists in the state store."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        state.add_task(
+            Task(
+                id="task-old",
+                title="Old task",
+                spec_ref="specs/auth.md@abc123",
+                status=TaskStatus.COMPLETED,
+                phase=None,
+                deps=(),
+                round=2,
+                branch="hyperloop/task-old",
+                pr=None,
+            )
+        )
+        state.set_file("specs/auth.md", "Auth spec content")
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            probe=probe,
+            gc_retention_days=30,
+            gc_run_every_cycles=1,
+        )
+        orch._task_ages = {"task-old": 45.0}
+
+        orch.run_cycle()
+
+        # Task should be pruned
+        with pytest.raises(KeyError):
+            state.get_task("task-old")
+
+        # Summary should exist for the spec
+        summary_content = state.get_summary("specs/auth.md")
+        assert summary_content is not None
+        assert "auth.md" in summary_content
+        assert "abc123" in summary_content
+
+    def test_gc_writes_summary_for_failed_task(self) -> None:
+        """GC writes summary for failed tasks too, with failed count."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        state.add_task(
+            Task(
+                id="task-fail",
+                title="Failed task",
+                spec_ref="specs/widget.md@def456",
+                status=TaskStatus.FAILED,
+                phase=None,
+                deps=(),
+                round=5,
+                branch="hyperloop/task-fail",
+                pr=None,
+            )
+        )
+        state.set_file("specs/widget.md", "Widget spec content")
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            probe=probe,
+            gc_retention_days=30,
+            gc_run_every_cycles=1,
+        )
+        orch._task_ages = {"task-fail": 45.0}
+
+        orch.run_cycle()
+
+        summary_content = state.get_summary("specs/widget.md")
+        assert summary_content is not None
+        assert "failed" in summary_content
+
+
+# ---------------------------------------------------------------------------
+# Gap: Summary-aware coverage prevents re-creation
+# ---------------------------------------------------------------------------
+
+
+class TestSummaryPreventsCoverageGap:
+    """A summary record prevents coverage gap detection after GC prunes tasks."""
+
+    def test_summary_prevents_coverage_gap(self) -> None:
+        """After GC prunes a task, next coverage check finds summary and skips intake."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        # Another task exists so the cycle doesn't halt
+        state.add_task(
+            _task(
+                id="task-active",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("implement"),
+            )
+        )
+        state.set_file("specs/task-active.md", "Active spec")
+        # Spec exists but has no task (was GC'd)
+        state.set_file("specs/auth.md", "Auth spec content")
+
+        # Pre-store a summary for auth.md (as if GC wrote it)
+        import yaml
+
+        summary_data = yaml.dump(
+            {
+                "spec_path": "specs/auth.md",
+                "spec_ref": "specs/auth.md@abc123",
+                "total_tasks": 1,
+                "completed": 1,
+                "failed": 0,
+                "failure_themes": [],
+                "last_audit": None,
+                "last_audit_result": None,
+            }
+        )
+        state.store_summary("specs/auth.md", summary_data)
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/auth.md", "Auth spec content")
+        spec_source.add_spec("specs/task-active.md", "Active spec")
+        spec_source.set_version("abc123")
+
+        orch = _make_orchestrator(state, runtime, probe=probe, spec_source=spec_source)
+        orch.run_cycle()
+
+        # Should NOT detect coverage gap for auth.md
+        drift_calls = probe.of_method("drift_detected")
+        coverage_drifts = [
+            c
+            for c in drift_calls
+            if c["drift_type"] == "coverage" and "auth" in str(c["spec_path"])
+        ]
+        assert len(coverage_drifts) == 0
+
+    def test_summary_with_stale_sha_does_not_prevent_coverage_gap(self) -> None:
+        """Summary exists but spec SHA changed -- coverage gap should still trigger."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        state.add_task(
+            _task(
+                id="task-active",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("implement"),
+            )
+        )
+        state.set_file("specs/task-active.md", "Active spec")
+        state.set_file("specs/auth.md", "Auth spec content v2")
+
+        import yaml
+
+        # Summary references old SHA
+        summary_data = yaml.dump(
+            {
+                "spec_path": "specs/auth.md",
+                "spec_ref": "specs/auth.md@oldsha",
+                "total_tasks": 1,
+                "completed": 1,
+                "failed": 0,
+                "failure_themes": [],
+                "last_audit": None,
+                "last_audit_result": None,
+            }
+        )
+        state.store_summary("specs/auth.md", summary_data)
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/auth.md", "Auth spec content v2")
+        spec_source.add_spec("specs/task-active.md", "Active spec")
+        spec_source.set_version("newsha")  # Different from summary's oldsha
+
+        orch = _make_orchestrator(state, runtime, probe=probe, spec_source=spec_source)
+        orch.run_cycle()
+
+        # Should detect freshness drift for auth.md (summary has stale SHA)
+        drift_calls = probe.of_method("drift_detected")
+        auth_drifts = [c for c in drift_calls if "auth" in str(c["spec_path"])]
+        assert len(auth_drifts) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Gap: Audit misalignment stores finding
+# ---------------------------------------------------------------------------
+
+
+class TestAuditMisalignmentStoresFinding:
+    """When auditor finds misalignment, finding is stored in state store."""
+
+    def test_audit_misalignment_stores_finding(self) -> None:
+        """Auditor fails -> finding stored as review in state."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(
+            Task(
+                id="task-001",
+                title="Task 001",
+                spec_ref="specs/auth.md@abc123",
+                status=TaskStatus.COMPLETED,
+                phase=None,
+                deps=(),
+                round=1,
+                branch="hyperloop/task-001",
+                pr=None,
+            )
+        )
+        state.set_file("specs/auth.md", "Auth spec content")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/auth.md", "Auth spec content")
+        spec_source.set_version("abc123")
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        # Auditor fails (misaligned)
+        runtime.set_serial_default_success(False)
+
+        orch.run_cycle()
+
+        # A review should have been stored for the audit finding
+        findings = state.get_findings("audit-specs/auth.md@abc123")
+        assert findings != ""
+
+    def test_audit_finding_passed_to_pm(self) -> None:
+        """After audit failure, PM intake includes audit finding in prompt."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(
+            Task(
+                id="task-001",
+                title="Task 001",
+                spec_ref="specs/auth.md@abc123",
+                status=TaskStatus.COMPLETED,
+                phase=None,
+                deps=(),
+                round=1,
+                branch="hyperloop/task-001",
+                pr=None,
+            )
+        )
+        state.set_file("specs/auth.md", "Auth spec content")
+        # Add an uncovered spec so PM intake triggers
+        state.set_file("specs/uncovered.spec.md", "New spec")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/auth.md", "Auth spec content")
+        spec_source.add_spec("specs/uncovered.spec.md", "New spec")
+        spec_source.set_version("abc123")
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        # Auditor fails (misaligned) -- this sets _has_drift = True
+        runtime.set_serial_default_success(False)
+
+        orch.run_cycle()
+
+        # Drift should have been detected (misalignment sets _has_drift)
+        assert any(c["result"] == "misaligned" for c in probe.of_method("audit_ran"))
+
+        # PM intake should have been triggered (because _has_drift was set)
+        pm_runs = [r for r in runtime.serial_runs if r.role == "pm"]
+        assert len(pm_runs) >= 1

@@ -124,10 +124,12 @@ def detect_coverage_gaps(
 def detect_freshness_drift(
     tasks: dict[str, Task],
     spec_versions: dict[str, str],
+    summaries: dict[str, Summary] | None = None,
 ) -> list[DriftResult]:
-    """Find specs where task SHA differs from current HEAD SHA (freshness tier).
+    """Find specs where task or summary SHA differs from current HEAD SHA.
 
     Groups tasks by spec path, then compares pinned SHA against current version.
+    Also checks summaries for stale SHAs when no tasks exist for a spec.
     """
     spec_shas: dict[str, set[str]] = {}
     for task in tasks.values():
@@ -135,6 +137,14 @@ def detect_freshness_drift(
         sha = _extract_sha(task.spec_ref)
         if sha is not None:
             spec_shas.setdefault(path, set()).add(sha)
+
+    # Include summary SHAs for specs with no active tasks
+    if summaries is not None:
+        for spec_path, summary in summaries.items():
+            if spec_path not in spec_shas:
+                summary_sha = _extract_sha(summary.spec_ref)
+                if summary_sha is not None:
+                    spec_shas.setdefault(spec_path, set()).add(summary_sha)
 
     results: list[DriftResult] = []
     for spec_path, current_sha in spec_versions.items():

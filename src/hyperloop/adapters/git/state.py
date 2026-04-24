@@ -604,6 +604,58 @@ class GitStateStore:
         # Buffer an empty string; persist() will handle deletion
         self._buffer[path] = ""
 
+    def store_summary(self, spec_path: str, summary_data: str) -> None:
+        """Write a summary record for a spec (YAML content) to the state branch."""
+        self._ensure_bootstrapped()
+        # Normalize spec_path to a safe filename: specs/auth.md -> specs-auth.md.yaml
+        safe_name = spec_path.replace("/", "-")
+        path = f"{STATE_PREFIX}/summaries/{safe_name}.yaml"
+        self._buffer[path] = summary_data
+
+    def get_summary(self, spec_path: str) -> str | None:
+        """Read a summary record for a spec from the state branch or buffer."""
+        self._ensure_bootstrapped()
+        safe_name = spec_path.replace("/", "-")
+        path = f"{STATE_PREFIX}/summaries/{safe_name}.yaml"
+        if path in self._buffer:
+            content = self._buffer[path]
+            return content if content else None
+        return self._git_show(path)
+
+    def list_summaries(self) -> dict[str, str]:
+        """Return all summary records as {spec_path: yaml_content}."""
+        self._ensure_bootstrapped()
+        summaries: dict[str, str] = {}
+
+        # Read from branch
+        tree_output = self._git_try("ls-tree", "-r", "--name-only", STATE_BRANCH)
+        if tree_output:
+            prefix = f"{STATE_PREFIX}/summaries/"
+            for line in tree_output.splitlines():
+                if line.startswith(prefix) and line.endswith(".yaml"):
+                    filename = line[len(prefix) :]
+                    if filename == ".gitkeep":
+                        continue
+                    # Reverse the safe_name: specs-auth.md.yaml -> specs/auth.md
+                    spec_path = filename.removesuffix(".yaml").replace("-", "/", 1)
+                    if line not in self._buffer:
+                        content = self._git_show(line)
+                        if content is not None:
+                            summaries[spec_path] = content
+
+        # Overlay buffered summaries
+        prefix = f"{STATE_PREFIX}/summaries/"
+        for path, content in self._buffer.items():
+            if path.startswith(prefix) and path.endswith(".yaml"):
+                filename = path[len(prefix) :]
+                if filename == ".gitkeep":
+                    continue
+                spec_path = filename.removesuffix(".yaml").replace("-", "/", 1)
+                if content:
+                    summaries[spec_path] = content
+
+        return summaries
+
     def persist(self, message: str) -> None:
         """Commit buffered changes to the state branch via git plumbing.
 

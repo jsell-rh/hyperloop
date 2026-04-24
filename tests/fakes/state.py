@@ -34,6 +34,7 @@ class InMemoryStateStore:
         self._reviews: list[ReviewRecord] = []
         self._epochs: dict[str, str] = {}
         self._files: dict[str, str] = {}
+        self._summaries: dict[str, str] = {}
         self.committed_messages: list[str] = []
 
     # -- Setup helpers (for tests) ------------------------------------------
@@ -200,6 +201,18 @@ class InMemoryStateStore:
     def delete_task(self, task_id: str) -> None:
         """Remove a task from the store (used by GC pruning)."""
         self._tasks.pop(task_id, None)
+
+    def store_summary(self, spec_path: str, summary_data: str) -> None:
+        """Write a summary record for a spec (YAML content)."""
+        self._summaries[spec_path] = summary_data
+
+    def get_summary(self, spec_path: str) -> str | None:
+        """Read a summary record for a spec. Returns None if not found."""
+        return self._summaries.get(spec_path)
+
+    def list_summaries(self) -> dict[str, str]:
+        """Return all summary records as {spec_path: yaml_content}."""
+        return dict(self._summaries)
 
     def persist(self, message: str) -> None:
         """Record the persist message (no-op for in-memory, but stores for test assertions)."""
