@@ -8,13 +8,20 @@ from __future__ import annotations
 
 from hyperloop.domain.model import (
     Phase,
+    Signal,
+    SignalStatus,
+    StepOutcome,
+    StepResult,
     Task,
     TaskStatus,
     Verdict,
     WorkerResult,
 )
+from tests.fakes.channel import FakeChannelPort
 from tests.fakes.runtime import InMemoryRuntime
+from tests.fakes.signal import FakeSignalPort
 from tests.fakes.state import InMemoryStateStore
+from tests.fakes.step_executor import FakeStepExecutor
 
 # ---------------------------------------------------------------------------
 # InMemoryStateStore contract tests
@@ -94,7 +101,7 @@ class TestStateStoreTransition:
         )
         store.add_task(task)
 
-        store.transition_task("task-002", TaskStatus.COMPLETE, None)
+        store.transition_task("task-002", TaskStatus.COMPLETED, None)
 
         updated = store.get_task("task-002")
         assert updated.title == "Build API"
@@ -353,3 +360,102 @@ class TestRuntimeFindOrphan:
         runtime = InMemoryRuntime()
         orphan = runtime.find_orphan("task-999", "hyperloop/task-999")
         assert orphan is None
+
+
+# ---------------------------------------------------------------------------
+# Helper
+# ---------------------------------------------------------------------------
+
+
+def _task(task_id: str = "task-001") -> Task:
+    return Task(
+        id=task_id,
+        title="Test",
+        spec_ref="specs/test.md",
+        status=TaskStatus.IN_PROGRESS,
+        phase=None,
+        deps=(),
+        round=1,
+        branch="hyperloop/task-001",
+        pr=None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# FakeStepExecutor basic tests
+# ---------------------------------------------------------------------------
+
+
+class TestFakeStepExecutor:
+    def test_construct_and_execute(self) -> None:
+        executor = FakeStepExecutor()
+        result = executor.execute(_task(), "merge", {})
+        assert result.outcome == StepOutcome.ADVANCE
+        assert result.detail == "OK"
+
+    def test_configure_and_retrieve(self) -> None:
+        executor = FakeStepExecutor()
+        fail_result = StepResult(outcome=StepOutcome.RETRY, detail="fail")
+        executor.set_result("task-001", "lint", fail_result)
+
+        result = executor.execute(_task(), "lint", {})
+        assert result.outcome == StepOutcome.RETRY
+
+    def test_records_calls(self) -> None:
+        executor = FakeStepExecutor()
+        executor.execute(_task(), "merge", {"force": True})
+        assert len(executor.executed) == 1
+        assert executor.executed[0] == ("task-001", "merge", {"force": True})
+
+
+# ---------------------------------------------------------------------------
+# FakeSignalPort basic tests
+# ---------------------------------------------------------------------------
+
+
+class TestFakeSignalPort:
+    def test_construct_and_check(self) -> None:
+        port = FakeSignalPort()
+        signal = port.check(_task(), "review", {})
+        assert signal.status == SignalStatus.PENDING
+
+    def test_configure_and_retrieve(self) -> None:
+        port = FakeSignalPort()
+        port.set_signal("task-001", "review", Signal(status=SignalStatus.APPROVED, message="ok"))
+
+        signal = port.check(_task(), "review", {})
+        assert signal.status == SignalStatus.APPROVED
+
+    def test_records_calls(self) -> None:
+        port = FakeSignalPort()
+        port.check(_task(), "ci", {"verbose": True})
+        assert len(port.checked) == 1
+        assert port.checked[0] == ("task-001", "ci", {"verbose": True})
+
+
+# ---------------------------------------------------------------------------
+# FakeChannelPort basic tests
+# ---------------------------------------------------------------------------
+
+
+class TestFakeChannelPort:
+    def test_construct(self) -> None:
+        channel = FakeChannelPort()
+        assert channel.gate_blocked_calls == []
+        assert channel.task_errored_calls == []
+        assert channel.worker_crashed_calls == []
+
+    def test_gate_blocked(self) -> None:
+        channel = FakeChannelPort()
+        channel.gate_blocked(task=_task(), signal_name="review")
+        assert len(channel.gate_blocked_calls) == 1
+
+    def test_task_errored(self) -> None:
+        channel = FakeChannelPort()
+        channel.task_errored(task=_task(), detail="boom")
+        assert channel.task_errored_calls[0] == ("task-001", "boom")
+
+    def test_worker_crashed(self) -> None:
+        channel = FakeChannelPort()
+        channel.worker_crashed(task=_task(), role="impl", branch="b")
+        assert channel.worker_crashed_calls[0] == ("task-001", "impl", "b")
