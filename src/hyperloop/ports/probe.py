@@ -64,7 +64,7 @@ class OrchestratorProbe(Protocol):
         active_workers: int,
         not_started: int,
         in_progress: int,
-        complete: int,
+        completed: int,
         failed: int,
     ) -> None:
         """Serial section began."""
@@ -77,7 +77,7 @@ class OrchestratorProbe(Protocol):
         active_workers: int,
         not_started: int,
         in_progress: int,
-        complete: int,
+        completed: int,
         failed: int,
         spawned_ids: tuple[str, ...],
         reaped_ids: tuple[str, ...],
@@ -137,7 +137,7 @@ class OrchestratorProbe(Protocol):
         """Task moved to a new pipeline phase or status."""
         ...
 
-    def task_looped_back(
+    def task_retried(
         self,
         *,
         task_id: str,
@@ -146,7 +146,7 @@ class OrchestratorProbe(Protocol):
         cycle: int,
         findings_preview: str,
     ) -> None:
-        """Verification failed, task restarting the pipeline loop."""
+        """Verification failed, task retrying from earlier phase."""
         ...
 
     def task_completed(
@@ -189,15 +189,16 @@ class OrchestratorProbe(Protocol):
     # Pipeline: gates, merges, conflicts
     # ------------------------------------------------------------------
 
-    def gate_checked(
+    def signal_checked(
         self,
         *,
         task_id: str,
-        gate: str,
-        cleared: bool,
+        signal_name: str,
+        status: str,
+        message: str,
         cycle: int,
     ) -> None:
-        """A gate was polled for a task."""
+        """A signal was checked for a task."""
         ...
 
     def merge_attempted(
@@ -213,31 +214,9 @@ class OrchestratorProbe(Protocol):
         """PR merge was attempted (whether or not it succeeded)."""
         ...
 
-    def rebase_conflict(
-        self,
-        *,
-        task_id: str,
-        branch: str,
-        attempt: int,
-        max_attempts: int,
-        looping_back: bool,
-        cycle: int,
-    ) -> None:
-        """Rebase failed; task deferred or sent back through pipeline."""
-        ...
-
     # ------------------------------------------------------------------
     # Serial agents
     # ------------------------------------------------------------------
-
-    def intake_specs_detected(
-        self,
-        *,
-        specs: tuple[str, ...],
-        cycle: int,
-    ) -> None:
-        """Specs that need PM attention were detected (new or modified)."""
-        ...
 
     def intake_ran(
         self,
@@ -339,16 +318,6 @@ class OrchestratorProbe(Protocol):
         """A draft PR was created for a task."""
         ...
 
-    def pr_label_changed(
-        self,
-        *,
-        pr_url: str,
-        label: str,
-        added: bool,
-    ) -> None:
-        """A label was added to or removed from a PR."""
-        ...
-
     def pr_marked_ready(
         self,
         *,
@@ -357,14 +326,72 @@ class OrchestratorProbe(Protocol):
         """A PR was marked as ready for review."""
         ...
 
-    def branch_pushed(
-        self,
-        *,
-        branch: str,
-    ) -> None:
-        """A branch was pushed to the remote."""
-        ...
-
     def state_synced(self) -> None:
         """State was synced with remote (pull + push)."""
+        ...
+
+    # ------------------------------------------------------------------
+    # Reconciler lifecycle
+    # ------------------------------------------------------------------
+
+    def drift_detected(
+        self,
+        *,
+        spec_path: str,
+        drift_type: str,
+        detail: str,
+    ) -> None:
+        """Drift was detected between spec and live state."""
+        ...
+
+    def audit_ran(
+        self,
+        *,
+        spec_ref: str,
+        result: str,
+        cycle: int,
+        duration_s: float,
+    ) -> None:
+        """Audit check completed for a spec."""
+        ...
+
+    def gc_ran(
+        self,
+        *,
+        pruned_count: int,
+        cycle: int,
+    ) -> None:
+        """Garbage collection pruned stale resources."""
+        ...
+
+    def convergence_marked(
+        self,
+        *,
+        spec_path: str,
+        spec_ref: str,
+        cycle: int,
+    ) -> None:
+        """A spec was marked as converged."""
+        ...
+
+    def worker_crash_detected(
+        self,
+        *,
+        task_id: str,
+        role: str,
+        branch: str,
+    ) -> None:
+        """A crashed worker was detected."""
+        ...
+
+    def step_executed(
+        self,
+        *,
+        task_id: str,
+        step_name: str,
+        outcome: str,
+        detail: str,
+        cycle: int,
+    ) -> None:
+        """A phase step was executed."""
         ...

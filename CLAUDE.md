@@ -1,6 +1,6 @@
 # hyperloop
 
-An orchestrator that walks tasks through composable process pipelines using AI agents.
+A spec-to-code reconciler. Specs declare desired behavior. Code is actual behavior. Hyperloop detects gaps and dispatches AI agents to close them.
 
 ## Quick Start
 
@@ -103,4 +103,11 @@ Ports define what the domain needs from the outside world. Adapters fulfill thos
 
 ## Specs
 
-The spec index lives at `specs/index.spec.md`. It is the table of contents for all spec files. The main product spec is `specs/spec.md`. If code and spec disagree, align the code to the spec.
+The spec index lives at [`specs/index.spec.md`](specs/index.spec.md). It is the table of contents for all spec files. If code and spec disagree, align the code to the spec.
+
+Key specs:
+- **[Architecture](specs/architecture.spec.md)** — system identity, two-subsystem design, data model, ports
+- **[Reconciler](specs/reconciler.spec.md)** — drift detection, PM intake, audit, GC
+- **[Task Processor](specs/task-processor.spec.md)** — phase map, step execution, deterministic workflow
+- **[Ports](specs/ports.spec.md)** — contracts for all seven port interfaces
+- **[NFR](specs/nfr.spec.md)** — fakes over mocks, contract tests, scenario test coverage
