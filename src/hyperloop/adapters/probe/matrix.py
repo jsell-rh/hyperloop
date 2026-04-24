@@ -347,7 +347,6 @@ class MatrixProbe:
         pass
 
     # ------------------------------------------------------------------
-    # Backward-compatible aliases for call sites not yet migrated
     # ------------------------------------------------------------------
 
     def gate_checked(self, **kw: object) -> None:

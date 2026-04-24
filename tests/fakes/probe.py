@@ -124,7 +124,6 @@ class RecordingProbe:
         self._record("state_synced", **kw)
 
     # ------------------------------------------------------------------
-    # Backward-compatible shims for call sites not yet migrated
     # ------------------------------------------------------------------
 
     def gate_checked(self, **kw: object) -> None:

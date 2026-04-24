@@ -106,7 +106,6 @@ class NullProbe:
     def state_synced(self, **_: object) -> None:
         pass
 
-    # Backward-compatible aliases for call sites not yet migrated
     def gate_checked(self, **_: object) -> None:
         pass
 
@@ -230,7 +229,6 @@ class MultiProbe:
     def state_synced(self, **kw: object) -> None:
         self._call("state_synced", **kw)
 
-    # Backward-compatible aliases for call sites not yet migrated
     def gate_checked(self, **kw: object) -> None:
         self._call("gate_checked", **kw)
 

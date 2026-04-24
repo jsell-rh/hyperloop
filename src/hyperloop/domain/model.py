@@ -20,7 +20,7 @@ class TaskStatus(Enum):
 
     NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"
-    COMPLETE = "complete"  # kept for backward compatibility
+    COMPLETE = "complete"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -144,7 +144,7 @@ PhaseMap = dict[str, PhaseStep]
 
 
 # ---------------------------------------------------------------------------
-# Pipeline primitives (legacy — kept for backward compatibility)
+
 # ---------------------------------------------------------------------------
 
 
@@ -220,8 +220,6 @@ class Process:
     """A named process with a per-task pipeline.
 
     Supports both the legacy nested pipeline and the new flat phase map.
-    New code should use ``phases``; ``pipeline`` is kept for backward
-    compatibility during the migration.
     """
 
     name: str

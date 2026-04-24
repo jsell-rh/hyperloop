@@ -199,7 +199,6 @@ class StructlogProbe:
         self._log.debug("state_synced", **kw)
 
     # ------------------------------------------------------------------
-    # Backward-compatible aliases for call sites not yet migrated
     # ------------------------------------------------------------------
 
     def gate_checked(self, **kw: object) -> None:
