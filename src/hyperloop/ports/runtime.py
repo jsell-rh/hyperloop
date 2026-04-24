@@ -5,12 +5,10 @@ Implementations: AgentSdkRuntime (worktrees + Claude Agent SDK).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from hyperloop.domain.model import WorkerHandle, WorkerResult
-
-WorkerPollStatus = Literal["running", "done", "failed"]
+    from hyperloop.domain.model import WorkerHandle, WorkerPollStatus, WorkerResult
 
 
 class Runtime(Protocol):

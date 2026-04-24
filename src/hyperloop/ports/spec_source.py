@@ -6,7 +6,10 @@ Implementations: GitSpecSource (git diff + git show).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from hyperloop.domain.model import SpecChangeType
 
 
 @dataclass(frozen=True)
@@ -14,7 +17,7 @@ class SpecChange:
     """A spec file that changed since the last version."""
 
     path: str
-    change_type: str  # "added", "modified", "deleted"
+    change_type: SpecChangeType
 
 
 class SpecSource(Protocol):

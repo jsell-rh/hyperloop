@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from hyperloop.adapters.ambient.runtime import AmbientRuntime
-from hyperloop.domain.model import Verdict
+from hyperloop.domain.model import Verdict, WorkerPollStatus
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -251,18 +251,18 @@ class TestPoll:
 
         # SSE fires immediately in default behaviour, give thread a moment
         time.sleep(0.5)
-        assert rt.poll(handle) == "done"
+        assert rt.poll(handle) == WorkerPollStatus.DONE
 
     def test_poll_returns_running_then_done(self, slow_acpctl: str, git_repo: str) -> None:
         rt = _make_runtime(slow_acpctl, git_repo)
         handle = rt.spawn("task-001", "implementer", "Work.", "feat/task-001")
 
         # Immediately should be running (SSE delays 0.3s)
-        assert rt.poll(handle) == "running"
+        assert rt.poll(handle) == WorkerPollStatus.RUNNING
 
         # After delay, should be done
         time.sleep(1.0)
-        assert rt.poll(handle) == "done"
+        assert rt.poll(handle) == WorkerPollStatus.DONE
 
 
 class TestReap:
@@ -334,7 +334,7 @@ class TestReap:
         handle = rt.spawn("task-001", "implementer", "Work.", "feat/task-001")
 
         time.sleep(0.5)
-        assert rt.poll(handle) == "done"
+        assert rt.poll(handle) == WorkerPollStatus.DONE
 
         result = rt.reap(handle)
         assert result.verdict == Verdict.FAIL

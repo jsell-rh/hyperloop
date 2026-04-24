@@ -13,25 +13,26 @@ from hyperloop.domain.model import (
     SignalStatus,
     StepOutcome,
     StepResult,
+    StepType,
     Task,
     Verdict,
     WorkerResult,
 )
 
-_VALID_STEP_TYPES = frozenset({"agent", "action", "signal", "check"})
 _TERMINAL_PHASE = "done"
 
 
-def determine_step_type(phase: PhaseStep) -> str:
+def determine_step_type(phase: PhaseStep) -> StepType:
     """Parse phase.run to determine step type.
 
     Raises ValueError for unrecognized step types.
     """
-    step_type = phase.run.split()[0]
-    if step_type not in _VALID_STEP_TYPES:
-        msg = f"unknown step type '{step_type}' in run string '{phase.run}'"
-        raise ValueError(msg)
-    return step_type
+    raw = phase.run.split()[0]
+    try:
+        return StepType(raw)
+    except ValueError:
+        msg = f"unknown step type '{raw}' in run string '{phase.run}'"
+        raise ValueError(msg) from None
 
 
 def extract_role(phase: PhaseStep) -> str:

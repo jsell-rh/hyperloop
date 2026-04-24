@@ -12,6 +12,7 @@ from hyperloop.domain.model import (
     SpawnWorker,
     Task,
     TaskStatus,
+    WorkerPollStatus,
     WorkerState,
     World,
 )
@@ -74,7 +75,9 @@ class TestSingleTaskSpawning:
     def test_not_started_with_unmet_deps_no_spawn(self):
         t = _task(deps=("task-002",))
         dep = _task(id="task-002", status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-002")
-        worker = WorkerState(task_id="task-002", role="implementer", status="running")
+        worker = WorkerState(
+            task_id="task-002", role="implementer", status=WorkerPollStatus.RUNNING
+        )
         tasks = {t.id: t, dep.id: dep}
         actions = decide(
             _world(tasks=tasks, workers={"w1": worker}), max_workers=4, max_task_rounds=50
@@ -97,7 +100,9 @@ class TestSingleTaskSpawning:
 class TestAlreadyRunning:
     def test_in_progress_with_active_worker_no_action(self):
         t = _task(status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-001")
-        worker = WorkerState(task_id="task-001", role="implementer", status="running")
+        worker = WorkerState(
+            task_id="task-001", role="implementer", status=WorkerPollStatus.RUNNING
+        )
         actions = decide(
             _world(tasks={t.id: t}, workers={"w1": worker}),
             max_workers=4,
@@ -112,7 +117,7 @@ class TestAlreadyRunning:
 class TestReaping:
     def test_completed_worker_pass_verdict_reaps(self):
         t = _task(status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-001")
-        worker = WorkerState(task_id="task-001", role="implementer", status="done")
+        worker = WorkerState(task_id="task-001", role="implementer", status=WorkerPollStatus.DONE)
         actions = decide(
             _world(tasks={t.id: t}, workers={"w1": worker}),
             max_workers=4,
@@ -124,7 +129,7 @@ class TestReaping:
 
     def test_completed_worker_fail_verdict_reaps(self):
         t = _task(status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-001")
-        worker = WorkerState(task_id="task-001", role="implementer", status="failed")
+        worker = WorkerState(task_id="task-001", role="implementer", status=WorkerPollStatus.FAILED)
         actions = decide(
             _world(tasks={t.id: t}, workers={"w1": worker}),
             max_workers=4,
@@ -163,7 +168,9 @@ class TestMaxWorkers:
         t1 = _task(id="task-001", status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-001")
         t2 = _task(id="task-002")
         t3 = _task(id="task-003")
-        worker = WorkerState(task_id="task-001", role="implementer", status="running")
+        worker = WorkerState(
+            task_id="task-001", role="implementer", status=WorkerPollStatus.RUNNING
+        )
         actions = decide(
             _world(tasks={t1.id: t1, t2.id: t2, t3.id: t3}, workers={"w1": worker}),
             max_workers=2,
@@ -216,7 +223,9 @@ class TestMixedScenarios:
         """Can reap a finished worker and spawn a new one in the same decide call."""
         done_task = _task(id="task-001", status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-001")
         ready_task = _task(id="task-002")
-        done_worker = WorkerState(task_id="task-001", role="implementer", status="done")
+        done_worker = WorkerState(
+            task_id="task-001", role="implementer", status=WorkerPollStatus.DONE
+        )
         actions = decide(
             _world(
                 tasks={done_task.id: done_task, ready_task.id: ready_task},
@@ -236,7 +245,9 @@ class TestMixedScenarios:
         """Reap actions should appear before spawn actions in the returned list."""
         done_task = _task(id="task-001", status=TaskStatus.IN_PROGRESS, branch="hyperloop/task-001")
         ready_task = _task(id="task-002")
-        done_worker = WorkerState(task_id="task-001", role="implementer", status="done")
+        done_worker = WorkerState(
+            task_id="task-001", role="implementer", status=WorkerPollStatus.DONE
+        )
         actions = decide(
             _world(
                 tasks={done_task.id: done_task, ready_task.id: ready_task},

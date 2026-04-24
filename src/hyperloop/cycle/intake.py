@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from hyperloop.domain.model import IntakeContext, SpecIntakeEntry
+from hyperloop.domain.model import IntakeContext, SpecChangeType, SpecIntakeEntry
 
 if TYPE_CHECKING:
     from hyperloop.compose import PromptComposer
@@ -55,14 +55,16 @@ def _detect_spec_entries(
     result: list[SpecIntakeEntry] = []
     for spec in all_specs:
         if spec not in covered:
-            result.append(SpecIntakeEntry(path=spec, change_type="new"))
+            result.append(SpecIntakeEntry(path=spec, change_type=SpecChangeType.NEW))
         elif (
             spec_source is not None
             and spec in pinned_versions
             and spec_source.has_changed(spec, pinned_versions[spec])
         ):
             diff = spec_source.get_diff(spec, pinned_versions[spec])
-            result.append(SpecIntakeEntry(path=spec, change_type="modified", diff=diff))
+            result.append(
+                SpecIntakeEntry(path=spec, change_type=SpecChangeType.MODIFIED, diff=diff)
+            )
 
     return result
 

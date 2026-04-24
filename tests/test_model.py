@@ -12,6 +12,7 @@ from hyperloop.domain.model import (
     TaskStatus,
     Verdict,
     WorkerHandle,
+    WorkerPollStatus,
     WorkerResult,
     WorkerState,
     World,
@@ -175,10 +176,10 @@ class TestProcess:
 
 class TestWorkerState:
     def test_creation(self):
-        ws = WorkerState(task_id="task-027", role="implementer", status="running")
+        ws = WorkerState(task_id="task-027", role="implementer", status=WorkerPollStatus.RUNNING)
         assert ws.task_id == "task-027"
         assert ws.role == "implementer"
-        assert ws.status == "running"
+        assert ws.status == WorkerPollStatus.RUNNING
 
 
 class TestWorld:
@@ -194,14 +195,16 @@ class TestWorld:
             branch=None,
             pr=None,
         )
-        worker = WorkerState(task_id="task-001", role="implementer", status="running")
+        worker = WorkerState(
+            task_id="task-001", role="implementer", status=WorkerPollStatus.RUNNING
+        )
         world = World(
             tasks={"task-001": task},
             workers={"worker-1": worker},
             epoch="abc123",
         )
         assert world.tasks["task-001"].id == "task-001"
-        assert world.workers["worker-1"].status == "running"
+        assert world.workers["worker-1"].status == WorkerPollStatus.RUNNING
         assert world.epoch == "abc123"
 
 

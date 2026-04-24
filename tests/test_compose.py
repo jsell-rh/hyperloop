@@ -27,7 +27,9 @@ from hyperloop.domain.model import (
     PhaseMap,
     PhaseStep,
     Process,
+    PromptLabel,
     PromptSection,
+    PromptSource,
     TaskContext,
 )
 from tests.fakes.state import InMemoryStateStore
@@ -405,9 +407,9 @@ class TestSectionProvenance:
         )
         result = composer.compose(role="implementer", context=ctx)
 
-        prompt_sections = [s for s in result.sections if s.label == "prompt"]
+        prompt_sections = [s for s in result.sections if s.label == PromptLabel.PROMPT]
         assert len(prompt_sections) == 1
-        assert prompt_sections[0].source == "base"
+        assert prompt_sections[0].source == PromptSource.BASE
 
     def test_task_spec_has_spec_source(self) -> None:
         state = _state_with_spec()
@@ -421,9 +423,9 @@ class TestSectionProvenance:
         )
         result = composer.compose(role="implementer", context=ctx)
 
-        spec_sections = [s for s in result.sections if s.label == "spec"]
+        spec_sections = [s for s in result.sections if s.label == PromptLabel.SPEC]
         assert len(spec_sections) == 1
-        assert spec_sections[0].source == "spec"
+        assert spec_sections[0].source == PromptSource.SPEC
         assert "Build a widget." in spec_sections[0].content
 
     def test_task_guidelines_has_process_overlay_source(self) -> None:
@@ -445,9 +447,9 @@ class TestSectionProvenance:
         )
         result = composer.compose(role="implementer", context=ctx)
 
-        guidelines_sections = [s for s in result.sections if s.label == "guidelines"]
+        guidelines_sections = [s for s in result.sections if s.label == PromptLabel.GUIDELINES]
         assert len(guidelines_sections) == 1
-        assert guidelines_sections[0].source == "process-overlay"
+        assert guidelines_sections[0].source == PromptSource.PROCESS_OVERLAY
         assert "- Run tests first." in guidelines_sections[0].content
 
     def test_task_findings_has_findings_source(self) -> None:
@@ -462,9 +464,9 @@ class TestSectionProvenance:
         )
         result = composer.compose(role="implementer", context=ctx)
 
-        findings_sections = [s for s in result.sections if s.label == "findings"]
+        findings_sections = [s for s in result.sections if s.label == PromptLabel.FINDINGS]
         assert len(findings_sections) == 1
-        assert findings_sections[0].source == "findings"
+        assert findings_sections[0].source == PromptSource.FINDINGS
         assert "null check missing" in findings_sections[0].content
 
     def test_task_epilogue_has_runtime_source(self) -> None:
@@ -479,9 +481,9 @@ class TestSectionProvenance:
         )
         result = composer.compose(role="implementer", context=ctx, epilogue="Push your branch.")
 
-        epilogue_sections = [s for s in result.sections if s.label == "epilogue"]
+        epilogue_sections = [s for s in result.sections if s.label == PromptLabel.EPILOGUE]
         assert len(epilogue_sections) == 1
-        assert epilogue_sections[0].source == "runtime"
+        assert epilogue_sections[0].source == PromptSource.RUNTIME
         assert "Push your branch." in epilogue_sections[0].content
 
     def test_no_findings_means_no_findings_section(self) -> None:
@@ -496,7 +498,7 @@ class TestSectionProvenance:
         )
         result = composer.compose(role="implementer", context=ctx)
 
-        findings_sections = [s for s in result.sections if s.label == "findings"]
+        findings_sections = [s for s in result.sections if s.label == PromptLabel.FINDINGS]
         assert len(findings_sections) == 0
 
     def test_no_epilogue_means_no_epilogue_section(self) -> None:
@@ -511,7 +513,7 @@ class TestSectionProvenance:
         )
         result = composer.compose(role="implementer", context=ctx)
 
-        epilogue_sections = [s for s in result.sections if s.label == "epilogue"]
+        epilogue_sections = [s for s in result.sections if s.label == PromptLabel.EPILOGUE]
         assert len(epilogue_sections) == 0
 
     def test_project_overlay_source_from_annotation(self) -> None:
@@ -533,8 +535,8 @@ class TestSectionProvenance:
         )
         result = composer.compose(role="implementer", context=ctx)
 
-        prompt_sections = [s for s in result.sections if s.label == "prompt"]
-        assert prompt_sections[0].source == "project-overlay"
+        prompt_sections = [s for s in result.sections if s.label == PromptLabel.PROMPT]
+        assert prompt_sections[0].source == PromptSource.PROJECT_OVERLAY
 
     def test_intake_sections(self) -> None:
         state = _state_with_spec()
@@ -543,8 +545,10 @@ class TestSectionProvenance:
         ctx = IntakeContext(unprocessed_specs=("specs/widget.md",))
         result = composer.compose(role="pm", context=ctx)
 
-        assert any(s.label == "prompt" and s.source == "base" for s in result.sections)
-        assert any(s.label == "spec" for s in result.sections)
+        assert any(
+            s.label == PromptLabel.PROMPT and s.source == PromptSource.BASE for s in result.sections
+        )
+        assert any(s.label == PromptLabel.SPEC for s in result.sections)
 
     def test_improvement_sections(self) -> None:
         state = _state_with_spec()
@@ -553,10 +557,12 @@ class TestSectionProvenance:
         ctx = ImprovementContext(findings="Some failure details")
         result = composer.compose(role="process-improver", context=ctx)
 
-        assert any(s.label == "prompt" and s.source == "base" for s in result.sections)
-        findings_sections = [s for s in result.sections if s.label == "findings"]
+        assert any(
+            s.label == PromptLabel.PROMPT and s.source == PromptSource.BASE for s in result.sections
+        )
+        findings_sections = [s for s in result.sections if s.label == PromptLabel.FINDINGS]
         assert len(findings_sections) == 1
-        assert findings_sections[0].source == "findings"
+        assert findings_sections[0].source == PromptSource.FINDINGS
 
 
 class TestUnknownRole:

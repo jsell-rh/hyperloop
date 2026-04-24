@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from hyperloop.adapters.git.runtime import AgentSdkRuntime
-from hyperloop.domain.model import Verdict
+from hyperloop.domain.model import Verdict, WorkerPollStatus
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -125,12 +125,14 @@ class TestSdkAgentWritesReviewFile:
         start = time.monotonic()
         while time.monotonic() - start < timeout:
             status = runtime.poll(handle)
-            if status != "running":
+            if status != WorkerPollStatus.RUNNING:
                 break
             time.sleep(2)
 
         status = runtime.poll(handle)
-        assert status in ("done", "failed"), f"Agent timed out after {timeout}s"
+        assert status in (WorkerPollStatus.DONE, WorkerPollStatus.FAILED), (
+            f"Agent timed out after {timeout}s"
+        )
 
         result = runtime.reap(handle)
         assert result.verdict != Verdict.FAIL, f"Agent failed: {result.detail}"

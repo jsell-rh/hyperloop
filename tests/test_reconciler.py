@@ -18,7 +18,7 @@ Covers every scenario from specs/reconciler.spec.md:
 15. No drift when everything is covered and fresh
 """
 
-from hyperloop.domain.model import Phase, Task, TaskStatus
+from hyperloop.domain.model import DriftType, Phase, PMFailureResponse, Task, TaskStatus
 from hyperloop.domain.reconciler import (
     PhaseMap,
     Summary,
@@ -93,7 +93,7 @@ class TestCoverageGap:
 
         assert len(gaps) == 1
         assert gaps[0].spec_path == "specs/persistence.md"
-        assert gaps[0].drift_type == "coverage"
+        assert gaps[0].drift_type == DriftType.COVERAGE
 
     def test_spec_with_task_is_covered(self):
         t = _task(spec_ref="specs/persistence.md@abc123")
@@ -130,7 +130,7 @@ class TestFreshnessDrift:
 
         assert len(drifts) == 1
         assert drifts[0].spec_path == "specs/auth.md"
-        assert drifts[0].drift_type == "freshness"
+        assert drifts[0].drift_type == DriftType.FRESHNESS
         assert "abc123" in drifts[0].detail
         assert "def456" in drifts[0].detail
 
@@ -285,12 +285,12 @@ class TestPMFailureBackoff:
     def test_below_max_returns_backoff(self):
         result = handle_pm_failure(consecutive_failures=2, max_failures=5)
 
-        assert result == "backoff"
+        assert result == PMFailureResponse.BACKOFF
 
     def test_one_failure_returns_backoff(self):
         result = handle_pm_failure(consecutive_failures=1, max_failures=5)
 
-        assert result == "backoff"
+        assert result == PMFailureResponse.BACKOFF
 
 
 # ---------------------------------------------------------------------------
@@ -302,12 +302,12 @@ class TestPMFailureHalt:
     def test_at_max_returns_halt(self):
         result = handle_pm_failure(consecutive_failures=5, max_failures=5)
 
-        assert result == "halt"
+        assert result == PMFailureResponse.HALT
 
     def test_above_max_returns_halt(self):
         result = handle_pm_failure(consecutive_failures=7, max_failures=5)
 
-        assert result == "halt"
+        assert result == PMFailureResponse.HALT
 
 
 # ---------------------------------------------------------------------------
@@ -451,8 +451,8 @@ class TestMultipleDriftTypes:
 
         all_drifts = coverage_gaps + freshness_drifts
 
-        coverage = [d for d in all_drifts if d.drift_type == "coverage"]
-        freshness = [d for d in all_drifts if d.drift_type == "freshness"]
+        coverage = [d for d in all_drifts if d.drift_type == DriftType.COVERAGE]
+        freshness = [d for d in all_drifts if d.drift_type == DriftType.FRESHNESS]
 
         assert len(coverage) == 1
         assert coverage[0].spec_path == "specs/persistence.md"

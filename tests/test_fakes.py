@@ -15,6 +15,7 @@ from hyperloop.domain.model import (
     Task,
     TaskStatus,
     Verdict,
+    WorkerPollStatus,
     WorkerResult,
 )
 from tests.fakes.channel import FakeChannelPort
@@ -270,14 +271,14 @@ class TestRuntimeSpawnAndPoll:
         runtime = InMemoryRuntime()
         handle = runtime.spawn("task-001", "implementer", "Do the work", "hyperloop/task-001")
 
-        assert runtime.poll(handle) == "running"
+        assert runtime.poll(handle) == WorkerPollStatus.RUNNING
 
     def test_poll_returns_configured_status(self):
         runtime = InMemoryRuntime()
         handle = runtime.spawn("task-001", "implementer", "Do the work", "hyperloop/task-001")
 
-        runtime.set_poll_status("task-001", "done")
-        assert runtime.poll(handle) == "done"
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
+        assert runtime.poll(handle) == WorkerPollStatus.DONE
 
 
 class TestRuntimeReap:
@@ -286,7 +287,7 @@ class TestRuntimeReap:
         handle = runtime.spawn("task-001", "implementer", "Do the work", "hyperloop/task-001")
 
         # Worker is running
-        assert runtime.poll(handle) == "running"
+        assert runtime.poll(handle) == WorkerPollStatus.RUNNING
 
         # Worker finishes
         expected_result = WorkerResult(
@@ -294,9 +295,9 @@ class TestRuntimeReap:
             detail="All tests pass",
         )
         runtime.set_result("task-001", expected_result)
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
 
-        assert runtime.poll(handle) == "done"
+        assert runtime.poll(handle) == WorkerPollStatus.DONE
 
         # Reap the result
         result = runtime.reap(handle)
@@ -312,7 +313,7 @@ class TestRuntimeReap:
             detail="3 tests failed",
         )
         runtime.set_result("task-001", result)
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
 
         reaped = runtime.reap(handle)
         assert reaped.verdict == Verdict.FAIL
@@ -324,7 +325,7 @@ class TestRuntimeCancel:
         handle = runtime.spawn("task-001", "implementer", "Do the work", "hyperloop/task-001")
 
         runtime.cancel(handle)
-        assert runtime.poll(handle) == "failed"
+        assert runtime.poll(handle) == WorkerPollStatus.FAILED
 
 
 class TestRuntimeFindOrphan:

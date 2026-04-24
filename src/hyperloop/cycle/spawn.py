@@ -15,6 +15,7 @@ from hyperloop.domain.model import (
     Halt,
     Phase,
     SpawnWorker,
+    StepType,
     TaskStatus,
     WorkerHandle,
 )
@@ -93,7 +94,7 @@ def plan_spawns(
             phase_name = first_phase(phases)
             phase_step = phases[phase_name]
             step_type = determine_step_type(phase_step)
-            if step_type == "agent":
+            if step_type == StepType.AGENT:
                 role = extract_role(phase_step)
                 plans.append(
                     SpawnPlan(
@@ -110,7 +111,7 @@ def plan_spawns(
                 continue
             phase_step = phases[phase_name]
             step_type = determine_step_type(phase_step)
-            if step_type == "agent":
+            if step_type == StepType.AGENT:
                 role = extract_role(phase_step)
                 plans.append(
                     SpawnPlan(

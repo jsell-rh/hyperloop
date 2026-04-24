@@ -17,6 +17,7 @@ from hyperloop.domain.model import (
     SignalStatus,
     StepOutcome,
     StepResult,
+    StepType,
     Task,
     TaskStatus,
     Verdict,
@@ -108,16 +109,16 @@ def _task(
 
 class TestDetermineStepType:
     def test_agent_step(self, implement_phase: PhaseStep) -> None:
-        assert determine_step_type(implement_phase) == "agent"
+        assert determine_step_type(implement_phase) == StepType.AGENT
 
     def test_action_step(self, merge_phase: PhaseStep) -> None:
-        assert determine_step_type(merge_phase) == "action"
+        assert determine_step_type(merge_phase) == StepType.ACTION
 
     def test_signal_step(self, signal_phase: PhaseStep) -> None:
-        assert determine_step_type(signal_phase) == "signal"
+        assert determine_step_type(signal_phase) == StepType.SIGNAL
 
     def test_check_step(self, check_phase: PhaseStep) -> None:
-        assert determine_step_type(check_phase) == "check"
+        assert determine_step_type(check_phase) == StepType.CHECK
 
     def test_unknown_step_type_raises(self) -> None:
         bad = PhaseStep(run="unknown foo", on_pass="done", on_fail="start")

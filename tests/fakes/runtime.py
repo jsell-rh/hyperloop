@@ -8,12 +8,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from hyperloop.domain.model import WorkerHandle, WorkerResult
+from hyperloop.domain.model import WorkerHandle, WorkerPollStatus, WorkerResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from hyperloop.ports.runtime import WorkerPollStatus
 
 
 @dataclass(frozen=True)
@@ -88,18 +86,18 @@ class InMemoryRuntime:
         )
         self._handles[task_id] = handle
         # Default to running unless pre-configured
-        self._poll_statuses.setdefault(task_id, "running")
+        self._poll_statuses.setdefault(task_id, WorkerPollStatus.RUNNING)
         # Remove stale reaped/cancelled state so this task is considered active
         self._reaped.discard(task_id)
         self._cancelled.discard(task_id)
         return handle
 
     def poll(self, handle: WorkerHandle) -> WorkerPollStatus:
-        """Check worker status. Returns 'running', 'done', or 'failed'."""
+        """Check worker status."""
         task_id = handle.task_id
         if task_id in self._cancelled:
-            return "failed"
-        return self._poll_statuses.get(task_id, "running")
+            return WorkerPollStatus.FAILED
+        return self._poll_statuses.get(task_id, WorkerPollStatus.RUNNING)
 
     def reap(self, handle: WorkerHandle) -> WorkerResult:
         """Collect the result from a finished worker and clean up."""

@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from typing import TYPE_CHECKING
 
+from hyperloop.domain.model import SpecChangeType
 from hyperloop.ports.spec_source import SpecChange
 
 if TYPE_CHECKING:
@@ -30,7 +31,7 @@ class GitSpecSource:
             if result.returncode != 0:
                 return []
             return [
-                SpecChange(path=p.strip(), change_type="added")
+                SpecChange(path=p.strip(), change_type=SpecChangeType.ADDED)
                 for p in result.stdout.strip().splitlines()
                 if p.strip()
             ]
@@ -47,7 +48,12 @@ class GitSpecSource:
             if len(parts) != 2:
                 continue
             status, path = parts
-            change_type = {"A": "added", "M": "modified", "D": "deleted"}.get(status[0], "modified")
+            _CHANGE_MAP = {
+                "A": SpecChangeType.ADDED,
+                "M": SpecChangeType.MODIFIED,
+                "D": SpecChangeType.DELETED,
+            }
+            change_type = _CHANGE_MAP.get(status[0], SpecChangeType.MODIFIED)
             changes.append(SpecChange(path=path, change_type=change_type))
         return changes
 

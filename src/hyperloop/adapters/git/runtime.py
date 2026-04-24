@@ -27,11 +27,10 @@ from hyperloop.adapters.git._worktree import (
     ensure_worktrees_gitignored,
     get_worktree_branch,
 )
-from hyperloop.domain.model import Verdict, WorkerHandle, WorkerResult
+from hyperloop.domain.model import Verdict, WorkerHandle, WorkerPollStatus, WorkerResult
 
 if TYPE_CHECKING:
     from hyperloop.ports.probe import OrchestratorProbe
-    from hyperloop.ports.runtime import WorkerPollStatus
 
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
@@ -116,18 +115,18 @@ class AgentSdkRuntime:
         future = self._futures.get(task_id)
 
         if future is None:
-            return "failed"
+            return WorkerPollStatus.FAILED
 
         if not future.done():
-            return "running"
+            return WorkerPollStatus.RUNNING
 
         # Check if the future raised an exception
         exc = future.exception()
         if exc is not None:
             log.warning("sdk_worker_error", task_id=task_id, error=str(exc))
-            return "failed"
+            return WorkerPollStatus.FAILED
 
-        return "done"
+        return WorkerPollStatus.DONE
 
     def reap(self, handle: WorkerHandle) -> WorkerResult:
         """Collect the result from a completed SDK agent.

@@ -20,6 +20,7 @@ from hyperloop.domain.model import (
     Task,
     TaskStatus,
     Verdict,
+    WorkerPollStatus,
     WorkerResult,
 )
 from hyperloop.loop import Orchestrator
@@ -151,7 +152,7 @@ class TestSingleTaskEndToEnd:
         assert task.phase == Phase("implement")
 
         # Simulate implementer completing with pass
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
 
         # Cycle 2: reap implementer, advance to verify, spawn verifier
@@ -161,7 +162,7 @@ class TestSingleTaskEndToEnd:
         assert task.phase == Phase("verify")
 
         # Simulate verifier completing with pass
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
 
         # Cycle 3: reap verifier, on_pass="done" -> COMPLETED
@@ -195,7 +196,7 @@ class TestFailedVerificationLoopsBack:
         assert state.get_task("task-001").phase == Phase("implement")
 
         # Implementer passes
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
 
         # Cycle 2: reap implementer, advance to verify
@@ -203,7 +204,7 @@ class TestFailedVerificationLoopsBack:
         assert state.get_task("task-001").phase == Phase("verify")
 
         # Verifier fails
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", FAIL_RESULT)
 
         # Cycle 3: reap verifier, on_fail="implement", round increments
@@ -224,14 +225,14 @@ class TestFailedVerificationLoopsBack:
         orch.run_cycle()
 
         # Implementer passes
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
 
         # Cycle 2: advance to verify
         orch.run_cycle()
 
         # Verifier fails
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", FAIL_RESULT)
 
         # Cycle 3: reap failure, store findings
@@ -260,12 +261,12 @@ class TestMaxRoundsHalts:
         orch.run_cycle()
 
         # Implementer passes, advance to verify
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
 
         # Verifier fails -> round becomes 3 == max_task_rounds
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", FAIL_RESULT)
         orch.run_cycle()
 
@@ -283,12 +284,12 @@ class TestMaxRoundsHalts:
         orch.run_cycle()
 
         # Implementer passes -> verify
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
 
         # Verifier fails -> round becomes 3 == max_task_rounds -> FAILED
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", FAIL_RESULT)
         reason = orch.run_cycle()
 
@@ -324,9 +325,9 @@ class TestMultipleTasksInParallel:
         orch.run_cycle()
 
         # Both implementers pass
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
-        runtime.set_poll_status("task-002", "done")
+        runtime.set_poll_status("task-002", WorkerPollStatus.DONE)
         runtime.set_result("task-002", PASS_RESULT)
 
         # Cycle 2: reap both, advance to verify
@@ -335,9 +336,9 @@ class TestMultipleTasksInParallel:
         assert state.get_task("task-002").phase == Phase("verify")
 
         # Both verifiers pass
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
-        runtime.set_poll_status("task-002", "done")
+        runtime.set_poll_status("task-002", WorkerPollStatus.DONE)
         runtime.set_result("task-002", PASS_RESULT)
 
         # Cycle 3: reap verifiers, both complete
@@ -392,7 +393,7 @@ class TestDependencyOrdering:
         orch.run_cycle()
 
         # task-001 implementer passes
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
 
         # Cycle 2: advance to verify, task-002 still not eligible
@@ -401,7 +402,7 @@ class TestDependencyOrdering:
         assert state.get_task("task-002").status == TaskStatus.NOT_STARTED
 
         # task-001 verifier passes
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
 
         # Cycle 3: task-001 complete, task-002 now eligible
@@ -421,7 +422,7 @@ class TestConvergence:
         orch = _make_orchestrator(state, runtime)
 
         runtime.set_result("task-001", PASS_RESULT)
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
 
         reason = orch.run_loop(max_cycles=20)
         assert "all tasks complete" in reason.lower()
@@ -793,7 +794,7 @@ class TestWorkerCrash:
         orch.run_cycle()
 
         # Worker crashes (no verdict)
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result(
             "task-001",
             WorkerResult(
@@ -886,7 +887,7 @@ class TestProbeIntegration:
         orch = _make_orchestrator(state, runtime, probe=probe)
 
         runtime.set_result("task-001", PASS_RESULT)
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
 
         orch.run_loop(max_cycles=20)
         halted = probe.of_method("orchestrator_halted")
@@ -1058,7 +1059,7 @@ class TestHookIntegration:
         orch.run_cycle()
 
         # Worker finishes
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
 
         # Cycle 2: reap -> hook fires
@@ -1119,7 +1120,7 @@ class TestPRLifecycle:
         assert state.get_task("task-001").pr is None
 
         # Implementer passes
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
 
         # Cycle 2: reap implementer, advance to verify -> draft PR created
@@ -1142,7 +1143,7 @@ class TestPRLifecycle:
         orch.run_cycle()
 
         # Implementer passes
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
 
         # Cycle 2: advance to verify -- no PR

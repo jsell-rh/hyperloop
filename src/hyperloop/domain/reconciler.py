@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from hyperloop.domain.model import Task, TaskStatus
+from hyperloop.domain.model import DriftType, PMFailureResponse, Task, TaskStatus
 
 # ---------------------------------------------------------------------------
 # Value objects
@@ -26,7 +26,7 @@ class DriftResult:
     """A detected drift between spec (desired state) and code (actual state)."""
 
     spec_path: str
-    drift_type: str  # "coverage", "freshness", "alignment"
+    drift_type: DriftType
     detail: str
 
 
@@ -109,7 +109,7 @@ def detect_coverage_gaps(
             results.append(
                 DriftResult(
                     spec_path=spec_path,
-                    drift_type="coverage",
+                    drift_type=DriftType.COVERAGE,
                     detail=f"no tasks or summaries cover {spec_path}",
                 )
             )
@@ -144,7 +144,7 @@ def detect_freshness_drift(
             results.append(
                 DriftResult(
                     spec_path=spec_path,
-                    drift_type="freshness",
+                    drift_type=DriftType.FRESHNESS,
                     detail=f"pinned {old_shas} but HEAD is {current_sha}",
                 )
             )
@@ -233,11 +233,11 @@ def handle_deleted_specs(
 # ---------------------------------------------------------------------------
 
 
-def handle_pm_failure(consecutive_failures: int, max_failures: int) -> str:
+def handle_pm_failure(consecutive_failures: int, max_failures: int) -> PMFailureResponse:
     """Decide PM failure response: 'backoff' or 'halt'."""
     if consecutive_failures >= max_failures:
-        return "halt"
-    return "backoff"
+        return PMFailureResponse.HALT
+    return PMFailureResponse.BACKOFF
 
 
 # ---------------------------------------------------------------------------

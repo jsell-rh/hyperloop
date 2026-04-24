@@ -18,14 +18,11 @@ import json
 import subprocess
 import threading
 import time
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import structlog
 
-from hyperloop.domain.model import Verdict, WorkerHandle, WorkerResult
-
-if TYPE_CHECKING:
-    from hyperloop.ports.runtime import WorkerPollStatus
+from hyperloop.domain.model import Verdict, WorkerHandle, WorkerPollStatus, WorkerResult
 
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
@@ -57,7 +54,7 @@ class AmbientRuntime:
 
         self._sessions: dict[str, str] = {}  # task_id -> session ID
         self._branches: dict[str, str] = {}  # task_id -> branch name
-        self._completion: dict[str, str] = {}  # session_id -> "done" | "failed"
+        self._completion: dict[str, WorkerPollStatus] = {}  # session_id -> DONE | FAILED
         self._sse_threads: dict[str, threading.Thread] = {}  # session_id -> thread
         self._lock = threading.Lock()
         self._run_finished_data: dict[str, dict[str, object]] = {}
@@ -197,14 +194,14 @@ class AmbientRuntime:
         """Check session completion state from SSE thread."""
         session_id = handle.session_id
         if session_id is None:
-            return "failed"
+            return WorkerPollStatus.FAILED
         with self._lock:
             status = self._completion.get(session_id)
         if status is None:
-            return "running"
-        if status == "done":
-            return "done"
-        return "failed"
+            return WorkerPollStatus.RUNNING
+        if status == WorkerPollStatus.DONE:
+            return WorkerPollStatus.DONE
+        return WorkerPollStatus.FAILED
 
     def reap(self, handle: WorkerHandle) -> WorkerResult:
         """Collect result from a finished session.
@@ -235,7 +232,7 @@ class AmbientRuntime:
         if result is None:
             with self._lock:
                 status = self._completion.get(session_id, "")
-            if status == "failed":
+            if status == WorkerPollStatus.FAILED:
                 result = WorkerResult(
                     verdict=Verdict.FAIL,
                     detail="Agent session failed without writing verdict",
@@ -403,7 +400,7 @@ class AmbientRuntime:
 
         log.warning("sse_stream_exhausted", session_id=session_id)
         with self._lock:
-            self._completion[session_id] = "failed"
+            self._completion[session_id] = WorkerPollStatus.FAILED
 
     def _stream_sse_once(self, session_id: str) -> bool:
         """Attempt one SSE stream connection. Returns True if RUN_FINISHED seen."""
@@ -433,7 +430,7 @@ class AmbientRuntime:
                 got_any_event = True
                 if event.get("type") == "RUN_FINISHED":
                     with self._lock:
-                        self._completion[session_id] = "done"
+                        self._completion[session_id] = WorkerPollStatus.DONE
                         result_payload = event.get("result")
                         if isinstance(result_payload, dict):
                             self._run_finished_data[session_id] = cast(

@@ -13,6 +13,7 @@ from hyperloop.domain.model import (
     ReapWorker,
     SpawnWorker,
     TaskStatus,
+    WorkerPollStatus,
 )
 
 if TYPE_CHECKING:
@@ -45,9 +46,9 @@ def decide(world: World, max_workers: int, max_task_rounds: int) -> list[Action]
     """
     actions: list[Action] = []
 
-    # ---- 1. Reap finished workers (status == "done" or "failed") -----------
+    # ---- 1. Reap finished workers (status == DONE or FAILED) ---------------
     for ws in world.workers.values():
-        if ws.status in ("done", "failed"):
+        if ws.status in (WorkerPollStatus.DONE, WorkerPollStatus.FAILED):
             actions.append(ReapWorker(task_id=ws.task_id))
 
     # ---- 2. Check for tasks that hit max_task_rounds → AdvanceTask + Halt ------
@@ -59,7 +60,7 @@ def decide(world: World, max_workers: int, max_task_rounds: int) -> list[Action]
             return actions
 
     # ---- 3. Count active (running) workers ---------------------------------
-    active_count = sum(1 for ws in world.workers.values() if ws.status == "running")
+    active_count = sum(1 for ws in world.workers.values() if ws.status == WorkerPollStatus.RUNNING)
 
     # ---- 4. Find eligible tasks to spawn -----------------------------------
     # Priority order:

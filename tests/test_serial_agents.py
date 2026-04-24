@@ -19,6 +19,7 @@ from hyperloop.domain.model import (
     Task,
     TaskStatus,
     Verdict,
+    WorkerPollStatus,
     WorkerResult,
 )
 from hyperloop.loop import Orchestrator
@@ -299,12 +300,12 @@ class TestPMIntake:
         assert len(pm_runs_before) == 0
 
         # Implementer passes -> verifier
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
 
         # Verifier fails -> should set failure flag
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", FAIL_RESULT)
         orch.run_cycle()
 
@@ -326,12 +327,12 @@ class TestPMIntake:
         orch.run_cycle()
 
         # Implementer passes -> verifier
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
 
         # Verifier fails -> triggers intake
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", FAIL_RESULT)
         orch.run_cycle()
 
@@ -339,7 +340,7 @@ class TestPMIntake:
         assert len(pm_runs_after_fail) == 1
 
         # Reset runtime so the re-spawned implementer is still "running"
-        runtime.set_poll_status("task-001", "running")
+        runtime.set_poll_status("task-001", WorkerPollStatus.RUNNING)
 
         # Next cycle: no new failures, no unprocessed specs -> intake should NOT run again
         orch.run_cycle()
@@ -475,12 +476,12 @@ class TestProcessImprover:
         orch.run_cycle()
 
         # Implementer passes -> verifier
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
 
         # Verifier fails -> should trigger process-improver
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", FAIL_RESULT)
         orch.run_cycle()
 
@@ -501,12 +502,12 @@ class TestProcessImprover:
         orch.run_cycle()
 
         # Implementer passes -> verifier
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
 
         # Verifier passes -> no process-improver
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
 
@@ -525,12 +526,12 @@ class TestProcessImprover:
         orch.run_cycle()
 
         # Implementer passes -> verifier
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
         orch.run_cycle()
 
         # Verifier fails -> should not crash without composer
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", FAIL_RESULT)
         orch.run_cycle()
 

@@ -18,6 +18,7 @@ from hyperloop.cycle.helpers import BRANCH_PREFIX
 from hyperloop.domain.model import (
     Phase,
     StepOutcome,
+    StepType,
     TaskStatus,
     WorkerHandle,
     WorkerResult,
@@ -250,11 +251,11 @@ def advance(
         phase_step = phases[task.phase]
         step_type = determine_step_type(phase_step)
 
-        if step_type == "agent":
+        if step_type == StepType.AGENT:
             # Agent steps are handled by SPAWN, not ADVANCE
             continue
 
-        if step_type in ("action", "check"):
+        if step_type in (StepType.ACTION, StepType.CHECK):
             t = _advance_action(
                 task=task,
                 phase_step=phase_step,
@@ -270,7 +271,7 @@ def advance(
                 had_failures = True
                 break
 
-        elif step_type == "signal":
+        elif step_type == StepType.SIGNAL:
             t = _advance_signal(
                 task=task,
                 phase_step=phase_step,

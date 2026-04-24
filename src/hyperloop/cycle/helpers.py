@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 
 from hyperloop.domain.model import (
     PhaseMap,
+    StepType,
+    WorkerPollStatus,
     WorkerState,
     World,
 )
@@ -17,7 +19,7 @@ from hyperloop.domain.task_processor import determine_step_type, extract_role
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from hyperloop.ports.runtime import Runtime, WorkerPollStatus
+    from hyperloop.ports.runtime import Runtime
     from hyperloop.ports.state import StateStore
 
 BRANCH_PREFIX = "hyperloop"
@@ -28,7 +30,7 @@ def extract_roles_from_phases(phases: PhaseMap) -> set[str]:
     roles: set[str] = set()
     for phase in phases.values():
         step_type = determine_step_type(phase)
-        if step_type == "agent":
+        if step_type == StepType.AGENT:
             roles.add(extract_role(phase))
     return roles
 
@@ -38,7 +40,7 @@ def extract_step_names(phases: PhaseMap) -> set[str]:
     names: set[str] = set()
     for phase in phases.values():
         step_type = determine_step_type(phase)
-        if step_type in ("action", "check", "signal"):
+        if step_type in (StepType.ACTION, StepType.CHECK, StepType.SIGNAL):
             names.add(extract_role(phase))
     return names
 

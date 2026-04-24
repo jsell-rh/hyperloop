@@ -16,6 +16,7 @@ from hyperloop.domain.model import (
     Task,
     TaskStatus,
     Verdict,
+    WorkerPollStatus,
     WorkerResult,
 )
 from hyperloop.loop import Orchestrator
@@ -125,7 +126,7 @@ class TestSingleTaskCompletesE2E:
         assert str(task.phase) == "implement"
 
         # Simulate implementer completing with pass
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
 
         # Cycle 2: reap implementer, advance to verify
@@ -136,7 +137,7 @@ class TestSingleTaskCompletesE2E:
         assert str(task.phase) == "verify"
 
         # Simulate verifier completing with pass
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
 
         # Cycle 3: reap verifier, on_pass="done" -> COMPLETED
@@ -184,7 +185,7 @@ class TestFailedVerificationRetriesE2E:
         assert str(task.phase) == "implement"
 
         # Implementer passes
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", PASS_RESULT)
 
         # Cycle 2: reap implementer, advance to verify
@@ -193,7 +194,7 @@ class TestFailedVerificationRetriesE2E:
         assert str(task.phase) == "verify"
 
         # Verifier fails
-        runtime.set_poll_status("task-001", "done")
+        runtime.set_poll_status("task-001", WorkerPollStatus.DONE)
         runtime.set_result("task-001", FAIL_RESULT)
 
         # Cycle 3: reap verifier failure, loop back, round increments

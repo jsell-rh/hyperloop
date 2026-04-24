@@ -33,7 +33,9 @@ from hyperloop.domain.model import (
     PhaseMap,
     PhaseStep,
     Process,
+    PromptLabel,
     PromptSection,
+    PromptSource,
     TaskContext,
 )
 
@@ -169,9 +171,11 @@ class PromptComposer:
         spec_content = self._state.read_file(spec_path)
 
         text_parts: list[str] = [prompt.rstrip()]
-        prompt_source = template.annotations.get("hyperloop.io/source", "base")
+        prompt_source = PromptSource(
+            template.annotations.get("hyperloop.io/source", PromptSource.BASE)
+        )
         sections: list[PromptSection] = [
-            PromptSection(source=prompt_source, label="prompt", content=prompt.rstrip()),
+            PromptSection(source=prompt_source, label=PromptLabel.PROMPT, content=prompt.rstrip()),
         ]
 
         if template.guidelines:
@@ -179,37 +183,55 @@ class PromptComposer:
             text_parts.append(f"## Guidelines\n{guidelines_text}")
             sections.append(
                 PromptSection(
-                    source="process-overlay",
-                    label="guidelines",
+                    source=PromptSource.PROCESS_OVERLAY,
+                    label=PromptLabel.GUIDELINES,
                     content=guidelines_text,
                 )
             )
 
         if spec_content is not None:
             text_parts.append(f"## Spec\n{spec_content}")
-            sections.append(PromptSection(source="spec", label="spec", content=spec_content))
+            sections.append(
+                PromptSection(
+                    source=PromptSource.SPEC, label=PromptLabel.SPEC, content=spec_content
+                )
+            )
         else:
             fallback = (
                 f"[Spec file '{context.spec_ref}' not found. Proceed with available context.]"
             )
             text_parts.append(f"## Spec\n{fallback}")
-            sections.append(PromptSection(source="spec", label="spec", content=fallback))
+            sections.append(
+                PromptSection(source=PromptSource.SPEC, label=PromptLabel.SPEC, content=fallback)
+            )
 
         if context.findings:
             text_parts.append(f"## Findings\n{context.findings}")
             sections.append(
-                PromptSection(source="findings", label="findings", content=context.findings)
+                PromptSection(
+                    source=PromptSource.FINDINGS,
+                    label=PromptLabel.FINDINGS,
+                    content=context.findings,
+                )
             )
 
         if context.pr_feedback:
             text_parts.append(f"## PR Feedback\n{context.pr_feedback}")
             sections.append(
-                PromptSection(source="pr", label="pr-feedback", content=context.pr_feedback)
+                PromptSection(
+                    source=PromptSource.PR,
+                    label=PromptLabel.PR_FEEDBACK,
+                    content=context.pr_feedback,
+                )
             )
 
         if epilogue:
             text_parts.append(f"## Runtime\n{epilogue}")
-            sections.append(PromptSection(source="runtime", label="epilogue", content=epilogue))
+            sections.append(
+                PromptSection(
+                    source=PromptSource.RUNTIME, label=PromptLabel.EPILOGUE, content=epilogue
+                )
+            )
 
         text = "\n\n".join(text_parts) + "\n"
         return ComposedPrompt(sections=tuple(sections), text=text)
@@ -224,9 +246,11 @@ class PromptComposer:
         prompt = template.prompt
 
         text_parts: list[str] = [prompt.rstrip()]
-        prompt_source = template.annotations.get("hyperloop.io/source", "base")
+        prompt_source = PromptSource(
+            template.annotations.get("hyperloop.io/source", PromptSource.BASE)
+        )
         sections: list[PromptSection] = [
-            PromptSection(source=prompt_source, label="prompt", content=prompt.rstrip()),
+            PromptSection(source=prompt_source, label=PromptLabel.PROMPT, content=prompt.rstrip()),
         ]
 
         if template.guidelines:
@@ -234,8 +258,8 @@ class PromptComposer:
             text_parts.append(f"## Guidelines\n{guidelines_text}")
             sections.append(
                 PromptSection(
-                    source="process-overlay",
-                    label="guidelines",
+                    source=PromptSource.PROCESS_OVERLAY,
+                    label=PromptLabel.GUIDELINES,
                     content=guidelines_text,
                 )
             )
@@ -248,11 +272,15 @@ class PromptComposer:
                     spec_lines.append(f"\n```diff\n{entry.diff.rstrip()}\n```\n")
             spec_text = "\n".join(spec_lines)
             text_parts.append(f"## Specs to Process\n\n{spec_text}")
-            sections.append(PromptSection(source="spec", label="spec", content=spec_text))
+            sections.append(
+                PromptSection(source=PromptSource.SPEC, label=PromptLabel.SPEC, content=spec_text)
+            )
         elif context.unprocessed_specs:
             spec_list = "\n".join(f"- {s}" for s in context.unprocessed_specs)
             text_parts.append(f"## Specs to Process\n\n{spec_list}")
-            sections.append(PromptSection(source="spec", label="spec", content=spec_list))
+            sections.append(
+                PromptSection(source=PromptSource.SPEC, label=PromptLabel.SPEC, content=spec_list)
+            )
 
         if context.failed_tasks:
             failed_list = "\n".join(f"- {t}" for t in context.failed_tasks)
@@ -262,7 +290,11 @@ class PromptComposer:
             )
             text_parts.append(f"## Failed Tasks\n\n{failed_section}")
             sections.append(
-                PromptSection(source="findings", label="findings", content=failed_section)
+                PromptSection(
+                    source=PromptSource.FINDINGS,
+                    label=PromptLabel.FINDINGS,
+                    content=failed_section,
+                )
             )
 
         if not context.unprocessed_specs and not context.failed_tasks:
@@ -281,9 +313,11 @@ class PromptComposer:
         prompt = template.prompt
 
         text_parts: list[str] = [prompt.rstrip()]
-        prompt_source = template.annotations.get("hyperloop.io/source", "base")
+        prompt_source = PromptSource(
+            template.annotations.get("hyperloop.io/source", PromptSource.BASE)
+        )
         sections: list[PromptSection] = [
-            PromptSection(source=prompt_source, label="prompt", content=prompt.rstrip()),
+            PromptSection(source=prompt_source, label=PromptLabel.PROMPT, content=prompt.rstrip()),
         ]
 
         if template.guidelines:
@@ -291,8 +325,8 @@ class PromptComposer:
             text_parts.append(f"## Guidelines\n{guidelines_text}")
             sections.append(
                 PromptSection(
-                    source="process-overlay",
-                    label="guidelines",
+                    source=PromptSource.PROCESS_OVERLAY,
+                    label=PromptLabel.GUIDELINES,
                     content=guidelines_text,
                 )
             )
@@ -300,7 +334,11 @@ class PromptComposer:
         if context.findings:
             text_parts.append(f"## Findings\n{context.findings}")
             sections.append(
-                PromptSection(source="findings", label="findings", content=context.findings)
+                PromptSection(
+                    source=PromptSource.FINDINGS,
+                    label=PromptLabel.FINDINGS,
+                    content=context.findings,
+                )
             )
 
         text = "\n\n".join(text_parts) + "\n"

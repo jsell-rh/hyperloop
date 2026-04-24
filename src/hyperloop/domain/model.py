@@ -6,15 +6,15 @@ All types are pure data with no I/O dependencies.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Literal, NewType
+from enum import StrEnum
+from typing import NewType
 
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
 
 
-class TaskStatus(Enum):
+class TaskStatus(StrEnum):
     """Lifecycle status of a task."""
 
     NOT_STARTED = "not_started"
@@ -23,11 +23,82 @@ class TaskStatus(Enum):
     FAILED = "failed"
 
 
-class Verdict(Enum):
+class Verdict(StrEnum):
     """Outcome reported by a worker."""
 
     PASS = "pass"
     FAIL = "fail"
+
+
+class WorkerPollStatus(StrEnum):
+    """Status returned when polling a worker."""
+
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+
+
+class DriftType(StrEnum):
+    """Type of drift detected between spec and reality."""
+
+    COVERAGE = "coverage"
+    FRESHNESS = "freshness"
+    ALIGNMENT = "alignment"
+
+
+class PromptSource(StrEnum):
+    """Source layer of a composed prompt section."""
+
+    BASE = "base"
+    PROJECT_OVERLAY = "project-overlay"
+    PROCESS_OVERLAY = "process-overlay"
+    SPEC = "spec"
+    FINDINGS = "findings"
+    RUNTIME = "runtime"
+    PR = "pr"
+
+
+class PromptLabel(StrEnum):
+    """Label identifying the kind of a composed prompt section."""
+
+    PROMPT = "prompt"
+    GUIDELINES = "guidelines"
+    SPEC = "spec"
+    FINDINGS = "findings"
+    EPILOGUE = "epilogue"
+    PR_FEEDBACK = "pr-feedback"
+
+
+class SpecChangeType(StrEnum):
+    """Type of change detected for a spec file."""
+
+    ADDED = "added"
+    MODIFIED = "modified"
+    DELETED = "deleted"
+    NEW = "new"
+
+
+class PMFailureResponse(StrEnum):
+    """Response to PM consecutive failures."""
+
+    BACKOFF = "backoff"
+    HALT = "halt"
+
+
+class AuditResult(StrEnum):
+    """Result of an alignment audit."""
+
+    ALIGNED = "aligned"
+    MISALIGNED = "misaligned"
+
+
+class StepType(StrEnum):
+    """Type of a pipeline step, parsed from PhaseStep.run."""
+
+    AGENT = "agent"
+    ACTION = "action"
+    SIGNAL = "signal"
+    CHECK = "check"
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +164,7 @@ class TaskProposal:
 # ---------------------------------------------------------------------------
 
 
-class StepOutcome(Enum):
+class StepOutcome(StrEnum):
     """Result category from executing a phase step."""
 
     ADVANCE = "advance"
@@ -110,7 +181,7 @@ class StepResult:
     pr_url: str | None = None
 
 
-class SignalStatus(Enum):
+class SignalStatus(StrEnum):
     """Status of an external signal (gate replacement)."""
 
     APPROVED = "approved"
@@ -160,7 +231,7 @@ class WorkerState:
 
     task_id: str
     role: str
-    status: Literal["running", "done", "failed"]
+    status: WorkerPollStatus
 
 
 @dataclass(frozen=True)
@@ -233,7 +304,7 @@ class SpecIntakeEntry:
     """A spec that needs PM attention, with optional change context."""
 
     path: str
-    change_type: str  # "new" or "modified"
+    change_type: SpecChangeType
     diff: str = ""
 
 
@@ -266,8 +337,8 @@ AgentContext = TaskContext | IntakeContext | ImprovementContext
 class PromptSection:
     """A section of a composed prompt with its source layer."""
 
-    source: str  # "base", "project-overlay", "process-overlay", "spec", "findings", "runtime"
-    label: str  # "prompt", "guidelines", "spec", "findings", "epilogue"
+    source: PromptSource
+    label: PromptLabel
     content: str
 
 
