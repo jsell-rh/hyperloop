@@ -46,8 +46,8 @@ def wire_orchestrator(
         cfg: Typed Config from load_config().
         repo_path: Resolved path to the target repository.
         probe: Optional probe (if None, NullProbe is used).
-        composer: Optional PromptComposer (if None, prompt composition is skipped).
-        process: Optional Process override. If None, uses the default process.
+        composer: Optional PromptComposer (if None, built from kustomize overlay).
+        process: Optional Process override. If None, uses kustomize-parsed or default.
 
     Returns:
         A fully constructed Orchestrator, ready for recover() + run_loop().
@@ -67,7 +67,24 @@ def wire_orchestrator(
             repo=cfg.repo,
             delete_branch=cfg.delete_branch,
             base_branch=cfg.base_branch,
+            probe=resolved_probe,
         )
+
+    # Build composer from kustomize if not provided
+    resolved_composer = composer
+    parsed_process: Process | None = None
+    if resolved_composer is None:
+        from pathlib import Path as _Path
+
+        from hyperloop.compose import PromptComposer as _PromptComposer
+
+        overlay = cfg.overlay or str(repo_path / ".hyperloop" / "agents")
+        kustomization = _Path(overlay) / "kustomization.yaml"
+        if kustomization.is_file():
+            resolved_composer, parsed_process = _PromptComposer.load_from_kustomize(overlay, state)
+
+    # Resolve process: explicit > kustomize-parsed > default
+    resolved_process = process or parsed_process or DEFAULT_PROCESS
 
     # Build StepExecutor, SignalPort, ChannelPort
     step_executor = None
@@ -75,25 +92,41 @@ def wire_orchestrator(
     channel = None
 
     if pr_manager is not None:
+        from hyperloop.adapters.signal.label import LabelSignal
         from hyperloop.adapters.step_executor.composite import CompositeStepExecutor
+        from hyperloop.adapters.step_executor.pr_actions import MarkReadyStep, PostCommentStep
         from hyperloop.adapters.step_executor.pr_merge import PRMergeStep
+        from hyperloop.adapters.step_executor.pr_review import PRReviewStep
 
+        assert cfg.repo is not None
         step_executor = CompositeStepExecutor(
             merge=PRMergeStep(
                 pr_manager,
                 base_branch=cfg.base_branch,
                 repo_path=str(repo_path),
             ),
+            mark_ready=MarkReadyStep(pr_manager),
+            post_comment=PostCommentStep(repo=cfg.repo),
+            pr_review=PRReviewStep(repo=cfg.repo),
         )
+        signal_port = LabelSignal(pr_manager)
+
+    if cfg.notifications_type == "github-comment" and cfg.repo is not None:
+        from hyperloop.adapters.channel.github_comment import GitHubCommentChannel
+
+        channel = GitHubCommentChannel(repo=cfg.repo)
+
+    # Build spec source
+    from hyperloop.adapters.git.spec_source import GitSpecSource
+
+    spec_source = GitSpecSource(repo_path)
 
     # Build hooks
     hooks: list[CycleHook] = []
-    if composer is not None:
+    if resolved_composer is not None:
         from hyperloop.adapters.hook.process_improver import ProcessImproverHook
 
-        hooks.append(ProcessImproverHook(runtime, composer, resolved_probe))
-
-    resolved_process = process or DEFAULT_PROCESS
+        hooks.append(ProcessImproverHook(runtime, resolved_composer, resolved_probe))
 
     return Orchestrator(
         state=state,
@@ -102,12 +135,14 @@ def wire_orchestrator(
         max_workers=cfg.max_workers,
         max_task_rounds=cfg.max_task_rounds,
         max_action_attempts=cfg.max_action_attempts,
+        base_branch=cfg.base_branch,
         step_executor=step_executor,
         signal_port=signal_port,
         channel=channel,
         pr=pr_manager,
+        spec_source=spec_source,
         hooks=hooks,
-        composer=composer,
+        composer=resolved_composer,
         poll_interval=cfg.poll_interval,
         probe=resolved_probe,
     )

@@ -2,9 +2,16 @@ apiVersion: hyperloop.io/v1
 kind: Process
 metadata:
   name: default
-
-pipeline:
-  - loop:
-      - agent: implementer
-      - agent: verifier
-  - action: merge-pr
+phases:
+  implement:
+    run: "agent implementer"
+    on_pass: "verify"
+    on_fail: "implement"
+  verify:
+    run: "agent verifier"
+    on_pass: "merge"
+    on_fail: "implement"
+  merge:
+    run: "action merge"
+    on_pass: "done"
+    on_fail: "implement"
