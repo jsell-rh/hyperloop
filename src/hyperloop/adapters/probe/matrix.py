@@ -109,18 +109,18 @@ class MatrixProbe:
         cost_usd = kw.get("cost_usd")
 
         dur = round(float(duration_s), 1) if isinstance(duration_s, int | float) else duration_s
-        emoji = "\u2705" if verdict == "pass" else "\u274c"
+        emoji = "✅" if verdict == "pass" else "❌"
         cost_suffix = f", ${cost_usd:.2f}" if isinstance(cost_usd, int | float) else ""
-        header = f"{emoji} {task_id} \u00b7 {role} {verdict} (round {rnd}, {dur}s{cost_suffix})"
+        header = f"{emoji} {task_id} · {role} {verdict} (round {rnd}, {dur}s{cost_suffix})"
         body = f"{header}\n{detail}"
         self._send(body, task_id=task_id)
 
-    def task_looped_back(self, **kw: object) -> None:
+    def task_retried(self, **kw: object) -> None:
         task_id = str(kw.get("task_id", ""))
         rnd = kw.get("round", 0)
         preview = str(kw.get("findings_preview", ""))
 
-        body = f"\U0001f501 {task_id} \u00b7 looped back (round {rnd})\n> {preview}"
+        body = f"\U0001f501 {task_id} · retried (round {rnd})\n> {preview}"
         self._send(body, task_id=task_id)
 
     def task_completed(self, **kw: object) -> None:
@@ -128,17 +128,14 @@ class MatrixProbe:
         total_rounds = kw.get("total_rounds", 0)
         total_cycles = kw.get("total_cycles", 0)
 
-        body = (
-            f"\U0001f389 {task_id} \u00b7 complete "
-            f"({total_rounds} round(s), {total_cycles} cycle(s))"
-        )
+        body = f"\U0001f389 {task_id} · complete ({total_rounds} round(s), {total_cycles} cycle(s))"
         self._send(body, task_id=task_id)
 
     def task_failed(self, **kw: object) -> None:
         task_id = str(kw.get("task_id", ""))
         reason = str(kw.get("reason", ""))
 
-        body = f"\u274c {task_id} \u00b7 FAILED\n{reason}"
+        body = f"❌ {task_id} · FAILED\n{reason}"
         self._send(body, task_id=task_id)
 
     def task_reset(self, **kw: object) -> None:
@@ -155,30 +152,16 @@ class MatrixProbe:
         branch = str(kw.get("branch", ""))
 
         if outcome == "merged":
-            body = f"\U0001f500 {task_id} \u00b7 merged ({branch})"
+            body = f"\U0001f500 {task_id} · merged ({branch})"
         else:
-            body = f"\u26a0\ufe0f {task_id} \u00b7 merge {outcome} ({branch})"
-        self._send(body, task_id=task_id)
-
-    def rebase_conflict(self, **kw: object) -> None:
-        looping_back = kw.get("looping_back", False)
-        if not looping_back:
-            return
-        task_id = str(kw.get("task_id", ""))
-        attempt = kw.get("attempt", 0)
-        max_attempts = kw.get("max_attempts", 0)
-
-        body = (
-            f"\u26a0\ufe0f {task_id} \u00b7 rebase conflict "
-            f"(attempt {attempt}/{max_attempts}), looping back"
-        )
+            body = f"⚠️ {task_id} · merge {outcome} ({branch})"
         self._send(body, task_id=task_id)
 
     def orphan_found(self, **kw: object) -> None:
         task_id = str(kw.get("task_id", ""))
         branch = str(kw.get("branch", ""))
 
-        body = f"\u26a0\ufe0f orphan found: {task_id} on {branch}"
+        body = f"⚠️ orphan found: {task_id} on {branch}"
         self._send(body, task_id=task_id)
 
     def orchestrator_halted(self, **kw: object) -> None:
@@ -194,14 +177,12 @@ class MatrixProbe:
         )
         self._send(body)
 
-    def gate_checked(self, **kw: object) -> None:
-        cleared = kw.get("cleared", False)
-        if not cleared:
-            return  # noisy — never sent
+    def worker_crash_detected(self, **kw: object) -> None:
         task_id = str(kw.get("task_id", ""))
-        gate = str(kw.get("gate", ""))
+        role = str(kw.get("role", ""))
+        branch = str(kw.get("branch", ""))
 
-        body = f"\u2705 {task_id} \u00b7 gate '{gate}' cleared"
+        body = f"⚠️ worker crash detected: {task_id} ({role}) on {branch}"
         self._send(body, task_id=task_id)
 
     # ------------------------------------------------------------------
@@ -215,7 +196,7 @@ class MatrixProbe:
         role = str(kw.get("role", ""))
         rnd = kw.get("round", 0)
 
-        body = f"\U0001f680 {task_id} \u00b7 spawned {role} (round {rnd})"
+        body = f"\U0001f680 {task_id} · spawned {role} (round {rnd})"
         self._send(body, task_id=task_id)
 
     def cycle_completed(self, **kw: object) -> None:
@@ -261,7 +242,7 @@ class MatrixProbe:
             return
         in_progress = kw.get("in_progress_tasks", 0)
 
-        body = f"\u267b\ufe0f recovery started: {in_progress} in-progress task(s)"
+        body = f"♻️ recovery started: {in_progress} in-progress task(s)"
         self._send(body)
 
     def worker_message(self, **kw: object) -> None:
@@ -282,8 +263,8 @@ class MatrixProbe:
             "tool_result": "\U0001f4cb",
             "result": "\U0001f3c1",
         }
-        icon = icons.get(msg_type, "\u2022")
-        body = f"{icon} {task_id} \u00b7 {role} [{msg_type}] {content}"
+        icon = icons.get(msg_type, "•")
+        body = f"{icon} {task_id} · {role} [{msg_type}] {content}"
         self._send(body, task_id=task_id)
 
     def spawn_failed(self, **kw: object) -> None:
@@ -292,9 +273,47 @@ class MatrixProbe:
         attempt = kw.get("attempt", 0)
         max_attempts = kw.get("max_attempts", 3)
         cooldown = kw.get("cooldown_cycles", 0)
-        body = f"\u26a0\ufe0f Spawn failed: {task_id} ({role}) attempt {attempt}/{max_attempts}"
+        body = f"⚠️ Spawn failed: {task_id} ({role}) attempt {attempt}/{max_attempts}"
         if cooldown:
-            body += f" \u2014 cooling down for {cooldown} cycles"
+            body += f" — cooling down for {cooldown} cycles"
+        self._send(body)
+
+    def drift_detected(self, **kw: object) -> None:
+        if not self._verbose:
+            return
+        spec_path = str(kw.get("spec_path", ""))
+        drift_type = str(kw.get("drift_type", ""))
+        detail = str(kw.get("detail", ""))
+
+        body = f"\U0001f50d drift detected: {spec_path} ({drift_type})\n{detail}"
+        self._send(body)
+
+    def audit_ran(self, **kw: object) -> None:
+        if not self._verbose:
+            return
+        spec_ref = str(kw.get("spec_ref", ""))
+        result = str(kw.get("result", ""))
+        duration_s = kw.get("duration_s", 0.0)
+        dur = round(float(duration_s), 1) if isinstance(duration_s, int | float) else duration_s
+
+        body = f"\U0001f4cb audit ran: {spec_ref} result={result} ({dur}s)"
+        self._send(body)
+
+    def gc_ran(self, **kw: object) -> None:
+        if not self._verbose:
+            return
+        pruned_count = kw.get("pruned_count", 0)
+
+        body = f"\U0001f5d1️ GC ran: {pruned_count} pruned"
+        self._send(body)
+
+    def convergence_marked(self, **kw: object) -> None:
+        if not self._verbose:
+            return
+        spec_path = str(kw.get("spec_path", ""))
+        spec_ref = str(kw.get("spec_ref", ""))
+
+        body = f"✅ convergence marked: {spec_path} ({spec_ref})"
         self._send(body)
 
     # ------------------------------------------------------------------
@@ -315,17 +334,53 @@ class MatrixProbe:
         task_id = kw.get("task_id", "")
         self._send(f"PR created for {task_id}: {pr_url}")
 
-    def pr_label_changed(self, **kw: object) -> None:
-        pass
-
     def pr_marked_ready(self, **kw: object) -> None:
-        pass
-
-    def branch_pushed(self, **kw: object) -> None:
         pass
 
     def state_synced(self, **kw: object) -> None:
         pass
 
+    def step_executed(self, **kw: object) -> None:
+        pass
+
+    def signal_checked(self, **kw: object) -> None:
+        pass
+
+    # ------------------------------------------------------------------
+    # Backward-compatible aliases for call sites not yet migrated
+    # ------------------------------------------------------------------
+
+    def gate_checked(self, **kw: object) -> None:
+        cleared = kw.get("cleared", False)
+        if not cleared:
+            return
+        task_id = str(kw.get("task_id", ""))
+        gate = str(kw.get("gate", ""))
+        body = f"✅ {task_id} · gate '{gate}' cleared"
+        self._send(body, task_id=task_id)
+
+    def task_looped_back(self, **kw: object) -> None:
+        task_id = str(kw.get("task_id", ""))
+        rnd = kw.get("round", 0)
+        preview = str(kw.get("findings_preview", ""))
+        body = f"\U0001f501 {task_id} · looped back (round {rnd})\n> {preview}"
+        self._send(body, task_id=task_id)
+
+    def rebase_conflict(self, **kw: object) -> None:
+        looping_back = kw.get("looping_back", False)
+        if not looping_back:
+            return
+        task_id = str(kw.get("task_id", ""))
+        attempt = kw.get("attempt", 0)
+        max_attempts = kw.get("max_attempts", 0)
+        body = f"⚠️ {task_id} · rebase conflict (attempt {attempt}/{max_attempts}), looping back"
+        self._send(body, task_id=task_id)
+
     def intake_specs_detected(self, **kw: object) -> None:
+        pass
+
+    def pr_label_changed(self, **kw: object) -> None:
+        pass
+
+    def branch_pushed(self, **kw: object) -> None:
         pass

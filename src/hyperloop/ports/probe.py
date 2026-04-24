@@ -3,9 +3,9 @@
 One method per interesting moment. All methods use keyword-only arguments
 so call sites are self-documenting and adding new keyword args is non-breaking.
 
-Implementations: NullProbe, MultiProbe (adapters/probe.py),
-StructlogProbe (adapters/structlog_probe.py),
-MatrixProbe (adapters/matrix_probe.py),
+Implementations: NullProbe, MultiProbe (adapters/probe/base.py),
+StructlogProbe (adapters/probe/structlog.py),
+MatrixProbe (adapters/probe/matrix.py),
 RecordingProbe (tests/fakes/probe.py).
 """
 
@@ -64,7 +64,7 @@ class OrchestratorProbe(Protocol):
         active_workers: int,
         not_started: int,
         in_progress: int,
-        complete: int,
+        completed: int,
         failed: int,
     ) -> None:
         """Serial section began."""
@@ -77,7 +77,7 @@ class OrchestratorProbe(Protocol):
         active_workers: int,
         not_started: int,
         in_progress: int,
-        complete: int,
+        completed: int,
         failed: int,
         spawned_ids: tuple[str, ...],
         reaped_ids: tuple[str, ...],
@@ -137,7 +137,7 @@ class OrchestratorProbe(Protocol):
         """Task moved to a new pipeline phase or status."""
         ...
 
-    def task_looped_back(
+    def task_retried(
         self,
         *,
         task_id: str,
@@ -186,18 +186,19 @@ class OrchestratorProbe(Protocol):
         ...
 
     # ------------------------------------------------------------------
-    # Pipeline: gates, merges, conflicts
+    # Pipeline: signals, merges, steps
     # ------------------------------------------------------------------
 
-    def gate_checked(
+    def signal_checked(
         self,
         *,
         task_id: str,
-        gate: str,
-        cleared: bool,
+        signal_name: str,
+        status: str,
+        message: str,
         cycle: int,
     ) -> None:
-        """A gate was polled for a task."""
+        """A signal was polled for a task."""
         ...
 
     def merge_attempted(
@@ -213,31 +214,69 @@ class OrchestratorProbe(Protocol):
         """PR merge was attempted (whether or not it succeeded)."""
         ...
 
-    def rebase_conflict(
+    def step_executed(
         self,
         *,
         task_id: str,
-        branch: str,
-        attempt: int,
-        max_attempts: int,
-        looping_back: bool,
+        step_name: str,
+        outcome: str,
+        detail: str,
         cycle: int,
     ) -> None:
-        """Rebase failed; task deferred or sent back through pipeline."""
+        """A pipeline step was executed."""
+        ...
+
+    # ------------------------------------------------------------------
+    # Drift and convergence
+    # ------------------------------------------------------------------
+
+    def drift_detected(
+        self,
+        *,
+        spec_path: str,
+        drift_type: str,
+        detail: str,
+    ) -> None:
+        """Drift was detected between spec and reality."""
+        ...
+
+    def convergence_marked(
+        self,
+        *,
+        spec_path: str,
+        spec_ref: str,
+        cycle: int,
+    ) -> None:
+        """A spec was marked as converged."""
+        ...
+
+    # ------------------------------------------------------------------
+    # Audit and GC
+    # ------------------------------------------------------------------
+
+    def audit_ran(
+        self,
+        *,
+        spec_ref: str,
+        result: str,
+        cycle: int,
+        duration_s: float,
+    ) -> None:
+        """An audit check ran."""
+        ...
+
+    def gc_ran(
+        self,
+        *,
+        pruned_count: int,
+        cycle: int,
+    ) -> None:
+        """Garbage collection ran."""
         ...
 
     # ------------------------------------------------------------------
     # Serial agents
     # ------------------------------------------------------------------
-
-    def intake_specs_detected(
-        self,
-        *,
-        specs: tuple[str, ...],
-        cycle: int,
-    ) -> None:
-        """Specs that need PM attention were detected (new or modified)."""
-        ...
 
     def intake_ran(
         self,
@@ -281,6 +320,20 @@ class OrchestratorProbe(Protocol):
         branch: str,
     ) -> None:
         """An orphaned worker was found and cancelled."""
+        ...
+
+    # ------------------------------------------------------------------
+    # Worker crash detection
+    # ------------------------------------------------------------------
+
+    def worker_crash_detected(
+        self,
+        *,
+        task_id: str,
+        role: str,
+        branch: str,
+    ) -> None:
+        """A worker crash was detected."""
         ...
 
     # ------------------------------------------------------------------
@@ -339,16 +392,6 @@ class OrchestratorProbe(Protocol):
         """A draft PR was created for a task."""
         ...
 
-    def pr_label_changed(
-        self,
-        *,
-        pr_url: str,
-        label: str,
-        added: bool,
-    ) -> None:
-        """A label was added to or removed from a PR."""
-        ...
-
     def pr_marked_ready(
         self,
         *,
@@ -357,14 +400,73 @@ class OrchestratorProbe(Protocol):
         """A PR was marked as ready for review."""
         ...
 
+    def state_synced(self) -> None:
+        """State was synced with remote (pull + push)."""
+        ...
+
+    # ------------------------------------------------------------------
+    # Backward-compatible aliases (call sites not yet migrated)
+    # ------------------------------------------------------------------
+
+    def gate_checked(
+        self,
+        *,
+        task_id: str,
+        gate: str,
+        cleared: bool,
+        cycle: int,
+    ) -> None:
+        """Deprecated: use signal_checked instead."""
+        ...
+
+    def task_looped_back(
+        self,
+        *,
+        task_id: str,
+        spec_ref: str,
+        round: int,
+        cycle: int,
+        findings_preview: str,
+    ) -> None:
+        """Deprecated: use task_retried instead."""
+        ...
+
+    def rebase_conflict(
+        self,
+        *,
+        task_id: str,
+        branch: str,
+        attempt: int,
+        max_attempts: int,
+        looping_back: bool,
+        cycle: int,
+    ) -> None:
+        """Deprecated: will be removed."""
+        ...
+
+    def intake_specs_detected(
+        self,
+        *,
+        specs: tuple[str, ...],
+        cycle: int,
+    ) -> None:
+        """Deprecated: will be removed."""
+        ...
+
+    def pr_label_changed(
+        self,
+        *,
+        pr_url: str,
+        label: str,
+        added: bool,
+    ) -> None:
+        """Deprecated: will be removed."""
+        ...
+
     def branch_pushed(
         self,
         *,
         branch: str,
     ) -> None:
-        """A branch was pushed to the remote."""
-        ...
-
-    def state_synced(self) -> None:
-        """State was synced with remote (pull + push)."""
+        """Deprecated: will be removed."""
         ...

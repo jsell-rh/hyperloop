@@ -71,8 +71,8 @@ class StructlogProbe:
     def task_advanced(self, **kw: object) -> None:
         self._log.debug("task_advanced", **kw)
 
-    def task_looped_back(self, **kw: object) -> None:
-        self._log.warning("task_looped_back", **kw)
+    def task_retried(self, **kw: object) -> None:
+        self._log.warning("task_retried", **kw)
 
     def task_completed(self, **kw: object) -> None:
         self._log.info("task_completed", **kw)
@@ -84,28 +84,48 @@ class StructlogProbe:
         self._log.warning("task_reset", **kw)
 
     # ------------------------------------------------------------------
-    # Pipeline: gates, merges, conflicts
+    # Pipeline: signals, merges, steps
     # ------------------------------------------------------------------
 
-    def gate_checked(self, **kw: object) -> None:
-        cleared = kw.get("cleared", False)
-        level = "info" if cleared else "debug"
-        getattr(self._log, level)("gate_checked", **kw)
+    def signal_checked(self, **kw: object) -> None:
+        status = kw.get("status", "")
+        level = "debug" if status == "pending" else "info"
+        getattr(self._log, level)("signal_checked", **kw)
 
     def merge_attempted(self, **kw: object) -> None:
         outcome = kw.get("outcome")
         level = "info" if outcome == "merged" else "warning"
         getattr(self._log, level)("merge_attempted", **kw)
 
-    def rebase_conflict(self, **kw: object) -> None:
-        self._log.warning("rebase_conflict", **kw)
+    def step_executed(self, **kw: object) -> None:
+        self._log.debug("step_executed", **kw)
+
+    # ------------------------------------------------------------------
+    # Drift and convergence
+    # ------------------------------------------------------------------
+
+    def drift_detected(self, **kw: object) -> None:
+        self._log.info("drift_detected", **kw)
+
+    def convergence_marked(self, **kw: object) -> None:
+        self._log.info("convergence_marked", **kw)
+
+    # ------------------------------------------------------------------
+    # Audit and GC
+    # ------------------------------------------------------------------
+
+    def audit_ran(self, **kw: object) -> None:
+        duration_s = kw.get("duration_s")
+        if isinstance(duration_s, float):
+            kw = {**kw, "duration_s": round(duration_s, 1)}
+        self._log.info("audit_ran", **kw)
+
+    def gc_ran(self, **kw: object) -> None:
+        self._log.info("gc_ran", **kw)
 
     # ------------------------------------------------------------------
     # Serial agents
     # ------------------------------------------------------------------
-
-    def intake_specs_detected(self, **kw: object) -> None:
-        self._log.info("intake_specs_detected", **kw)
 
     def intake_ran(self, **kw: object) -> None:
         duration_s = kw.get("duration_s")
@@ -128,6 +148,13 @@ class StructlogProbe:
 
     def orphan_found(self, **kw: object) -> None:
         self._log.warning("orphan_found", **kw)
+
+    # ------------------------------------------------------------------
+    # Worker crash detection
+    # ------------------------------------------------------------------
+
+    def worker_crash_detected(self, **kw: object) -> None:
+        self._log.warning("worker_crash_detected", **kw)
 
     # ------------------------------------------------------------------
     # Worker messages
@@ -165,14 +192,32 @@ class StructlogProbe:
     def pr_created(self, **kw: object) -> None:
         self._log.info("pr_created", **kw)
 
-    def pr_label_changed(self, **kw: object) -> None:
-        self._log.debug("pr_label_changed", **kw)
-
     def pr_marked_ready(self, **kw: object) -> None:
         self._log.debug("pr_marked_ready", **kw)
 
-    def branch_pushed(self, **kw: object) -> None:
-        self._log.debug("branch_pushed", **kw)
-
     def state_synced(self, **kw: object) -> None:
         self._log.debug("state_synced", **kw)
+
+    # ------------------------------------------------------------------
+    # Backward-compatible aliases for call sites not yet migrated
+    # ------------------------------------------------------------------
+
+    def gate_checked(self, **kw: object) -> None:
+        cleared = kw.get("cleared", False)
+        level = "info" if cleared else "debug"
+        getattr(self._log, level)("gate_checked", **kw)
+
+    def task_looped_back(self, **kw: object) -> None:
+        self._log.warning("task_looped_back", **kw)
+
+    def rebase_conflict(self, **kw: object) -> None:
+        self._log.warning("rebase_conflict", **kw)
+
+    def intake_specs_detected(self, **kw: object) -> None:
+        self._log.info("intake_specs_detected", **kw)
+
+    def pr_label_changed(self, **kw: object) -> None:
+        self._log.debug("pr_label_changed", **kw)
+
+    def branch_pushed(self, **kw: object) -> None:
+        self._log.debug("branch_pushed", **kw)

@@ -40,7 +40,7 @@ class NullProbe:
     def task_advanced(self, **_: object) -> None:
         pass
 
-    def task_looped_back(self, **_: object) -> None:
+    def task_retried(self, **_: object) -> None:
         pass
 
     def task_completed(self, **_: object) -> None:
@@ -52,16 +52,25 @@ class NullProbe:
     def task_reset(self, **_: object) -> None:
         pass
 
-    def gate_checked(self, **_: object) -> None:
+    def signal_checked(self, **_: object) -> None:
         pass
 
     def merge_attempted(self, **_: object) -> None:
         pass
 
-    def rebase_conflict(self, **_: object) -> None:
+    def step_executed(self, **_: object) -> None:
         pass
 
-    def intake_specs_detected(self, **_: object) -> None:
+    def drift_detected(self, **_: object) -> None:
+        pass
+
+    def convergence_marked(self, **_: object) -> None:
+        pass
+
+    def audit_ran(self, **_: object) -> None:
+        pass
+
+    def gc_ran(self, **_: object) -> None:
         pass
 
     def intake_ran(self, **_: object) -> None:
@@ -76,6 +85,9 @@ class NullProbe:
     def orphan_found(self, **_: object) -> None:
         pass
 
+    def worker_crash_detected(self, **_: object) -> None:
+        pass
+
     def worker_message(self, **_: object) -> None:
         pass
 
@@ -88,16 +100,29 @@ class NullProbe:
     def pr_created(self, **_: object) -> None:
         pass
 
-    def pr_label_changed(self, **_: object) -> None:
-        pass
-
     def pr_marked_ready(self, **_: object) -> None:
         pass
 
-    def branch_pushed(self, **_: object) -> None:
+    def state_synced(self, **_: object) -> None:
         pass
 
-    def state_synced(self, **_: object) -> None:
+    # Backward-compatible aliases for call sites not yet migrated
+    def gate_checked(self, **_: object) -> None:
+        pass
+
+    def task_looped_back(self, **_: object) -> None:
+        pass
+
+    def rebase_conflict(self, **_: object) -> None:
+        pass
+
+    def intake_specs_detected(self, **_: object) -> None:
+        pass
+
+    def pr_label_changed(self, **_: object) -> None:
+        pass
+
+    def branch_pushed(self, **_: object) -> None:
         pass
 
 
@@ -139,8 +164,8 @@ class MultiProbe:
     def task_advanced(self, **kw: object) -> None:
         self._call("task_advanced", **kw)
 
-    def task_looped_back(self, **kw: object) -> None:
-        self._call("task_looped_back", **kw)
+    def task_retried(self, **kw: object) -> None:
+        self._call("task_retried", **kw)
 
     def task_completed(self, **kw: object) -> None:
         self._call("task_completed", **kw)
@@ -151,17 +176,26 @@ class MultiProbe:
     def task_reset(self, **kw: object) -> None:
         self._call("task_reset", **kw)
 
-    def gate_checked(self, **kw: object) -> None:
-        self._call("gate_checked", **kw)
+    def signal_checked(self, **kw: object) -> None:
+        self._call("signal_checked", **kw)
 
     def merge_attempted(self, **kw: object) -> None:
         self._call("merge_attempted", **kw)
 
-    def rebase_conflict(self, **kw: object) -> None:
-        self._call("rebase_conflict", **kw)
+    def step_executed(self, **kw: object) -> None:
+        self._call("step_executed", **kw)
 
-    def intake_specs_detected(self, **kw: object) -> None:
-        self._call("intake_specs_detected", **kw)
+    def drift_detected(self, **kw: object) -> None:
+        self._call("drift_detected", **kw)
+
+    def convergence_marked(self, **kw: object) -> None:
+        self._call("convergence_marked", **kw)
+
+    def audit_ran(self, **kw: object) -> None:
+        self._call("audit_ran", **kw)
+
+    def gc_ran(self, **kw: object) -> None:
+        self._call("gc_ran", **kw)
 
     def intake_ran(self, **kw: object) -> None:
         self._call("intake_ran", **kw)
@@ -175,6 +209,9 @@ class MultiProbe:
     def orphan_found(self, **kw: object) -> None:
         self._call("orphan_found", **kw)
 
+    def worker_crash_detected(self, **kw: object) -> None:
+        self._call("worker_crash_detected", **kw)
+
     def worker_message(self, **kw: object) -> None:
         self._call("worker_message", **kw)
 
@@ -187,14 +224,27 @@ class MultiProbe:
     def pr_created(self, **kw: object) -> None:
         self._call("pr_created", **kw)
 
-    def pr_label_changed(self, **kw: object) -> None:
-        self._call("pr_label_changed", **kw)
-
     def pr_marked_ready(self, **kw: object) -> None:
         self._call("pr_marked_ready", **kw)
 
-    def branch_pushed(self, **kw: object) -> None:
-        self._call("branch_pushed", **kw)
-
     def state_synced(self, **kw: object) -> None:
         self._call("state_synced", **kw)
+
+    # Backward-compatible aliases for call sites not yet migrated
+    def gate_checked(self, **kw: object) -> None:
+        self._call("gate_checked", **kw)
+
+    def task_looped_back(self, **kw: object) -> None:
+        self._call("task_looped_back", **kw)
+
+    def rebase_conflict(self, **kw: object) -> None:
+        self._call("rebase_conflict", **kw)
+
+    def intake_specs_detected(self, **kw: object) -> None:
+        self._call("intake_specs_detected", **kw)
+
+    def pr_label_changed(self, **kw: object) -> None:
+        self._call("pr_label_changed", **kw)
+
+    def branch_pushed(self, **kw: object) -> None:
+        self._call("branch_pushed", **kw)

@@ -57,8 +57,8 @@ class RecordingProbe:
     def task_advanced(self, **kw: object) -> None:
         self._record("task_advanced", **kw)
 
-    def task_looped_back(self, **kw: object) -> None:
-        self._record("task_looped_back", **kw)
+    def task_retried(self, **kw: object) -> None:
+        self._record("task_retried", **kw)
 
     def task_completed(self, **kw: object) -> None:
         self._record("task_completed", **kw)
@@ -69,17 +69,26 @@ class RecordingProbe:
     def task_reset(self, **kw: object) -> None:
         self._record("task_reset", **kw)
 
-    def gate_checked(self, **kw: object) -> None:
-        self._record("gate_checked", **kw)
+    def signal_checked(self, **kw: object) -> None:
+        self._record("signal_checked", **kw)
 
     def merge_attempted(self, **kw: object) -> None:
         self._record("merge_attempted", **kw)
 
-    def rebase_conflict(self, **kw: object) -> None:
-        self._record("rebase_conflict", **kw)
+    def step_executed(self, **kw: object) -> None:
+        self._record("step_executed", **kw)
 
-    def intake_specs_detected(self, **kw: object) -> None:
-        self._record("intake_specs_detected", **kw)
+    def drift_detected(self, **kw: object) -> None:
+        self._record("drift_detected", **kw)
+
+    def convergence_marked(self, **kw: object) -> None:
+        self._record("convergence_marked", **kw)
+
+    def audit_ran(self, **kw: object) -> None:
+        self._record("audit_ran", **kw)
+
+    def gc_ran(self, **kw: object) -> None:
+        self._record("gc_ran", **kw)
 
     def intake_ran(self, **kw: object) -> None:
         self._record("intake_ran", **kw)
@@ -93,6 +102,9 @@ class RecordingProbe:
     def orphan_found(self, **kw: object) -> None:
         self._record("orphan_found", **kw)
 
+    def worker_crash_detected(self, **kw: object) -> None:
+        self._record("worker_crash_detected", **kw)
+
     def worker_message(self, **kw: object) -> None:
         self._record("worker_message", **kw)
 
@@ -105,14 +117,30 @@ class RecordingProbe:
     def pr_created(self, **kw: object) -> None:
         self._record("pr_created", **kw)
 
-    def pr_label_changed(self, **kw: object) -> None:
-        self._record("pr_label_changed", **kw)
-
     def pr_marked_ready(self, **kw: object) -> None:
         self._record("pr_marked_ready", **kw)
 
-    def branch_pushed(self, **kw: object) -> None:
-        self._record("branch_pushed", **kw)
-
     def state_synced(self, **kw: object) -> None:
         self._record("state_synced", **kw)
+
+    # ------------------------------------------------------------------
+    # Backward-compatible shims for call sites not yet migrated
+    # ------------------------------------------------------------------
+
+    def gate_checked(self, **kw: object) -> None:
+        self._record("gate_checked", **kw)
+
+    def task_looped_back(self, **kw: object) -> None:
+        self._record("task_looped_back", **kw)
+
+    def rebase_conflict(self, **kw: object) -> None:
+        self._record("rebase_conflict", **kw)
+
+    def intake_specs_detected(self, **kw: object) -> None:
+        self._record("intake_specs_detected", **kw)
+
+    def pr_label_changed(self, **kw: object) -> None:
+        self._record("pr_label_changed", **kw)
+
+    def branch_pushed(self, **kw: object) -> None:
+        self._record("branch_pushed", **kw)
