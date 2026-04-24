@@ -463,6 +463,32 @@ class GitStateStore:
         path = f"{STATE_PREFIX}/reviews/{task_id}-round-{round}.md"
         self._buffer[path] = _serialize_review_file(task_id, round, role, verdict, detail)
 
+    def list_review_contents(self, task_id: str) -> list[str]:
+        """Return the raw content of every review file for a task, sorted by round."""
+        self._ensure_bootstrapped()
+        # Collect review paths from both branch and buffer
+        branch_paths = self._list_review_paths_on_branch(task_id)
+        buf_paths = sorted(
+            p
+            for p in self._buffer
+            if p.startswith(f"{STATE_PREFIX}/reviews/{task_id}-round-") and p.endswith(".md")
+        )
+        # Merge and deduplicate, buffer takes precedence
+        all_paths = dict.fromkeys(branch_paths)
+        for p in buf_paths:
+            all_paths[p] = None
+        sorted_paths = sorted(all_paths.keys())
+
+        contents: list[str] = []
+        for path in sorted_paths:
+            if path in self._buffer:
+                contents.append(self._buffer[path])
+            else:
+                content = self._git_show(path)
+                if content is not None:
+                    contents.append(content)
+        return contents
+
     def get_findings(self, task_id: str) -> str:
         """Return findings from the latest review for a task. Empty string if none."""
         self._ensure_bootstrapped()

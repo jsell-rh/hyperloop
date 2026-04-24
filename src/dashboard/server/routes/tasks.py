@@ -186,7 +186,7 @@ def get_task(task_id: str) -> TaskDetail:
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")  # noqa: B904
 
-    reviews: list[Review] = read_reviews(get_repo_path(), task_id)
+    reviews: list[Review] = read_reviews(get_state(), task_id)
     deps_detail = _resolve_deps_detail(task.deps)
 
     return TaskDetail(

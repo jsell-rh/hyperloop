@@ -424,7 +424,6 @@ class TestPromptReconstruction:
                 "pr": None,
             },
         )
-        _commit_all(repo)
 
         client = _make_client(repo)
         resp = client.get("/api/tasks/task-001/prompt")
@@ -581,7 +580,6 @@ class TestGraph:
                 "pr": None,
             },
         )
-        _commit_all(repo)
         client = _make_client(repo)
         data = client.get("/api/tasks/graph").json()
 

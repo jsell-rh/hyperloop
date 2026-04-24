@@ -7,27 +7,24 @@ from typing import TYPE_CHECKING, cast
 
 import yaml
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 from dashboard.server.models import Review
 
+if TYPE_CHECKING:
+    from hyperloop.adapters.git.state import GitStateStore
 
-def read_reviews(repo_path: Path, task_id: str) -> list[Review]:
-    """Read all review files for a task and return structured Review objects.
 
-    Review files live at ``.hyperloop/state/reviews/{task_id}-round-{n}.md``
-    with YAML frontmatter containing round, role, and verdict metadata.
-    The body after the frontmatter is the review detail text.
+def read_reviews(store: GitStateStore, task_id: str) -> list[Review]:
+    """Read all review files for a task from the state branch.
+
+    Uses ``GitStateStore.list_review_contents`` to read review files
+    from the ``hyperloop/state`` branch. Each file has YAML frontmatter
+    containing round, role, and verdict metadata. The body after the
+    frontmatter is the review detail text.
     """
-    reviews_dir = repo_path / ".hyperloop" / "state" / "reviews"
-    if not reviews_dir.exists():
-        return []
+    contents = store.list_review_contents(task_id)
 
     results: list[Review] = []
-    pattern = f"{task_id}-round-*.md"
-    for review_file in sorted(reviews_dir.glob(pattern)):
-        content = review_file.read_text()
+    for content in contents:
         match = re.match(r"^---\n(.*?)\n---\n(.*)", content, re.DOTALL)
         if not match:
             continue
