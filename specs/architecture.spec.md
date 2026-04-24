@@ -63,7 +63,7 @@ A task SHALL be an immutable value object containing:
 | id | string | Unique identifier |
 | title | string | Human-readable description |
 | spec_ref | string | Spec path with SHA pin (e.g., `specs/auth.md@abc123`) |
-| status | enum | `not-started`, `in-progress`, `synced`, `failed` |
+| status | enum | `not-started`, `in-progress`, `completed`, `failed` |
 | phase | string or null | Current phase name in the phase map |
 | deps | ordered list of string | Task IDs this task depends on |
 | round | integer | Iteration count, incremented on retry |
@@ -83,7 +83,7 @@ A task SHALL be an immutable value object containing:
 - WHEN it is created by the PM
 - THEN its status is "not-started" and phase is null
 - AND on first spawn it transitions to "in-progress"
-- AND on successful completion of all phases it transitions to "synced"
+- AND on successful completion of all phases it transitions to "completed"
 - AND on terminal failure it transitions to "failed"
 
 ### Requirement: Data Model - Worker Result
@@ -96,6 +96,18 @@ A worker result SHALL contain:
 | detail | string | Free-text explanation |
 
 Workers report verdicts. The orchestrator decides status transitions. Workers MUST NOT write task status directly.
+
+### Requirement: Data Model - Step Result
+
+A step result SHALL contain:
+
+| Field | Type | Description |
+|---|---|---|
+| outcome | enum | `advance`, `retry`, `wait` |
+| detail | string | Human-readable explanation of the outcome |
+| pr_url | string or null | Updated PR URL if the step created or recreated a PR |
+
+Step results are returned by the StepExecutor and derived from worker verdicts and signal statuses. The detail field provides context for retry/wait outcomes (e.g., "CI checks pending", "merge conflict").
 
 ### Requirement: Data Model - Phase Map
 
@@ -165,7 +177,7 @@ The system SHALL define seven ports:
 | StepExecutor | Execute mechanical steps with three outcomes |
 | SignalPort | Poll for human/external signals with messages |
 | ChannelPort | Send notifications to humans/external systems |
-| Observer | Emit structured observability events |
+| Observer | Domain probe protocol — typed methods per observation point |
 
 Adapters implement ports for specific technologies. The system MUST function correctly with any conforming adapter set.
 

@@ -35,6 +35,7 @@ Prompts SHALL be composed from three layers, applied in order:
 - GIVEN the process-improver has written implementer guidelines
 - WHEN a prompt is composed
 - THEN both project and process guidelines are included
+- AND the final guidelines list is: project overlay list + process overlay list (concatenated in order)
 - AND process overlay guidelines augment (not replace) project guidelines
 
 #### Scenario: All roles use the same model
@@ -47,11 +48,25 @@ Prompts SHALL be composed from three layers, applied in order:
 
 Each agent template SHALL contain:
 
-| Field | Description |
-|---|---|
-| name | Role identifier (e.g., "implementer", "pm", "verifier") |
-| prompt | Core prompt text, may contain substitution placeholders |
-| guidelines | Additional rules from overlays (empty string if none) |
+| Field | Type | Description |
+|---|---|---|
+| name | string | Role identifier (e.g., "implementer", "pm", "verifier") |
+| prompt | string | Core prompt text, may contain substitution placeholders (`{task_id}`, `{spec_ref}`, `{round}`) |
+| guidelines | list of string | Additional rules from overlays (empty list if none) |
+
+#### Scenario: Guidelines as list
+
+- GIVEN a project overlay adds two guidelines for the implementer
+- WHEN the template is loaded
+- THEN guidelines is a list: ["Always write tests", "Follow existing patterns"]
+- AND each guideline is a discrete unit that can be added/removed independently
+
+#### Scenario: Valid substitution placeholders
+
+- GIVEN a prompt template contains `{task_id}` and `{spec_ref}`
+- WHEN the prompt is composed for task-001
+- THEN `{task_id}` is replaced with "task-001" and `{spec_ref}` is replaced with the pinned spec ref
+- AND unknown placeholders (e.g., `{unknown}`) cause a compose-time error
 
 ### Requirement: Context Injection
 
@@ -111,6 +126,14 @@ The prompt composer SHALL rebuild when the reconciler detects overlay changes. R
 - WHEN the rebuild occurs
 - THEN subsequent workers receive the updated guidelines
 
+#### Scenario: Kustomize build failure on rebuild
+
+- GIVEN a process-improver writes invalid YAML to the process overlay
+- WHEN the composer attempts a rebuild and kustomize build fails
+- THEN the composer retains the previous known-good templates
+- AND a probe event is emitted indicating the build failure
+- AND the orchestrator continues operating with stale prompts until the overlay is fixed
+
 ### Requirement: Directory Structure
 
 The project SHALL organize prompt-related files as:
@@ -134,3 +157,10 @@ The phase map SHALL be defined as a `kind: Process` document in the kustomize ou
 - WHEN the composer loads templates
 - THEN it extracts Agent documents as prompt templates
 - AND extracts the Process document as the phase map
+
+#### Scenario: Agent/Process validation
+
+- GIVEN a Process document references `agent: auditor` in a phase
+- WHEN no Agent document named "auditor" exists in the kustomize output
+- THEN the composer SHALL fail with a clear error listing all undefined agent roles
+- AND the orchestrator does not start with an invalid configuration

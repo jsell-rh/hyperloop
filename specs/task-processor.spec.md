@@ -66,26 +66,27 @@ Every step execution SHALL produce one of three outcomes:
 
 ### Requirement: Phase Transitions
 
-Phase transitions SHALL update the task's phase field. Backward transitions (RETRY) SHALL increment the round counter. Forward transitions (ADVANCE) SHALL NOT increment the round counter.
+Phase transitions SHALL update the task's phase field. When a step produces RETRY (verdict FAIL or signal rejected), the round counter SHALL be incremented. When a step produces ADVANCE (verdict PASS or signal approved), the round counter SHALL NOT be incremented. Round increments are determined by the step outcome, not by the direction of the transition.
 
-#### Scenario: Forward transition
+#### Scenario: ADVANCE does not increment round
 
 - GIVEN task-001 at phase "implement", round 0
-- WHEN it advances to phase "verify"
-- THEN task-001.phase becomes "verify" and round remains 0
+- WHEN the step produces ADVANCE
+- THEN task-001.phase becomes the on_pass target and round remains 0
 
-#### Scenario: Backward transition increments round
+#### Scenario: RETRY increments round
 
 - GIVEN task-001 at phase "verify", round 0
-- WHEN it retries back to phase "implement"
-- THEN task-001.phase becomes "implement" and round becomes 1
+- WHEN the step produces RETRY
+- THEN task-001.phase becomes the on_fail target and round becomes 1
 
-#### Scenario: Reaching "done"
+#### Scenario: Reaching terminal completion
 
 - GIVEN task-001 at phase "merge" with on_pass: "done"
 - WHEN the merge step returns ADVANCE
-- THEN task-001.status transitions to "synced"
+- THEN task-001.status transitions to "completed"
 - AND task-001.phase becomes null
+- AND "done" is a reserved keyword, not a phase name — it signals terminal success
 
 ### Requirement: Worker Lifecycle
 
@@ -118,6 +119,14 @@ For agent steps, the task processor SHALL manage worker lifecycle through spawn,
 - WHEN the task processor reaps the result
 - THEN it stores the detail as a review finding in the state store
 - AND the finding is composed into the prompt on the next attempt
+
+#### Scenario: Worker crashes without writing verdict
+
+- GIVEN a worker completes or is terminated without writing a verdict file
+- WHEN the task processor reaps the result
+- THEN the result defaults to FAIL with detail "worker completed without writing verdict"
+- AND the probe emits worker_crash_detected with task_id, role, and branch
+- AND the ChannelPort sends a notification to alert a human of the crash
 
 ### Requirement: Signal Handling at Gates
 
@@ -152,7 +161,7 @@ The task processor MUST NOT spawn a worker for a task whose dependencies have no
 #### Scenario: Dependencies met
 
 - GIVEN task-002 depends on task-001
-- WHEN task-001.status is "synced"
+- WHEN task-001.status is "completed"
 - THEN task-002 is eligible for spawning
 
 #### Scenario: Dependencies not met
@@ -209,6 +218,24 @@ Step names in the phase map SHOULD be forge-neutral abstractions, not platform-s
 - THEN the adapter performs a GitHub squash-merge
 - AND when a GitLab adapter is wired instead, it performs a GitLab MR merge
 - AND the phase map is unchanged
+
+### Requirement: PR Lifecycle
+
+The task processor SHALL manage PR creation and draft-to-ready transition as part of the phase map workflow.
+
+#### Scenario: Draft PR created when first needed
+
+- GIVEN task-001 reaches a signal step or action step that requires a PR
+- WHEN no PR exists for the task
+- THEN a draft PR is created for the task's branch
+- AND task-001.pr is set to the PR URL
+
+#### Scenario: Draft-to-ready as explicit phase
+
+- GIVEN a phase map includes a `action mark-ready` phase
+- WHEN the task reaches that phase
+- THEN the PR transitions from draft to ready for review
+- AND this is an explicit, deliberate step — not automatic
 
 ### Requirement: First-Phase Initialization
 

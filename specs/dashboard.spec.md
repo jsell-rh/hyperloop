@@ -71,7 +71,7 @@ The dashboard SHALL display full task detail including pipeline position, review
 
 ### Requirement: Control Operations
 
-The dashboard SHALL support control operations that write to the state store.
+The dashboard SHALL support control operations that write to the state store. Control operations use optimistic concurrency: the dashboard reads the task version before writing, and the write fails if the version has changed (orchestrator wrote in between). On failure, the user retries.
 
 #### Scenario: Restart a task
 
@@ -80,6 +80,13 @@ The dashboard SHALL support control operations that write to the state store.
 - THEN task-001's phase is set to the first phase in the phase map
 - AND round is incremented
 - AND the task processor picks it up next cycle
+
+#### Scenario: Concurrent write conflict
+
+- GIVEN the dashboard reads task-001 at version V
+- WHEN the orchestrator updates task-001 before the dashboard writes
+- THEN the dashboard write fails with a version conflict
+- AND the user is notified to retry
 
 #### Scenario: Retire a task
 
@@ -97,7 +104,7 @@ The dashboard SHALL support control operations that write to the state store.
 
 ### Requirement: Activity Feed
 
-The dashboard SHALL display a chronological feed of orchestrator events when the file observer is enabled.
+The dashboard SHALL display a chronological feed of orchestrator events when the file probe adapter is enabled. The activity feed reads from the local events file and is available only when the dashboard runs on the same machine as the orchestrator. Remote observability is handled by the telemetry adapter (e.g., OpenTelemetry) pushing to a collector.
 
 #### Scenario: Event display
 

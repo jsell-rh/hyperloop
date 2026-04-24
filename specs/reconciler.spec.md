@@ -39,7 +39,7 @@ The reconciler SHALL detect drift at three levels, checked in order:
 
 #### Scenario: Alignment audit triggered
 
-- GIVEN all tasks for spec "auth.md@abc123" have status "synced"
+- GIVEN all tasks for spec "auth.md@abc123" have status "completed"
 - WHEN the reconciler evaluates convergence
 - THEN it spawns an auditor agent to compare the spec against the merged code
 - AND if the auditor finds misalignment, the reconciler triggers PM intake with the audit finding
@@ -79,19 +79,19 @@ The PM agent SHALL be a mandatory, first-class component of the reconciler. It i
 
 ### Requirement: Alignment Audit
 
-The reconciler SHALL spawn an auditor agent after all tasks for a spec reach "synced" status. The auditor compares the spec against the merged code to verify actual alignment.
+The reconciler SHALL spawn an auditor agent after all tasks for a spec reach "completed" status. The auditor compares the spec against the merged code to verify actual alignment.
 
 #### Scenario: Auditor confirms alignment
 
-- GIVEN all tasks for "auth.md@abc123" are synced
+- GIVEN all tasks for "auth.md@abc123" are completed
 - WHEN the auditor reads the spec and the code
 - THEN the auditor reports "aligned"
-- AND the reconciler marks the spec as converged
-- AND no further work is created
+- AND the reconciler marks the spec as converged at this SHA
+- AND no further work is created until the spec or code changes
 
 #### Scenario: Auditor finds misalignment
 
-- GIVEN all tasks for "auth.md@abc123" are synced
+- GIVEN all tasks for "auth.md@abc123" are completed
 - WHEN the auditor finds the code doesn't handle timeout cases described in the spec
 - THEN the auditor reports "misaligned" with detail "timeout handling missing"
 - AND the reconciler stores the finding in the state store
@@ -104,6 +104,79 @@ The reconciler SHALL spawn an auditor agent after all tasks for a spec reach "sy
 - WHEN the process-improver next runs (triggered by task failures)
 - THEN it reads the audit finding from the state store alongside verification findings
 - AND uses both to update agent guidelines
+
+### Requirement: Convergence Tracking
+
+The reconciler SHALL track convergence state per spec to prevent infinite audit loops. A spec is "converged" when the auditor confirms alignment. The reconciler MUST NOT re-audit a converged spec unless the spec file or the codebase changes.
+
+#### Scenario: Converged spec skips audit
+
+- GIVEN spec "auth.md@abc123" was previously audited and marked converged
+- WHEN the reconciler runs and neither the spec nor the relevant code has changed
+- THEN the alignment audit is skipped for this spec
+
+#### Scenario: Code change breaks convergence
+
+- GIVEN spec "auth.md@abc123" is marked converged
+- WHEN a commit on main modifies files relevant to this spec
+- THEN the convergence marker is invalidated
+- AND the next cycle re-runs the alignment audit
+
+### Requirement: Summary-Aware Coverage
+
+The coverage check SHALL consider a spec "covered" if it has active tasks OR a summary record with a matching SHA. This prevents the GC-prune → coverage-gap → PM-recreate oscillation loop.
+
+#### Scenario: Summary prevents re-creation after GC
+
+- GIVEN spec "auth.md@abc123" has a summary (tasks were completed and pruned by GC)
+- WHEN the coverage check runs
+- THEN "auth.md" is considered covered at SHA abc123
+- AND no PM intake is triggered
+
+#### Scenario: Summary with stale SHA triggers intake
+
+- GIVEN spec "auth.md" has a summary for SHA abc123 but current HEAD is def456
+- WHEN the freshness check runs
+- THEN the spec is flagged as drifted
+- AND PM intake is triggered with the summary as historical context
+
+### Requirement: Deleted Spec Handling
+
+The reconciler SHALL detect specs that have been deleted from the repository and retire their associated tasks.
+
+#### Scenario: Spec deleted
+
+- GIVEN spec "old-feature.md" existed and has tasks in progress
+- WHEN the spec file is deleted from the repository
+- THEN the reconciler detects orphaned tasks (tasks referencing a spec that no longer exists)
+- AND transitions those tasks to "failed" with reason "spec deleted"
+- AND emits a probe event for each retired task
+
+#### Scenario: Deleted spec with completed tasks
+
+- GIVEN spec "old-feature.md" has all tasks in "completed" status
+- WHEN the spec is deleted
+- THEN the tasks are eligible for GC on the normal retention schedule
+- AND no immediate action is needed
+
+### Requirement: PM Failure Handling
+
+When the PM agent fails during intake, the reconciler SHALL apply exponential backoff and halt after a configurable maximum number of consecutive failures.
+
+#### Scenario: PM failure with retry
+
+- GIVEN the PM fails during intake (run_serial returns false)
+- WHEN the reconciler records the failure
+- THEN it skips PM intake for the next N cycles (exponential backoff)
+- AND emits a probe event indicating PM failure
+- AND detected drift is preserved for the next intake attempt
+
+#### Scenario: PM failure halt
+
+- GIVEN the PM has failed M consecutive times (configurable, default 5)
+- WHEN the reconciler evaluates PM health
+- THEN it halts with reason "PM agent unreachable after M consecutive failures"
+- AND emits orchestrator_halted probe event
 
 ### Requirement: Overlay Hot-Reload
 
@@ -142,6 +215,14 @@ When the phase map changes and in-flight tasks reference phases that no longer e
 - WHEN the PM evaluates the mapping
 - THEN the PM decides whether to advance past the removed phase or reset to the beginning
 - AND the reconciler applies the PM's decision
+
+#### Scenario: PM migration failure
+
+- GIVEN the PM fails to produce a valid phase mapping
+- WHEN the reconciler cannot apply the mapping
+- THEN affected tasks are reset to the first phase in the new process
+- AND the round counter is incremented
+- AND the reset is logged via probe event task_reset with reason "process changed, PM migration failed"
 
 ### Requirement: Garbage Collection
 

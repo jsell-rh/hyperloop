@@ -93,14 +93,15 @@ Domain logic (pure functions, value objects) SHALL be tested directly with real 
 
 ### Requirement: Type Hints - Full Coverage
 
-Every function signature and every non-obvious variable SHALL have type hints. The `Any` type is banned.
+Every function signature and every non-obvious variable SHALL have type hints. The `Any` type is banned in project code. Third-party library signatures that use `Any` are excluded from this requirement.
 
-#### Scenario: No Any in codebase
+#### Scenario: No Any in project code
 
-- GIVEN the full source tree
+- GIVEN the project source tree (src/hyperloop/)
 - WHEN type-checked in strict mode
-- THEN no `Any` type annotations exist
-- AND the type checker reports zero errors
+- THEN no `Any` type annotations exist in project code
+- AND `type: ignore` comments for third-party `Any` returns are allowed with inline justification
+- AND the type checker reports zero errors in project code
 
 ### Requirement: Layered Testing
 
@@ -125,3 +126,28 @@ Tests SHALL be organized in layers:
 - WHEN they are defined
 - THEN they are marked with @pytest.mark.slow
 - AND they can be skipped in fast feedback loops
+
+#### Scenario: Forge/infrastructure scenarios use fakes
+
+- GIVEN a scenario like "forge swap" or "runtime swap"
+- WHEN the test is implemented
+- THEN it uses fake adapters (not real forge APIs or real agent runtimes)
+- AND the contract test suite validates behavioral equivalence with real adapters separately
+
+### Requirement: Domain Probes - No Direct Logging
+
+All observation in domain and orchestrator code MUST use domain probe method calls (`self._probe.method_name()`). Direct calls to `logger.*`, `structlog.*`, `logging.*`, or any logging library are banned in domain and orchestrator code. Structured log adapters translate probe calls into log entries.
+
+#### Scenario: No logger imports in domain code
+
+- GIVEN the domain source tree (src/hyperloop/domain/, src/hyperloop/loop.py)
+- WHEN scanned for imports
+- THEN no file imports logging, structlog, or any logging library
+- AND all observation flows through the probe protocol
+
+#### Scenario: Adapter code may use logging
+
+- GIVEN adapter code (src/hyperloop/adapters/)
+- WHEN a probe adapter needs to log errors (e.g., swallowed exceptions)
+- THEN it MAY use logging directly as a last-resort error channel
+- AND this is limited to probe adapter error handling only

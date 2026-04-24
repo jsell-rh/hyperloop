@@ -154,32 +154,32 @@ The SpecSource port SHALL detect spec changes and read spec content at pinned ve
 
 ### Requirement: StepExecutor Port
 
-The StepExecutor port SHALL execute mechanical steps (actions, checks) and return one of three outcomes.
+The StepExecutor port SHALL execute mechanical steps (actions, checks) and return a StepResult containing an outcome (ADVANCE, RETRY, WAIT), a detail string, and an optional PR URL.
 
 #### Scenario: Successful step
 
 - GIVEN a task at a "merge" action step
 - WHEN execute is called with task, step name "merge", and args
 - THEN it performs the merge operation
-- AND returns ADVANCE on success
+- AND returns StepResult(outcome=ADVANCE, detail="merged successfully")
 
 #### Scenario: Retriable failure
 
 - GIVEN a merge step where the PR is not yet mergeable
 - WHEN execute is called
-- THEN it returns WAIT (re-check next cycle)
+- THEN it returns StepResult(outcome=WAIT, detail="PR not yet mergeable, CI checks pending")
 
 #### Scenario: Hard failure
 
 - GIVEN a check step where CI has failed
 - WHEN execute is called
-- THEN it returns RETRY (loop back)
+- THEN it returns StepResult(outcome=RETRY, detail="CI check 'lint' failed")
 
 #### Scenario: Unknown step
 
 - GIVEN a step name with no registered adapter
 - WHEN execute is called
-- THEN it returns RETRY with a descriptive error detail
+- THEN it returns StepResult(outcome=RETRY, detail="no adapter registered for step 'unknown-step'")
 
 ### Requirement: SignalPort
 
@@ -232,28 +232,30 @@ The ChannelPort port SHALL send notifications to humans or external systems. It 
 - GIVEN a gate notification was already sent for task-001 at phase "await-review"
 - WHEN the task is still at the same phase next cycle
 - THEN no duplicate notification is sent
+- AND one duplicate per orchestrator restart is acceptable (dedup state is in-memory)
 
-### Requirement: Observer Port
+### Requirement: Observer Port (Domain Probe)
 
-The Observer port SHALL accept structured events via a single emit method. It MUST NOT raise exceptions.
+The Observer port SHALL be a typed protocol with one method per observation point (the domain probe pattern). Each method has keyword-only arguments defining the exact schema for that event. See observability.spec.md for the full probe method catalog.
 
-#### Scenario: Event emission
+#### Scenario: Typed probe call
 
 - GIVEN an interesting moment occurs (worker spawned, task completed, etc.)
-- WHEN emit is called with an event name and keyword arguments
-- THEN the event is dispatched to all registered observer adapters
+- WHEN the corresponding probe method is called with typed arguments
+- THEN all registered probe adapters receive the call
+- AND the type checker verifies correct argument types at compile time
 
-#### Scenario: Observer failure isolation
+#### Scenario: Probe failure isolation
 
-- GIVEN an observer adapter throws an exception
-- WHEN emit is called
-- THEN the exception is logged and swallowed
-- AND other observer adapters still receive the event
+- GIVEN a probe adapter throws an exception
+- WHEN a probe method is called
+- THEN the exception is caught and swallowed
+- AND other probe adapters still receive the call
 - AND the orchestrator loop is not interrupted
 
-#### Scenario: Multi-observer fan-out
+#### Scenario: Multi-probe fan-out
 
-- GIVEN three observer adapters are registered (log, chat, telemetry)
-- WHEN an event is emitted
-- THEN all three adapters receive the event
+- GIVEN three probe adapters are registered (log, chat, telemetry)
+- WHEN a probe method is called
+- THEN all three adapters receive the call
 - AND adapter failures are independent
