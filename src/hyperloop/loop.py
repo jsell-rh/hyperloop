@@ -22,10 +22,17 @@ from hyperloop.cycle.helpers import build_world
 from hyperloop.cycle.intake import _detect_spec_entries
 from hyperloop.domain.deps import detect_cycles
 from hyperloop.domain.model import (
+    PMFailureResponse,
     TaskContext,
     TaskStatus,
     Verdict,
     WorkerHandle,
+)
+from hyperloop.domain.reconciler import (
+    detect_phase_orphans,
+    handle_deleted_specs,
+    handle_pm_failure,
+    plan_gc,
 )
 
 if TYPE_CHECKING:
@@ -95,6 +102,12 @@ class Orchestrator:
         self._spawn_skip_until: int = 0
         self._spawn_task_failures: dict[str, int] = {}
         self._has_failures_since_intake: bool = False
+
+        # Reconciler state
+        self._converged_specs: set[str] = set()
+        self._pm_consecutive_failures: int = 0
+        self._gc_last_cycle: int = 0
+        self._task_ages: dict[str, float] = {}
 
     def validate_templates(self) -> None:
         """Validate that every role in the phase map has a resolved template."""
@@ -198,10 +211,11 @@ class Orchestrator:
             for hook in self._hooks:
                 hook.after_reap(results=collected.reaped, cycle=cycle_num)
 
-        # RECONCILE (intake for now)
-        self._apply_intake(
-            run_intake(self._state, self._runtime, self._composer, self._has_failures_since_intake)
-        )
+        # RECONCILE
+        halt_reason = self._run_reconcile(cycle_num)
+        if halt_reason is not None:
+            self._state.persist("orchestrator: halt")
+            return halt_reason
 
         # ADVANCE
         advanced = advance(
@@ -253,6 +267,118 @@ class Orchestrator:
         if spawn_result.halt_reason is not None:
             return spawn_result.halt_reason
         return self._check_convergence()
+
+    # -- Reconcile phase -----------------------------------------------------
+
+    def _run_reconcile(self, cycle_num: int) -> str | None:
+        """Run reconciler checks: deleted specs, phase orphans, intake, GC.
+
+        Returns halt reason if PM failure threshold is reached, else None.
+        """
+        world = self._state.get_world()
+
+        # 1. Handle deleted specs -- retire tasks referencing missing specs
+        self._handle_deleted_specs(world.tasks, cycle_num)
+
+        # 2. Detect phase orphans -- reset tasks at phases not in current map
+        self._handle_phase_orphans(world.tasks, cycle_num)
+
+        # 3. Run intake (PM agent for task creation)
+        intake_result = run_intake(
+            self._state,
+            self._runtime,
+            self._composer,
+            self._has_failures_since_intake,
+        )
+        self._apply_intake(intake_result)
+
+        # 4. Track PM failures
+        if intake_result.ran and not intake_result.success:
+            self._pm_consecutive_failures += 1
+            response = handle_pm_failure(self._pm_consecutive_failures, self._pm_max_failures)
+            if response == PMFailureResponse.HALT:
+                reason = (
+                    f"PM agent unreachable after {self._pm_consecutive_failures} "
+                    f"consecutive failures"
+                )
+                return reason
+        elif intake_result.ran and intake_result.success:
+            self._pm_consecutive_failures = 0
+
+        # 5. Garbage collection
+        self._run_gc(cycle_num)
+
+        return None
+
+    def _handle_deleted_specs(self, tasks: dict[str, Task], cycle_num: int) -> None:
+        """Detect tasks referencing deleted specs and fail them."""
+        # Gather current spec paths from the state store
+        spec_files = self._state.list_files("specs/**/*.spec.md")
+        # Also include specs matching "specs/*.md" for backward compat
+        spec_files_alt = self._state.list_files("specs/**/*.md")
+        current_spec_paths: set[str] = set(spec_files) | set(spec_files_alt)
+
+        # Only check for deleted specs when the store tracks spec files.
+        # If no spec files exist at all, skip -- the store may not track them.
+        if not current_spec_paths:
+            return
+
+        retirements = handle_deleted_specs(tasks, current_spec_paths)
+        for retirement in retirements:
+            self._state.transition_task(retirement.task_id, TaskStatus.FAILED, phase=None)
+            task = self._state.get_task(retirement.task_id)
+            self._probe.task_failed(
+                task_id=retirement.task_id,
+                spec_ref=task.spec_ref,
+                reason=retirement.reason,
+                round=task.round,
+                cycle=cycle_num,
+            )
+
+    def _handle_phase_orphans(self, tasks: dict[str, Task], cycle_num: int) -> None:
+        """Detect tasks at phases not in the current phase map and reset them."""
+        orphans = detect_phase_orphans(tasks, self._process.phases)
+        first_phase = next(iter(self._process.phases), None) if self._process.phases else None
+        for orphan in orphans:
+            task = self._state.get_task(orphan.task_id)
+            if first_phase is not None:
+                self._state.transition_task(
+                    orphan.task_id,
+                    TaskStatus.IN_PROGRESS,
+                    phase=first_phase,
+                    round=task.round + 1,
+                )
+            else:
+                self._state.reset_task(orphan.task_id)
+            self._probe.task_reset(
+                task_id=orphan.task_id,
+                spec_ref=task.spec_ref,
+                reason="process changed, PM migration failed",
+                prior_round=task.round,
+                cycle=cycle_num,
+            )
+
+    def _run_gc(self, cycle_num: int) -> None:
+        """Run garbage collection if on the configured interval."""
+        if self._gc_run_every_cycles <= 0:
+            return
+        if cycle_num % self._gc_run_every_cycles != 0:
+            return
+
+        world = self._state.get_world()
+        gc_actions = plan_gc(
+            tasks=world.tasks,
+            retention_days=self._gc_retention_days,
+            task_ages=self._task_ages,
+        )
+        for action in gc_actions:
+            self._state.delete_task(action.task_id)
+        if gc_actions:
+            self._probe.gc_ran(
+                pruned_count=len(gc_actions),
+                cycle=cycle_num,
+            )
+        self._gc_last_cycle = cycle_num
 
     # -- Apply helpers -------------------------------------------------------
 

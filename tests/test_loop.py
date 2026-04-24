@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from hyperloop.compose import PromptComposer, load_templates_from_dir
 from hyperloop.domain.model import (
     Phase,
@@ -112,6 +114,9 @@ def _make_orchestrator(
     poll_interval: float = 0,
     probe: RecordingProbe | None = None,
     max_action_attempts: int = 3,
+    gc_retention_days: int = 30,
+    gc_run_every_cycles: int = 10,
+    pm_max_failures: int = 5,
 ) -> Orchestrator:
     return Orchestrator(
         state=state,
@@ -127,6 +132,9 @@ def _make_orchestrator(
         composer=composer,
         poll_interval=poll_interval,
         probe=probe or RecordingProbe(),
+        gc_retention_days=gc_retention_days,
+        gc_run_every_cycles=gc_run_every_cycles,
+        pm_max_failures=pm_max_failures,
     )
 
 
@@ -1151,3 +1159,255 @@ class TestPRLifecycle:
         task = state.get_task("task-001")
         assert task.phase == Phase("verify")
         assert task.pr is None
+
+
+# ---------------------------------------------------------------------------
+# Reconciler integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestDeletedSpecRetiresTasks:
+    """Tasks referencing a deleted spec are transitioned to FAILED."""
+
+    def test_deleted_spec_retires_in_progress_task(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        # Task references specs/task-001.md but that spec is NOT in the file system
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("implement"),
+                branch="hyperloop/task-001",
+            )
+        )
+        # Seed a different spec so the store has spec files (triggers deleted-spec check)
+        # but task-001's spec_ref "specs/task-001.md" has no backing file
+        state.set_file("specs/other.md", "Some other spec")
+
+        orch = _make_orchestrator(state, runtime, probe=probe)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        assert task.status == TaskStatus.FAILED
+
+    def test_deleted_spec_emits_task_failed_probe(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        state.add_task(
+            _task(
+                id="task-orphan",
+                status=TaskStatus.NOT_STARTED,
+            )
+        )
+        # Seed a different spec so deleted-spec detection is active
+        state.set_file("specs/other.md", "Some other spec")
+
+        orch = _make_orchestrator(state, runtime, probe=probe)
+        orch.run_cycle()
+
+        failed_calls = probe.of_method("task_failed")
+        orphan_calls = [c for c in failed_calls if c["task_id"] == "task-orphan"]
+        assert len(orphan_calls) >= 1
+        assert "spec deleted" in str(orphan_calls[0]["reason"])
+
+    def test_completed_tasks_not_retired_on_deleted_spec(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+
+        # Completed tasks should not be retired -- they are GC eligible instead
+        state.add_task(_task(id="task-done", status=TaskStatus.COMPLETED))
+
+        orch = _make_orchestrator(state, runtime)
+        orch.run_cycle()
+
+        task = state.get_task("task-done")
+        assert task.status == TaskStatus.COMPLETED
+
+
+class TestPMFailureBackoff:
+    """PM failure triggers backoff and eventually halt."""
+
+    def test_pm_failure_increments_counter(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        # Need at least one task so the cycle doesn't exit early
+        state.add_task(_task(id="task-001"))
+        state.set_file("specs/task-001.md", "Existing spec")
+        # Seed an additional uncovered spec so intake is triggered
+        state.set_file("specs/new.spec.md", "New spec")
+        runtime.set_serial_default_success(False)
+
+        orch = _make_orchestrator(state, runtime, composer=composer, probe=probe)
+        orch.run_cycle()
+
+        assert orch._pm_consecutive_failures >= 1
+
+    def test_pm_failure_halt_after_max(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        # Task + spec so the cycle doesn't exit early
+        state.add_task(_task(id="task-001"))
+        state.set_file("specs/task-001.md", "Existing spec")
+        state.set_file("specs/new.spec.md", "New spec")
+        runtime.set_serial_default_success(False)
+
+        orch = _make_orchestrator(state, runtime, composer=composer, probe=probe, pm_max_failures=3)
+
+        # Run enough cycles for 3 consecutive PM failures
+        halt_reason: str | None = None
+        for i in range(10):
+            halt_reason = orch.run_cycle(cycle_num=i + 1)
+            if halt_reason is not None:
+                break
+
+        assert halt_reason is not None
+        assert "pm" in halt_reason.lower()
+
+
+class TestGCPrunesTerminalTasks:
+    """GC prunes terminal tasks past retention period."""
+
+    def test_gc_prunes_completed_tasks_past_retention(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        state.add_task(_task(id="task-old", status=TaskStatus.COMPLETED))
+        state.add_task(
+            _task(id="task-active", status=TaskStatus.IN_PROGRESS, phase=Phase("implement"))
+        )
+        # Seed spec files so deleted-spec detection doesn't interfere
+        state.set_file("specs/task-old.md", "old spec")
+        state.set_file("specs/task-active.md", "active spec")
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            probe=probe,
+            gc_retention_days=30,
+            gc_run_every_cycles=1,
+        )
+        # Inject task ages: task-old is 45 days, task-active is 1 day
+        orch._task_ages = {"task-old": 45.0, "task-active": 1.0}
+
+        orch.run_cycle()
+
+        # task-old should be pruned
+        with pytest.raises(KeyError):
+            state.get_task("task-old")
+
+        # task-active should remain
+        task = state.get_task("task-active")
+        assert task.status == TaskStatus.IN_PROGRESS
+
+    def test_gc_emits_probe(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        state.add_task(_task(id="task-old", status=TaskStatus.COMPLETED))
+        state.set_file("specs/task-old.md", "old spec")
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            probe=probe,
+            gc_retention_days=30,
+            gc_run_every_cycles=1,
+        )
+        orch._task_ages = {"task-old": 45.0}
+
+        orch.run_cycle()
+
+        gc_calls = probe.of_method("gc_ran")
+        assert len(gc_calls) >= 1
+        assert gc_calls[0]["pruned_count"] == 1
+
+    def test_gc_only_runs_on_configured_interval(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        state.add_task(_task(id="task-old", status=TaskStatus.COMPLETED))
+        state.set_file("specs/task-old.md", "old spec")
+
+        orch = _make_orchestrator(
+            state,
+            runtime,
+            probe=probe,
+            gc_retention_days=30,
+            gc_run_every_cycles=5,
+        )
+        orch._task_ages = {"task-old": 45.0}
+
+        # Cycle 1: GC should not run (not on interval)
+        orch.run_cycle(cycle_num=1)
+        gc_calls = probe.of_method("gc_ran")
+        assert len(gc_calls) == 0
+
+        # Cycle 5: GC should run
+        orch.run_cycle(cycle_num=5)
+        gc_calls = probe.of_method("gc_ran")
+        assert len(gc_calls) == 1
+
+
+class TestPhaseOrphanDetection:
+    """Tasks at phases not in current phase map are reset."""
+
+    def test_orphaned_phase_resets_task(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        # Task is at phase "code-review" which doesn't exist in DEFAULT_PROCESS
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("code-review"),
+                round=3,
+                branch="hyperloop/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime, probe=probe)
+        orch.run_cycle()
+
+        task = state.get_task("task-001")
+        # Should be reset to first phase
+        assert task.phase is None or task.phase == Phase("implement")
+        assert task.status in (TaskStatus.NOT_STARTED, TaskStatus.IN_PROGRESS)
+
+    def test_orphaned_phase_emits_task_reset_probe(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("code-review"),
+                round=3,
+                branch="hyperloop/task-001",
+            )
+        )
+
+        orch = _make_orchestrator(state, runtime, probe=probe)
+        orch.run_cycle()
+
+        reset_calls = probe.of_method("task_reset")
+        assert len(reset_calls) >= 1
+        assert reset_calls[0]["task_id"] == "task-001"
+        assert "process changed" in str(reset_calls[0]["reason"]).lower()

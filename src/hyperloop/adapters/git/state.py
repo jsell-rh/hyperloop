@@ -597,6 +597,13 @@ class GitStateStore:
         fm = _task_to_frontmatter(task)
         self._write_task_to_buffer(task.id, fm)
 
+    def delete_task(self, task_id: str) -> None:
+        """Remove a task from the store (buffered as empty content for next persist)."""
+        self._ensure_bootstrapped()
+        path = f"{STATE_PREFIX}/tasks/{task_id}.md"
+        # Buffer an empty string; persist() will handle deletion
+        self._buffer[path] = ""
+
     def persist(self, message: str) -> None:
         """Commit buffered changes to the state branch via git plumbing.
 

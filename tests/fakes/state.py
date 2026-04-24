@@ -197,6 +197,10 @@ class InMemoryStateStore:
             pr=None,
         )
 
+    def delete_task(self, task_id: str) -> None:
+        """Remove a task from the store (used by GC pruning)."""
+        self._tasks.pop(task_id, None)
+
     def persist(self, message: str) -> None:
         """Record the persist message (no-op for in-memory, but stores for test assertions)."""
         self.committed_messages.append(message)

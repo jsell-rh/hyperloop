@@ -91,6 +91,10 @@ class StateStore(Protocol):
         """
         ...
 
+    def delete_task(self, task_id: str) -> None:
+        """Remove a task from the store (used by GC pruning)."""
+        ...
+
     def sync(self) -> None:
         """Sync state with remote (pull then push). Called once per cycle boundary."""
         ...
