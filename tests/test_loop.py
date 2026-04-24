@@ -24,6 +24,7 @@ from hyperloop.domain.model import (
     WorkerResult,
 )
 from hyperloop.loop import Orchestrator
+from hyperloop.ports.check import CheckPort, CheckResult
 from tests.fakes.pr import FakePRManager
 from tests.fakes.probe import RecordingProbe
 from tests.fakes.runtime import InMemoryRuntime
@@ -81,7 +82,7 @@ def _make_orchestrator(
     poll_interval: float = 0,
     probe: RecordingProbe | None = None,
     max_action_attempts: int = 3,
-    check: object | None = None,
+    check: CheckPort | None = None,
 ) -> Orchestrator:
     gate = LabelGate(pr_manager) if pr_manager is not None else None
     action = PRMergeAction(pr_manager) if pr_manager is not None else None
@@ -1663,24 +1664,16 @@ class FakeCheck:
     """Fake CheckPort that returns configurable results per task."""
 
     def __init__(self) -> None:
-        from hyperloop.ports.check import CheckResult
-
         self._results: dict[str, CheckResult] = {}
         self._default = CheckResult.PASS
 
-    def set_result(self, task_id: str, result: object) -> None:
-        from hyperloop.ports.check import CheckResult
-
-        assert isinstance(result, CheckResult)
+    def set_result(self, task_id: str, result: CheckResult) -> None:
         self._results[task_id] = result
 
-    def set_default(self, result: object) -> None:
-        from hyperloop.ports.check import CheckResult
-
-        assert isinstance(result, CheckResult)
+    def set_default(self, result: CheckResult) -> None:
         self._default = result
 
-    def evaluate(self, task: Task, check_name: str, args: dict[str, object]) -> object:
+    def evaluate(self, task: Task, check_name: str, args: dict[str, object]) -> CheckResult:
         return self._results.get(task.id, self._default)
 
 
@@ -1701,7 +1694,6 @@ class TestAgentBackedCheck:
 
     def test_check_wait_does_not_spawn_or_advance(self) -> None:
         """WAIT result keeps the task at the check phase without spawning."""
-        from hyperloop.ports.check import CheckResult
 
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
@@ -1721,7 +1713,6 @@ class TestAgentBackedCheck:
 
     def test_check_pass_with_agent_transitions_to_agent_phase(self) -> None:
         """PASS on a check with an evaluator transitions to the agent phase for spawning."""
-        from hyperloop.ports.check import CheckResult
 
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
@@ -1745,7 +1736,6 @@ class TestAgentBackedCheck:
 
     def test_check_agent_pass_advances_past_check(self) -> None:
         """When the check agent passes, the task advances past the check step."""
-        from hyperloop.ports.check import CheckResult
 
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
@@ -1778,7 +1768,6 @@ class TestAgentBackedCheck:
 
     def test_check_agent_fail_restarts_loop(self) -> None:
         """When the check agent fails, the enclosing loop restarts."""
-        from hyperloop.ports.check import CheckResult
 
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
@@ -1813,7 +1802,6 @@ class TestAgentBackedCheck:
 
     def test_check_fail_without_agent_restarts_loop(self) -> None:
         """A mechanical check (no agent) that FAILs restarts the loop."""
-        from hyperloop.ports.check import CheckResult
 
         mechanical_process = Process(
             name="mech-check",
@@ -1844,7 +1832,6 @@ class TestAgentBackedCheck:
     def test_full_cycle_implementer_then_check_agent(self) -> None:
         """End-to-end: implementer passes -> check pre-conditions pass ->
         check agent spawns -> check agent passes -> task completes."""
-        from hyperloop.ports.check import CheckResult
 
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
