@@ -1,14 +1,17 @@
-"""GitStateStore — reads/writes task files in a git repo.
+"""GitStateStore — reads/writes state on an orphan git branch.
 
-Implements the StateStore protocol by parsing YAML frontmatter task files
-and using git for persistence.  Task files are pure metadata (frontmatter
-only); review findings live in separate review files.
+Implements the StateStore protocol by persisting task/review/summary files
+on a dedicated orphan branch ``hyperloop/state``. Reads use ``git show``
+to avoid checkout. Writes buffer in memory and ``persist()`` commits via
+git plumbing (temporary index) without touching the working tree.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+import tempfile
 from typing import TYPE_CHECKING, cast
 
 import yaml
@@ -18,17 +21,21 @@ from hyperloop.domain.model import Phase, Task, TaskStatus, World
 if TYPE_CHECKING:
     from pathlib import Path
 
+STATE_BRANCH = "hyperloop/state"
+STATE_PREFIX = ".hyperloop/state"
+
 # Map between kebab-case YAML values and TaskStatus enum members
 _STATUS_FROM_YAML: dict[str, TaskStatus] = {
     "not-started": TaskStatus.NOT_STARTED,
     "in-progress": TaskStatus.IN_PROGRESS,
-    "complete": TaskStatus.COMPLETED,  # legacy alias
-    "completed": TaskStatus.COMPLETED,
+    "complete": TaskStatus.COMPLETE,
+    "completed": TaskStatus.COMPLETE,
     "failed": TaskStatus.FAILED,
 }
 
 _STATUS_TO_YAML: dict[TaskStatus, str] = {v: k for k, v in _STATUS_FROM_YAML.items()}
-_STATUS_TO_YAML[TaskStatus.COMPLETED] = "completed"
+# Ensure COMPLETE maps to "complete" consistently
+_STATUS_TO_YAML[TaskStatus.COMPLETE] = "complete"
 
 
 def _parse_task_file(content: str) -> dict[str, object]:
@@ -112,6 +119,23 @@ def _frontmatter_to_task(fm: dict[str, object]) -> Task:
     )
 
 
+def _task_to_frontmatter(task: Task) -> dict[str, object]:
+    """Convert a Task domain object to a frontmatter dict."""
+    return {
+        "id": task.id,
+        "title": task.title,
+        "spec_ref": task.spec_ref,
+        "status": _STATUS_TO_YAML[task.status],
+        "phase": str(task.phase) if task.phase is not None else None,
+        "deps": list(task.deps) if task.deps else [],
+        "round": task.round,
+        "branch": task.branch,
+        "pr": task.pr,
+        "pr_title": task.pr_title,
+        "pr_description": task.pr_description,
+    }
+
+
 def _serialize_task_file(fm: dict[str, object]) -> str:
     """Serialize frontmatter dict into a task file string (pure metadata)."""
     ordered_keys = [
@@ -144,50 +168,254 @@ def _serialize_task_file(fm: dict[str, object]) -> str:
     return "---\n" + fm_text + "---\n"
 
 
+def _serialize_review_file(task_id: str, round: int, role: str, verdict: str, detail: str) -> str:
+    """Serialize a review into file content."""
+    fm = {
+        "task_id": task_id,
+        "round": round,
+        "role": role,
+        "verdict": verdict,
+    }
+    fm_text = yaml.dump(fm, default_flow_style=False, sort_keys=False)
+    return f"---\n{fm_text}---\n{detail}"
+
+
 class GitStateStore:
-    """StateStore implementation backed by task files in a git repository."""
+    """StateStore implementation using an orphan git branch for state persistence.
+
+    State lives on ``hyperloop/state``, reads use ``git show``,
+    writes buffer in memory, and ``persist()`` commits via git plumbing
+    without touching the working tree or main branch.
+    """
 
     def __init__(self, repo_path: Path) -> None:
         self._repo = repo_path
-        self._tasks_dir = repo_path / ".hyperloop" / "state" / "tasks"
-        self._reviews_dir = repo_path / ".hyperloop" / "state" / "reviews"
         self._epochs: dict[str, str] = {}
+        self._bootstrapped = False
+        # Buffered writes: path -> content (relative to repo root)
+        self._buffer: dict[str, str] = {}
 
-    def _task_file_path(self, task_id: str) -> Path:
-        return self._tasks_dir / f"{task_id}.md"
+    def _ensure_bootstrapped(self) -> None:
+        """Lazily bootstrap the state branch on first access."""
+        if not self._bootstrapped:
+            self.bootstrap()
 
-    def _read_task_file(self, task_id: str) -> dict[str, object]:
-        """Read and parse a task file. Raises KeyError if not found."""
-        path = self._task_file_path(task_id)
-        if not path.exists():
-            raise KeyError(task_id)
-        return _parse_task_file(path.read_text())
-
-    def _write_task_file(self, task_id: str, fm: dict[str, object]) -> None:
-        """Write a task file to disk (does NOT commit)."""
-        path = self._task_file_path(task_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_serialize_task_file(fm))
-
-    def _git(self, *args: str) -> str:
+    def _git(self, *args: str, env: dict[str, str] | None = None) -> str:
         """Run a git command in the repo and return stdout."""
+        full_env = dict(os.environ)
+        if env:
+            full_env.update(env)
         result = subprocess.run(
             ["git", "-C", str(self._repo), *args],
             check=True,
             capture_output=True,
             text=True,
+            env=full_env,
         )
         return result.stdout.strip()
 
-    # -- StateStore protocol ------------------------------------------------
+    def _git_try(self, *args: str) -> str | None:
+        """Run a git command, return stdout or None on failure."""
+        try:
+            return self._git(*args)
+        except subprocess.CalledProcessError:
+            return None
+
+    def _branch_exists(self) -> bool:
+        """Check if the state branch exists locally."""
+        return self._git_try("rev-parse", "--verify", f"refs/heads/{STATE_BRANCH}") is not None
+
+    # -- Bootstrap -------------------------------------------------------------
+
+    def bootstrap(self) -> None:
+        """Ensure the state branch exists. Create orphan if needed."""
+        if self._bootstrapped:
+            return
+
+        if self._branch_exists():
+            self._bootstrapped = True
+            return
+
+        # Check remote
+        remotes = self._git_try("remote")
+        if remotes:
+            self._git_try("fetch", "origin", STATE_BRANCH)
+            if self._git_try("rev-parse", "--verify", f"refs/remotes/origin/{STATE_BRANCH}"):
+                self._git("branch", STATE_BRANCH, f"origin/{STATE_BRANCH}")
+                self._bootstrapped = True
+                return
+
+        # Create orphan branch via plumbing
+        self._create_orphan_branch()
+        self._bootstrapped = True
+
+    def _create_orphan_branch(self) -> None:
+        """Create the orphan state branch with empty directory structure using plumbing."""
+        # Create .gitkeep blobs
+        empty_blob = self._git("hash-object", "-w", "--stdin", env={"GIT_INPUT": ""})
+        # hash-object --stdin reads from stdin, but we need to pipe empty content
+        result = subprocess.run(
+            ["git", "-C", str(self._repo), "hash-object", "-w", "--stdin"],
+            input="",
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        empty_blob = result.stdout.strip()
+
+        # Build tree using mktree
+        # We need nested trees: .hyperloop/state/{tasks,reviews,summaries}/.gitkeep
+        # Build from leaves up
+
+        # Leaf tree: contains .gitkeep
+        leaf_tree_input = f"100644 blob {empty_blob}\t.gitkeep\n"
+        result = subprocess.run(
+            ["git", "-C", str(self._repo), "mktree"],
+            input=leaf_tree_input,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        leaf_tree = result.stdout.strip()
+
+        # state tree: tasks/, reviews/, summaries/
+        state_tree_input = (
+            f"040000 tree {leaf_tree}\treviews\n"
+            f"040000 tree {leaf_tree}\tsummaries\n"
+            f"040000 tree {leaf_tree}\ttasks\n"
+        )
+        result = subprocess.run(
+            ["git", "-C", str(self._repo), "mktree"],
+            input=state_tree_input,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        state_tree = result.stdout.strip()
+
+        # .hyperloop tree: state/
+        hyperloop_tree_input = f"040000 tree {state_tree}\tstate\n"
+        result = subprocess.run(
+            ["git", "-C", str(self._repo), "mktree"],
+            input=hyperloop_tree_input,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        hyperloop_tree = result.stdout.strip()
+
+        # Root tree: .hyperloop/
+        root_tree_input = f"040000 tree {hyperloop_tree}\t.hyperloop\n"
+        result = subprocess.run(
+            ["git", "-C", str(self._repo), "mktree"],
+            input=root_tree_input,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        root_tree = result.stdout.strip()
+
+        # Commit tree (no parent — orphan)
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self._repo),
+                "commit-tree",
+                root_tree,
+                "-m",
+                "chore: initialize state branch",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        commit_sha = result.stdout.strip()
+
+        # Create branch ref
+        self._git("update-ref", f"refs/heads/{STATE_BRANCH}", commit_sha)
+
+    # -- Read operations (git show) -------------------------------------------
+
+    def _git_show(self, path: str) -> str | None:
+        """Read a file from the state branch via ``git show``. Returns None if not found."""
+        return self._git_try("show", f"{STATE_BRANCH}:{path}")
+
+    def _read_task_fm(self, task_id: str) -> dict[str, object]:
+        """Read and parse a task file from the state branch or buffer.
+
+        Raises KeyError if not found.
+        """
+        buf_path = f"{STATE_PREFIX}/tasks/{task_id}.md"
+
+        # Check buffer first
+        if buf_path in self._buffer:
+            return _parse_task_file(self._buffer[buf_path])
+
+        # Read from branch
+        content = self._git_show(buf_path)
+        if content is None:
+            raise KeyError(task_id)
+        return _parse_task_file(content)
+
+    def _write_task_to_buffer(self, task_id: str, fm: dict[str, object]) -> None:
+        """Buffer a task file write."""
+        path = f"{STATE_PREFIX}/tasks/{task_id}.md"
+        self._buffer[path] = _serialize_task_file(fm)
+
+    def _list_task_ids_on_branch(self) -> list[str]:
+        """List all task IDs on the state branch."""
+        tree_output = self._git_try("ls-tree", "-r", "--name-only", STATE_BRANCH)
+        if not tree_output:
+            return []
+        task_ids: list[str] = []
+        for line in tree_output.splitlines():
+            if line.startswith(f"{STATE_PREFIX}/tasks/") and line.endswith(".md"):
+                filename = line.split("/")[-1]
+                task_id = filename.removesuffix(".md")
+                if task_id != ".gitkeep":
+                    task_ids.append(task_id)
+        return task_ids
+
+    def _list_review_paths_on_branch(self, task_id: str) -> list[str]:
+        """List all review file paths for a task on the state branch."""
+        tree_output = self._git_try("ls-tree", "-r", "--name-only", STATE_BRANCH)
+        if not tree_output:
+            return []
+        prefix = f"{STATE_PREFIX}/reviews/{task_id}-round-"
+        return sorted(
+            line
+            for line in tree_output.splitlines()
+            if line.startswith(prefix) and line.endswith(".md")
+        )
+
+    # -- StateStore protocol ---------------------------------------------------
 
     def get_world(self) -> World:
         """Return a complete snapshot of all tasks, workers, and the current epoch."""
+        self._ensure_bootstrapped()
         tasks: dict[str, Task] = {}
-        if self._tasks_dir.exists():
-            for task_file in sorted(self._tasks_dir.glob("task-*.md")):
+
+        # Read from branch
+        for task_id in self._list_task_ids_on_branch():
+            buf_path = f"{STATE_PREFIX}/tasks/{task_id}.md"
+            if buf_path in self._buffer:
+                continue  # Will be handled below
+            content = self._git_show(buf_path)
+            if content is None:
+                continue
+            try:
+                fm = _parse_task_file(content)
+                task = _frontmatter_to_task(fm)
+                tasks[task.id] = task
+            except (ValueError, yaml.YAMLError, KeyError):
+                continue
+
+        # Overlay buffered tasks
+        for path, content in self._buffer.items():
+            if path.startswith(f"{STATE_PREFIX}/tasks/") and path.endswith(".md"):
                 try:
-                    fm = _parse_task_file(task_file.read_text())
+                    fm = _parse_task_file(content)
                     task = _frontmatter_to_task(fm)
                     tasks[task.id] = task
                 except (ValueError, yaml.YAMLError, KeyError):
@@ -202,7 +430,8 @@ class GitStateStore:
 
     def get_task(self, task_id: str) -> Task:
         """Return a single task by ID. Raises KeyError if not found."""
-        fm = self._read_task_file(task_id)
+        self._ensure_bootstrapped()
+        fm = self._read_task_fm(task_id)
         return _frontmatter_to_task(fm)
 
     def transition_task(
@@ -213,12 +442,13 @@ class GitStateStore:
         round: int | None = None,
     ) -> None:
         """Update a task's status, phase, and optionally round."""
-        fm = self._read_task_file(task_id)
+        self._ensure_bootstrapped()
+        fm = self._read_task_fm(task_id)
         fm["status"] = _STATUS_TO_YAML[status]
         fm["phase"] = str(phase) if phase is not None else None
         if round is not None:
             fm["round"] = round
-        self._write_task_file(task_id, fm)
+        self._write_task_to_buffer(task_id, fm)
 
     def store_review(
         self,
@@ -228,31 +458,49 @@ class GitStateStore:
         verdict: str,
         detail: str,
     ) -> None:
-        """Write a review file for a task round."""
-        self._reviews_dir.mkdir(parents=True, exist_ok=True)
-        path = self._reviews_dir / f"{task_id}-round-{round}.md"
-        fm = {
-            "task_id": task_id,
-            "round": round,
-            "role": role,
-            "verdict": verdict,
-        }
-        fm_text = yaml.dump(fm, default_flow_style=False, sort_keys=False)
-        path.write_text(f"---\n{fm_text}---\n{detail}")
+        """Buffer a review file write."""
+        self._ensure_bootstrapped()
+        path = f"{STATE_PREFIX}/reviews/{task_id}-round-{round}.md"
+        self._buffer[path] = _serialize_review_file(task_id, round, role, verdict, detail)
 
     def get_findings(self, task_id: str) -> str:
         """Return findings from the latest review for a task. Empty string if none."""
-        if not self._reviews_dir.exists():
+        self._ensure_bootstrapped()
+        # Collect review paths from both branch and buffer
+        branch_paths = self._list_review_paths_on_branch(task_id)
+        buf_paths = sorted(
+            p
+            for p in self._buffer
+            if p.startswith(f"{STATE_PREFIX}/reviews/{task_id}-round-") and p.endswith(".md")
+        )
+        # Merge and deduplicate, buffer takes precedence
+        all_paths = dict.fromkeys(branch_paths)
+        for p in buf_paths:
+            all_paths[p] = None
+        sorted_paths = sorted(all_paths.keys())
+
+        if not sorted_paths:
             return ""
-        review_files = sorted(self._reviews_dir.glob(f"{task_id}-round-*.md"))
-        if not review_files:
-            return ""
-        content = review_files[-1].read_text()
+
+        latest_path = sorted_paths[-1]
+
+        # Read from buffer first, then branch
+        if latest_path in self._buffer:
+            content = self._buffer[latest_path]
+        else:
+            content = self._git_show(latest_path)
+            if content is None:
+                return ""
+
         match = re.match(r"^---\n.*?\n---\n(.*)", content, re.DOTALL)
         return match.group(1).strip() if match else content.strip()
 
     def get_epoch(self, key: str) -> str:
-        """Return content fingerprint. 'head' returns git HEAD SHA. Others use in-memory dict."""
+        """Return content fingerprint.
+
+        'head' returns git HEAD SHA of main. Others use in-memory dict.
+        """
+        self._ensure_bootstrapped()
         if key == "head":
             try:
                 return self._git("rev-parse", "HEAD")
@@ -262,16 +510,22 @@ class GitStateStore:
 
     def set_epoch(self, key: str, value: str) -> None:
         """Record a last-run marker."""
+        self._ensure_bootstrapped()
         self._epochs[key] = value
 
     def list_files(self, pattern: str) -> list[str]:
-        """List file paths matching a glob pattern relative to the repo root."""
+        """List file paths matching a glob pattern relative to the repo root.
+
+        Searches the working tree (main branch), not the state branch.
+        """
+        self._ensure_bootstrapped()
         return sorted(
             str(p.relative_to(self._repo)) for p in self._repo.glob(pattern) if p.is_file()
         )
 
     def read_file(self, path: str) -> str | None:
-        """Read a file from the repo. Returns None if it does not exist."""
+        """Read a file from the repo working tree. Returns None if it does not exist."""
+        self._ensure_bootstrapped()
         if not path:
             return None
         file_path = self._repo / path
@@ -281,78 +535,161 @@ class GitStateStore:
 
     def set_task_branch(self, task_id: str, branch: str) -> None:
         """Set the branch name on a task file."""
-        fm = self._read_task_file(task_id)
+        self._ensure_bootstrapped()
+        fm = self._read_task_fm(task_id)
         fm["branch"] = branch
-        self._write_task_file(task_id, fm)
+        self._write_task_to_buffer(task_id, fm)
 
     def set_task_pr(self, task_id: str, pr_url: str) -> None:
         """Set the PR URL on a task file."""
-        fm = self._read_task_file(task_id)
+        self._ensure_bootstrapped()
+        fm = self._read_task_fm(task_id)
         fm["pr"] = pr_url
-        self._write_task_file(task_id, fm)
+        self._write_task_to_buffer(task_id, fm)
 
     def set_spec_ref(self, task_id: str, spec_ref: str) -> None:
         """Pin the spec_ref on a task file (e.g. append @sha after intake)."""
-        fm = self._read_task_file(task_id)
+        self._ensure_bootstrapped()
+        fm = self._read_task_fm(task_id)
         fm["spec_ref"] = spec_ref
-        self._write_task_file(task_id, fm)
+        self._write_task_to_buffer(task_id, fm)
 
     def reset_task(self, task_id: str) -> None:
         """Reset a task to not-started with cleared branch, PR, and round."""
-        fm = self._read_task_file(task_id)
+        self._ensure_bootstrapped()
+        fm = self._read_task_fm(task_id)
         fm["status"] = "not-started"
         fm["phase"] = None
         fm["round"] = 0
         fm["branch"] = None
         fm["pr"] = None
-        self._write_task_file(task_id, fm)
+        self._write_task_to_buffer(task_id, fm)
 
     def add_task(self, task: Task) -> None:
-        """Add a new task to the store."""
-        fm: dict[str, object] = {
-            "id": task.id,
-            "title": task.title,
-            "spec_ref": task.spec_ref,
-            "status": _STATUS_TO_YAML[task.status],
-            "phase": str(task.phase) if task.phase is not None else None,
-            "deps": list(task.deps) if task.deps else [],
-            "round": task.round,
-            "branch": task.branch,
-            "pr": task.pr,
-            "pr_title": task.pr_title,
-            "pr_description": task.pr_description,
-        }
-        self._write_task_file(task.id, fm)
+        """Add a new task to the store (buffered)."""
+        self._ensure_bootstrapped()
+        fm = _task_to_frontmatter(task)
+        self._write_task_to_buffer(task.id, fm)
 
     def persist(self, message: str) -> None:
-        """Stage all changes and create a git commit.
+        """Commit buffered changes to the state branch via git plumbing.
 
-        Uses --no-verify to skip pre-commit hooks. State commits are
-        orchestrator bookkeeping (task status transitions, findings), not
-        code changes — running linters and tests on them is incorrect and
-        can cause infinite recursion when pre-commit hooks include pytest.
-
-        No-ops gracefully when there is nothing to commit (e.g. after a
-        serial agent that already committed its own changes).
+        Uses a temporary index to stage changes and commit to the state
+        branch without touching the working tree or the main branch index.
+        No-ops when there is nothing to commit.
         """
-        import contextlib
+        self._ensure_bootstrapped()
+        if not self._buffer:
+            return
 
-        self._git("add", "-A")
-        with contextlib.suppress(subprocess.CalledProcessError):
-            self._git("commit", "--no-verify", "-m", message)
+        with tempfile.NamedTemporaryFile(
+            prefix="hyperloop-idx-",
+            suffix=".tmp",
+            delete=False,
+            dir=str(self._repo),
+        ) as tmp:
+            tmp_index = tmp.name
+
+        try:
+            env = {"GIT_INDEX_FILE": tmp_index}
+
+            # Read current state branch tree into temp index
+            self._git("read-tree", STATE_BRANCH, env=env)
+
+            # Write each buffered file as a blob and update the temp index
+            for path, content in self._buffer.items():
+                # Create blob
+                result = subprocess.run(
+                    ["git", "-C", str(self._repo), "hash-object", "-w", "--stdin"],
+                    input=content,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                blob_sha = result.stdout.strip()
+
+                # Update index entry
+                full_env = dict(os.environ)
+                full_env["GIT_INDEX_FILE"] = tmp_index
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(self._repo),
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        f"100644,{blob_sha},{path}",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=full_env,
+                )
+
+            # Write tree from temp index
+            tree_sha = self._git("write-tree", env=env)
+
+            # Check if tree is same as current (no-op)
+            current_tree = self._git("rev-parse", f"{STATE_BRANCH}^{{tree}}")
+            if tree_sha == current_tree:
+                return
+
+            # Commit tree to state branch
+            parent_sha = self._git("rev-parse", STATE_BRANCH)
+            result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(self._repo),
+                    "commit-tree",
+                    tree_sha,
+                    "-p",
+                    parent_sha,
+                    "-m",
+                    message,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            commit_sha = result.stdout.strip()
+
+            # Update state branch ref
+            self._git("update-ref", f"refs/heads/{STATE_BRANCH}", commit_sha)
+
+        finally:
+            # Clean up temp index
+            if os.path.exists(tmp_index):
+                os.unlink(tmp_index)
+
+        # Clear buffer after successful persist
+        self._buffer.clear()
 
     def sync(self) -> None:
-        """Pull from remote, then push local commits. Best-effort on both."""
-        remotes = self._git("remote")
+        """Sync state branch with remote. Pull (rebase) then push. Best-effort."""
+        self._ensure_bootstrapped()
+        remotes = self._git_try("remote")
         if not remotes:
             return
+
+        # Fetch
+        self._git_try("fetch", "origin", STATE_BRANCH)
+
+        # Check if remote branch exists
+        remote_ref = self._git_try("rev-parse", "--verify", f"refs/remotes/origin/{STATE_BRANCH}")
+        if not remote_ref:
+            # Push our local branch
+            subprocess.run(
+                ["git", "-C", str(self._repo), "push", "-u", "origin", STATE_BRANCH],
+                capture_output=True,
+                text=True,
+            )
+            return
+
+        # Push
         subprocess.run(
-            ["git", "-C", str(self._repo), "pull", "--rebase", "--no-verify", "origin"],
-            capture_output=True,
-            text=True,
-        )
-        subprocess.run(
-            ["git", "-C", str(self._repo), "push", "origin"],
+            ["git", "-C", str(self._repo), "push", "origin", STATE_BRANCH],
             capture_output=True,
             text=True,
         )

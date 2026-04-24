@@ -7,13 +7,13 @@ requiring the Agent SDK or API credentials.
 from __future__ import annotations
 
 import subprocess
-from textwrap import dedent
 from typing import TYPE_CHECKING
 
 from hyperloop.adapters.git.state import GitStateStore
 from hyperloop.domain.model import (
     PhaseStep,
     Process,
+    Task,
     TaskStatus,
     Verdict,
     WorkerResult,
@@ -40,19 +40,17 @@ DEFAULT_PROCESS = Process(
     },
 )
 
-TASK_001_CONTENT = dedent("""\
-    ---
-    id: task-001
-    title: Implement feature
-    spec_ref: specs/example.md
-    status: not-started
-    phase: null
-    deps: []
-    round: 0
-    branch: null
-    pr: null
-    ---
-    """)
+SEED_TASK = Task(
+    id="task-001",
+    title="Implement feature",
+    spec_ref="specs/example.md",
+    status=TaskStatus.NOT_STARTED,
+    phase=None,
+    deps=(),
+    round=0,
+    branch=None,
+    pr=None,
+)
 
 
 def _init_repo(path: Path) -> None:
@@ -73,13 +71,6 @@ def _init_repo(path: Path) -> None:
         check=True,
         capture_output=True,
     )
-
-
-def _write_task_file(repo: Path, task_id: str, content: str) -> None:
-    """Write a task file into the repo's .hyperloop/state/tasks directory."""
-    tasks_dir = repo / ".hyperloop" / "state" / "tasks"
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    (tasks_dir / f"{task_id}.md").write_text(content)
 
 
 def _commit_all(repo: Path, message: str) -> None:
@@ -109,13 +100,12 @@ class TestSingleTaskCompletesE2E:
         specs_dir = repo / "specs"
         specs_dir.mkdir()
         (specs_dir / "example.md").write_text("# Example spec\nBuild a widget.")
+        _commit_all(repo, "add spec")
 
-        # Write task file and commit
-        _write_task_file(repo, "task-001", TASK_001_CONTENT)
-        _commit_all(repo, "add task-001 and spec")
-
-        # Construct real state store and fake runtime
+        # Construct real state store and seed task via store API
         state = GitStateStore(repo_path=repo)
+        state.add_task(SEED_TASK)
+        state.persist("seed task-001")
         runtime = InMemoryRuntime()
         probe = RecordingProbe()
 
@@ -172,11 +162,11 @@ class TestFailedVerificationRetriesE2E:
         specs_dir = repo / "specs"
         specs_dir.mkdir()
         (specs_dir / "example.md").write_text("# Example spec\nBuild a widget.")
-
-        _write_task_file(repo, "task-001", TASK_001_CONTENT)
-        _commit_all(repo, "add task-001 and spec")
+        _commit_all(repo, "add spec")
 
         state = GitStateStore(repo_path=repo)
+        state.add_task(SEED_TASK)
+        state.persist("seed task-001")
         runtime = InMemoryRuntime()
         probe = RecordingProbe()
 
