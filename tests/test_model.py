@@ -1,14 +1,10 @@
-"""Tests for the domain model — value objects, entities, and pipeline primitives."""
+"""Tests for the domain model -- value objects, entities, and process definition."""
 
 from hyperloop.domain.model import (
-    ActionStep,
     AdvanceTask,
-    AgentStep,
-    GateStep,
     Halt,
-    LoopStep,
     Phase,
-    PipelineStep,
+    PhaseStep,
     Process,
     ReapWorker,
     SpawnWorker,
@@ -26,12 +22,12 @@ class TestTaskStatus:
     def test_enum_values(self):
         assert TaskStatus.NOT_STARTED.value == "not_started"
         assert TaskStatus.IN_PROGRESS.value == "in_progress"
-        assert TaskStatus.COMPLETE.value == "complete"
+        assert TaskStatus.COMPLETED.value == "completed"
         assert TaskStatus.FAILED.value == "failed"
 
     def test_all_members(self):
         members = {s.name for s in TaskStatus}
-        assert members == {"NOT_STARTED", "IN_PROGRESS", "COMPLETE", "COMPLETED", "FAILED"}
+        assert members == {"NOT_STARTED", "IN_PROGRESS", "COMPLETED", "FAILED"}
 
 
 class TestVerdict:
@@ -157,82 +153,24 @@ class TestWorkerHandle:
         assert handle.session_id is None
 
 
-class TestPipelineStep:
-    def test_agent_step(self):
-        step = AgentStep(agent="implementer", on_pass=None, on_fail=None)
-        assert step.agent == "implementer"
-        assert isinstance(step, AgentStep)
-
-    def test_agent_step_with_routing(self):
-        step = AgentStep(agent="verifier", on_pass="merge", on_fail="implement")
-        assert step.on_pass == "merge"
-        assert step.on_fail == "implement"
-
-    def test_gate_step(self):
-        step = GateStep(gate="pr-require-label")
-        assert step.gate == "pr-require-label"
-        assert isinstance(step, GateStep)
-
-    def test_action_step(self):
-        step = ActionStep(action="merge-pr")
-        assert step.action == "merge-pr"
-        assert isinstance(step, ActionStep)
-
-    def test_loop_step_with_nested_agents(self):
-        impl = AgentStep(agent="implementer", on_pass=None, on_fail=None)
-        verify = AgentStep(agent="verifier", on_pass=None, on_fail=None)
-        loop = LoopStep(steps=(impl, verify))
-        assert len(loop.steps) == 2
-        assert isinstance(loop.steps[0], AgentStep)
-        assert isinstance(loop.steps[1], AgentStep)
-
-    def test_pipeline_step_union_isinstance(self):
-        """Verify that all pipeline step types satisfy the PipelineStep union."""
-        steps: list[PipelineStep] = [
-            AgentStep(agent="implementer", on_pass=None, on_fail=None),
-            GateStep(gate="approval"),
-            LoopStep(steps=()),
-            ActionStep(action="merge-pr"),
-        ]
-        for step in steps:
-            assert isinstance(step, AgentStep | GateStep | LoopStep | ActionStep)
-
-
 class TestProcess:
-    def test_creation(self):
+    def test_creation_with_phases(self):
         process = Process(
             name="default",
-            pipeline=(
-                LoopStep(
-                    steps=(
-                        AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                        AgentStep(agent="verifier", on_pass=None, on_fail=None),
-                    )
+            phases={
+                "implement": PhaseStep(
+                    run="agent implementer", on_pass="verify", on_fail="implement"
                 ),
-                ActionStep(action="merge-pr"),
-            ),
+                "verify": PhaseStep(run="agent verifier", on_pass="merge", on_fail="implement"),
+                "merge": PhaseStep(run="action merge", on_pass="done", on_fail="implement"),
+            },
         )
         assert process.name == "default"
-        assert len(process.pipeline) == 2
-        assert isinstance(process.pipeline[0], LoopStep)
-        assert isinstance(process.pipeline[1], ActionStep)
+        assert len(process.phases) == 3
 
-    def test_nested_loop_structure(self):
-        """Process with a loop containing agent steps matches the spec example."""
-        inner_loop = LoopStep(
-            steps=(
-                AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                AgentStep(agent="verifier", on_pass=None, on_fail=None),
-            )
-        )
-        process = Process(
-            name="complex",
-            pipeline=(inner_loop, ActionStep(action="merge-pr")),
-        )
-        loop = process.pipeline[0]
-        assert isinstance(loop, LoopStep)
-        assert loop.steps[0] == AgentStep(agent="implementer", on_pass=None, on_fail=None)
-        assert loop.steps[1] == AgentStep(agent="verifier", on_pass=None, on_fail=None)
+    def test_empty_phases(self):
+        process = Process(name="empty")
+        assert process.phases == {}
 
 
 class TestWorkerState:
@@ -290,7 +228,7 @@ class TestActions:
     def test_advance_task_no_phase(self):
         action = AdvanceTask(
             task_id="task-001",
-            to_status=TaskStatus.COMPLETE,
+            to_status=TaskStatus.COMPLETED,
             to_phase=None,
         )
         assert action.to_phase is None

@@ -122,24 +122,3 @@ class RecordingProbe:
 
     def state_synced(self, **kw: object) -> None:
         self._record("state_synced", **kw)
-
-    # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
-
-    def gate_checked(self, **kw: object) -> None:
-        self._record("gate_checked", **kw)
-
-    def task_looped_back(self, **kw: object) -> None:
-        self._record("task_looped_back", **kw)
-
-    def rebase_conflict(self, **kw: object) -> None:
-        self._record("rebase_conflict", **kw)
-
-    def intake_specs_detected(self, **kw: object) -> None:
-        self._record("intake_specs_detected", **kw)
-
-    def pr_label_changed(self, **kw: object) -> None:
-        self._record("pr_label_changed", **kw)
-
-    def branch_pushed(self, **kw: object) -> None:
-        self._record("branch_pushed", **kw)

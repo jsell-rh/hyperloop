@@ -400,19 +400,3 @@ class TestErrorIsolation:
         )
 
         assert len(requests) == 0
-
-
-class TestDeprecatedMethods:
-    """Deprecated methods are kept as backward compat shims."""
-
-    def test_gate_checked_cleared_sends(self) -> None:
-        requests: list[httpx.Request] = []
-        probe = _make_probe(requests)
-        probe.gate_checked(task_id="t", gate="g", cleared=True, cycle=1)
-        assert len(requests) == 1
-
-    def test_task_looped_back_sends(self) -> None:
-        requests: list[httpx.Request] = []
-        probe = _make_probe(requests)
-        probe.task_looped_back(task_id="t", spec_ref="s", round=1, cycle=1, findings_preview="x")
-        assert len(requests) == 1

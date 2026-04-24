@@ -184,7 +184,7 @@ class TestTransitionTask:
         _write_task_file(tmp_path, "task-028", TASK_028_CONTENT)
 
         store = GitStateStore(repo_path=tmp_path)
-        store.transition_task("task-028", TaskStatus.COMPLETE, None)
+        store.transition_task("task-028", TaskStatus.COMPLETED, None)
 
         task = store.get_task("task-028")
         assert task.title == "Add session restore"
@@ -198,7 +198,7 @@ class TestTransitionTask:
         _write_task_file(tmp_path, "task-028", TASK_028_CONTENT)
 
         store = GitStateStore(repo_path=tmp_path)
-        store.transition_task("task-028", TaskStatus.COMPLETE, None)
+        store.transition_task("task-028", TaskStatus.COMPLETED, None)
 
         task = store.get_task("task-028")
         assert task.phase is None

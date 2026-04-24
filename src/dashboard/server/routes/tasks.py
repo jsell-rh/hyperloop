@@ -108,7 +108,7 @@ def _compute_critical_path(tasks: Mapping[str, object]) -> list[str]:
 
     for task_id, task in tasks.items():
         assert isinstance(task, Task)
-        if task.status not in (TaskStatus.COMPLETE, TaskStatus.FAILED):
+        if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
             non_terminal_ids.add(task_id)
 
     for task_id, task in tasks.items():

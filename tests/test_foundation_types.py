@@ -172,12 +172,13 @@ class TestTaskStatusCompleted:
     def test_completed_value(self) -> None:
         assert TaskStatus.COMPLETED.value == "completed"
 
-    def test_completed_is_distinct_from_old_complete(self) -> None:
-        assert TaskStatus.COMPLETED != TaskStatus.COMPLETE
-
     def test_completed_in_members(self) -> None:
         members = {m.name for m in TaskStatus}
         assert "COMPLETED" in members
+
+    def test_old_complete_removed(self) -> None:
+        members = {m.name for m in TaskStatus}
+        assert "COMPLETE" not in members
 
 
 # ---------------------------------------------------------------------------
@@ -204,18 +205,9 @@ class TestProcessWithPhases:
         assert process.phases == phases
         assert len(process.phases) == 2
 
-    def test_backward_compat_pipeline_still_works(self) -> None:
-        """Old-style Process with pipeline= should still construct."""
-        from hyperloop.domain.model import AgentStep, LoopStep
-
-        process = Process(
-            name="legacy",
-            pipeline=(
-                LoopStep(steps=(AgentStep(agent="implementer", on_pass=None, on_fail=None),)),
-            ),
-        )
-        assert process.name == "legacy"
-        assert len(process.pipeline) == 1
+    def test_empty_phases_default(self) -> None:
+        process = Process(name="minimal")
+        assert process.phases == {}
 
 
 # ---------------------------------------------------------------------------

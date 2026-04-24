@@ -177,11 +177,7 @@ class Orchestrator:
             active_workers=len(self._workers),
             not_started=sum(1 for t in world.tasks.values() if t.status == TaskStatus.NOT_STARTED),
             in_progress=sum(1 for t in world.tasks.values() if t.status == TaskStatus.IN_PROGRESS),
-            completed=sum(
-                1
-                for t in world.tasks.values()
-                if t.status in (TaskStatus.COMPLETE, TaskStatus.COMPLETED)
-            ),
+            completed=sum(1 for t in world.tasks.values() if t.status == TaskStatus.COMPLETED),
             failed=sum(1 for t in world.tasks.values() if t.status == TaskStatus.FAILED),
         )
 
@@ -426,13 +422,10 @@ class Orchestrator:
         if not all_tasks:
             return None
         all_done = all(
-            t.status in (TaskStatus.COMPLETE, TaskStatus.COMPLETED, TaskStatus.FAILED)
-            for t in all_tasks.values()
+            t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED) for t in all_tasks.values()
         )
         if all_done and not self._workers:
-            if all(
-                t.status in (TaskStatus.COMPLETE, TaskStatus.COMPLETED) for t in all_tasks.values()
-            ):
+            if all(t.status == TaskStatus.COMPLETED for t in all_tasks.values()):
                 return "all tasks complete"
             return "all tasks resolved (some failed)"
         return None
@@ -443,9 +436,7 @@ class Orchestrator:
             reason=reason,
             total_cycles=total_cycles,
             completed_tasks=sum(
-                1
-                for t in world.tasks.values()
-                if t.status in (TaskStatus.COMPLETE, TaskStatus.COMPLETED)
+                1 for t in world.tasks.values() if t.status == TaskStatus.COMPLETED
             ),
             failed_tasks=sum(1 for t in world.tasks.values() if t.status == TaskStatus.FAILED),
         )
@@ -463,11 +454,7 @@ class Orchestrator:
             active_workers=len(self._workers),
             not_started=sum(1 for t in all_tasks.values() if t.status == TaskStatus.NOT_STARTED),
             in_progress=sum(1 for t in all_tasks.values() if t.status == TaskStatus.IN_PROGRESS),
-            completed=sum(
-                1
-                for t in all_tasks.values()
-                if t.status in (TaskStatus.COMPLETE, TaskStatus.COMPLETED)
-            ),
+            completed=sum(1 for t in all_tasks.values() if t.status == TaskStatus.COMPLETED),
             failed=sum(1 for t in all_tasks.values() if t.status == TaskStatus.FAILED),
             spawned_ids=tuple(p.task_id for p in plans),
             reaped_ids=tuple(reaped_results.keys()),

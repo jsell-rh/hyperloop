@@ -330,45 +330,6 @@ class TestRecordingProbeNewMethods:
         assert probe.last("task_retried")["task_id"] == "task-001"
 
 
-class TestRecordingProbeDeprecatedMethods:
-    """Deprecated methods are kept for backward compat during migration.
-
-    They still record calls so existing tests that query them keep working.
-    These methods are NOT part of the updated OrchestratorProbe protocol
-    but remain on RecordingProbe until production callers are migrated.
-    """
-
-    def test_task_looped_back_still_records(self) -> None:
-        probe = RecordingProbe()
-        probe.task_looped_back(task_id="task-001", round=2)
-        assert probe.last("task_looped_back")["task_id"] == "task-001"
-
-    def test_gate_checked_still_records(self) -> None:
-        probe = RecordingProbe()
-        probe.gate_checked(task_id="task-001", gate="review", cleared=True)
-        assert probe.last("gate_checked")["gate"] == "review"
-
-    def test_intake_specs_detected_still_records(self) -> None:
-        probe = RecordingProbe()
-        probe.intake_specs_detected(count=3)
-        assert probe.last("intake_specs_detected")["count"] == 3
-
-    def test_branch_pushed_still_records(self) -> None:
-        probe = RecordingProbe()
-        probe.branch_pushed(branch="hyperloop/task-001")
-        assert probe.last("branch_pushed")["branch"] == "hyperloop/task-001"
-
-    def test_pr_label_changed_still_records(self) -> None:
-        probe = RecordingProbe()
-        probe.pr_label_changed(pr_url="http://example.com", label="ready", added=True)
-        assert probe.last("pr_label_changed")["label"] == "ready"
-
-    def test_rebase_conflict_still_records(self) -> None:
-        probe = RecordingProbe()
-        probe.rebase_conflict(task_id="task-001", branch="b", attempt=1, max_attempts=3)
-        assert probe.last("rebase_conflict")["attempt"] == 1
-
-
 class TestRecordingProbeExistingMethods:
     def test_cycle_started_uses_completed_kwarg(self) -> None:
         probe = RecordingProbe()

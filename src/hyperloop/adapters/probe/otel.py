@@ -513,31 +513,3 @@ class OtelProbe:
 
     def state_synced(self, **_kw: object) -> None:
         pass
-
-    # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
-
-    def gate_checked(self, **_kw: object) -> None:
-        pass
-
-    def task_looped_back(self, *, task_id: str, **_kw: object) -> None:
-        try:
-            if self._run_span is not None:
-                self._run_span.add_event(
-                    "task_looped_back",
-                    attributes={"hyperloop.task_id": task_id},
-                )
-        except Exception:
-            _log.exception("otel: task_looped_back failed")
-
-    def rebase_conflict(self, **_kw: object) -> None:
-        pass
-
-    def intake_specs_detected(self, **_kw: object) -> None:
-        pass
-
-    def pr_label_changed(self, **_kw: object) -> None:
-        pass
-
-    def branch_pushed(self, **_kw: object) -> None:
-        pass

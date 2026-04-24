@@ -1,23 +1,28 @@
-"""Tests for new adapter implementations: LabelGate, PRMergeAction,
-ProcessImproverHook, NullNotification.
+"""Tests for new adapter implementations: StepExecutor, SignalPort, ChannelPort.
 
 Uses fakes exclusively -- no mocks, no subprocess calls.
 """
 
 from __future__ import annotations
 
-from hyperloop.adapters.action.pr_merge import PRMergeAction
-from hyperloop.adapters.gate.label import LabelGate
+from hyperloop.adapters.channel.github_comment import GitHubCommentChannel
+from hyperloop.adapters.channel.null import NullChannel
 from hyperloop.adapters.hook.process_improver import ProcessImproverHook
-from hyperloop.adapters.notification.null import NullNotification
+from hyperloop.adapters.signal.label import LabelSignal
+from hyperloop.adapters.signal.pr_approval import PRApprovalSignal
+from hyperloop.adapters.step_executor.composite import CompositeStepExecutor
+from hyperloop.adapters.step_executor.pr_actions import MarkReadyStep, PostCommentStep
+from hyperloop.adapters.step_executor.pr_merge import PRMergeStep
+from hyperloop.adapters.step_executor.pr_review import PRReviewStep
 from hyperloop.compose import AgentTemplate, PromptComposer
 from hyperloop.domain.model import (
+    SignalStatus,
+    StepOutcome,
     Task,
     TaskStatus,
     Verdict,
     WorkerResult,
 )
-from hyperloop.ports.action import ActionOutcome
 from tests.fakes.pr import FakePRManager
 from tests.fakes.probe import RecordingProbe
 from tests.fakes.runtime import InMemoryRuntime
@@ -66,140 +71,305 @@ def _composer(state: InMemoryStateStore) -> PromptComposer:
 
 
 # ---------------------------------------------------------------------------
-# LabelGate tests
+# LabelSignal tests
 # ---------------------------------------------------------------------------
 
 
-class TestLabelGate:
-    def test_check_returns_true_when_lgtm_label_present(self) -> None:
+class TestLabelSignal:
+    def test_approved_when_lgtm_label_present(self) -> None:
         pr = _pr_manager()
-        gate = LabelGate(pr)
+        signal = LabelSignal(pr)
         pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
         pr.add_label(pr_url, "lgtm")
 
         task = _task(pr=pr_url)
-        assert gate.check(task, "lgtm") is True
+        result = signal.check(task, "pr-require-label", {})
+        assert result.status == SignalStatus.APPROVED
 
-    def test_check_returns_false_when_no_label(self) -> None:
+    def test_pending_when_no_label(self) -> None:
         pr = _pr_manager()
-        gate = LabelGate(pr)
+        signal = LabelSignal(pr)
         pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
 
         task = _task(pr=pr_url)
-        assert gate.check(task, "lgtm") is False
+        result = signal.check(task, "pr-require-label", {})
+        assert result.status == SignalStatus.PENDING
 
-    def test_check_returns_true_when_pr_merged(self) -> None:
+    def test_approved_when_pr_merged(self) -> None:
         pr = _pr_manager()
-        gate = LabelGate(pr)
+        signal = LabelSignal(pr)
         pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        # Merge the PR via the fake
         pr.merge(pr_url, "task-001", "specs/widget.md")
 
         task = _task(pr=pr_url)
-        # MERGED PR -> gate returns True regardless of label
-        assert gate.check(task, "lgtm") is True
+        result = signal.check(task, "pr-require-label", {})
+        assert result.status == SignalStatus.APPROVED
 
-    def test_check_returns_false_when_pr_closed(self) -> None:
+    def test_rejected_when_pr_closed(self) -> None:
         pr = _pr_manager()
-        gate = LabelGate(pr)
+        signal = LabelSignal(pr)
         pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
         pr.close_pr(pr_url)
 
         task = _task(pr=pr_url)
-        assert gate.check(task, "lgtm") is False
+        result = signal.check(task, "pr-require-label", {})
+        assert result.status == SignalStatus.REJECTED
 
-    def test_check_returns_false_when_no_pr(self) -> None:
+    def test_pending_when_no_pr(self) -> None:
         pr = _pr_manager()
-        gate = LabelGate(pr)
+        signal = LabelSignal(pr)
 
         task = _task(pr=None)
-        assert gate.check(task, "lgtm") is False
+        result = signal.check(task, "pr-require-label", {})
+        assert result.status == SignalStatus.PENDING
 
 
 # ---------------------------------------------------------------------------
-# PRMergeAction tests
+# PRApprovalSignal tests
 # ---------------------------------------------------------------------------
 
 
-class TestPRMergeAction:
-    def test_successful_merge_returns_success(self) -> None:
+class TestPRApprovalSignal:
+    def test_pending_when_no_pr(self) -> None:
         pr = _pr_manager()
-        action = PRMergeAction(pr=pr, base_branch="main")
+        signal = PRApprovalSignal(pr, repo="org/repo")
+
+        task = _task(pr=None)
+        result = signal.check(task, "pr-require-approval", {})
+        assert result.status == SignalStatus.PENDING
+
+    def test_approved_when_pr_merged(self) -> None:
+        pr = _pr_manager()
+        signal = PRApprovalSignal(pr, repo="org/repo")
+        pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        pr.merge(pr_url, "task-001", "specs/widget.md")
+
+        task = _task(pr=pr_url)
+        result = signal.check(task, "pr-require-approval", {})
+        assert result.status == SignalStatus.APPROVED
+
+    def test_rejected_when_pr_closed(self) -> None:
+        pr = _pr_manager()
+        signal = PRApprovalSignal(pr, repo="org/repo")
+        pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        pr.close_pr(pr_url)
+
+        task = _task(pr=pr_url)
+        result = signal.check(task, "pr-require-approval", {})
+        assert result.status == SignalStatus.REJECTED
+
+
+# ---------------------------------------------------------------------------
+# PRMergeStep tests
+# ---------------------------------------------------------------------------
+
+
+class TestPRMergeStep:
+    def test_successful_merge_returns_advance(self) -> None:
+        pr = _pr_manager()
+        step = PRMergeStep(pr=pr, base_branch="main")
         pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
 
         task = _task(pr=pr_url)
-        result = action.execute(task, "merge-pr", {})
+        result = step.execute(task, "merge-pr", {})
 
-        assert result.outcome == ActionOutcome.SUCCESS
+        assert result.outcome == StepOutcome.ADVANCE
         assert pr_url in pr.merged
 
-    def test_merge_conflict_returns_error(self) -> None:
+    def test_merge_conflict_returns_retry(self) -> None:
         pr = _pr_manager()
-        action = PRMergeAction(pr=pr, base_branch="main")
+        step = PRMergeStep(pr=pr, base_branch="main")
         pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
         pr.set_merge_fails(pr_url)
 
         task = _task(pr=pr_url)
-        result = action.execute(task, "merge-pr", {})
+        result = step.execute(task, "merge-pr", {})
 
-        assert result.outcome == ActionOutcome.ERROR
+        assert result.outcome == StepOutcome.RETRY
         assert "not mergeable" in result.detail.lower()
 
     def test_closed_pr_recreated(self) -> None:
         pr = _pr_manager()
-        action = PRMergeAction(pr=pr, base_branch="main")
+        step = PRMergeStep(pr=pr, base_branch="main")
         pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
         pr.close_pr(pr_url)
 
         task = _task(pr=pr_url)
-        result = action.execute(task, "merge-pr", {})
+        result = step.execute(task, "merge-pr", {})
 
-        # Should succeed with a new PR URL
-        assert result.outcome == ActionOutcome.SUCCESS
+        assert result.outcome == StepOutcome.ADVANCE
         assert result.pr_url is not None
         assert result.pr_url != pr_url
 
-    def test_no_branch_returns_error(self) -> None:
+    def test_no_branch_returns_retry(self) -> None:
         pr = _pr_manager()
-        action = PRMergeAction(pr=pr, base_branch="main")
+        step = PRMergeStep(pr=pr, base_branch="main")
 
         task = _task(branch=None)
-        result = action.execute(task, "merge-pr", {})
+        result = step.execute(task, "merge-pr", {})
 
-        assert result.outcome == ActionOutcome.ERROR
+        assert result.outcome == StepOutcome.RETRY
         assert "no branch" in result.detail.lower()
-
-    def test_unknown_action_returns_error(self) -> None:
-        pr = _pr_manager()
-        action = PRMergeAction(pr=pr, base_branch="main")
-        pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-
-        task = _task(pr=pr_url)
-        result = action.execute(task, "deploy", {})
-
-        assert result.outcome == ActionOutcome.ERROR
-        assert "Unknown action" in result.detail
 
     def test_no_pr_creates_one(self) -> None:
         pr = _pr_manager()
-        action = PRMergeAction(pr=pr, base_branch="main")
+        step = PRMergeStep(pr=pr, base_branch="main")
 
         task = _task(pr=None)
-        result = action.execute(task, "merge-pr", {})
+        result = step.execute(task, "merge-pr", {})
 
-        assert result.outcome == ActionOutcome.SUCCESS
+        assert result.outcome == StepOutcome.ADVANCE
         assert result.pr_url is not None
 
-    def test_merge_failure_returns_error(self) -> None:
+
+# ---------------------------------------------------------------------------
+# MarkReadyStep tests
+# ---------------------------------------------------------------------------
+
+
+class TestMarkReadyStep:
+    def test_marks_pr_ready(self) -> None:
         pr = _pr_manager()
-        action = PRMergeAction(pr=pr, base_branch="main")
+        step = MarkReadyStep(pr)
         pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        pr.set_merge_fails(pr_url)
 
         task = _task(pr=pr_url)
-        result = action.execute(task, "merge-pr", {})
+        result = step.execute(task, "mark-pr-ready", {})
 
-        assert result.outcome == ActionOutcome.ERROR
+        assert result.outcome == StepOutcome.ADVANCE
+        assert not pr.is_draft(pr_url)
+
+    def test_no_pr_returns_wait(self) -> None:
+        pr = _pr_manager()
+        step = MarkReadyStep(pr)
+
+        task = _task(pr=None)
+        result = step.execute(task, "mark-pr-ready", {})
+
+        assert result.outcome == StepOutcome.WAIT
+
+
+# ---------------------------------------------------------------------------
+# PostCommentStep tests
+# ---------------------------------------------------------------------------
+
+
+class TestPostCommentStep:
+    def test_no_pr_returns_wait(self) -> None:
+        step = PostCommentStep(repo="org/repo")
+
+        task = _task(pr=None)
+        result = step.execute(task, "post-pr-comment", {"body": "hello"})
+
+        assert result.outcome == StepOutcome.WAIT
+
+    def test_no_body_returns_retry(self) -> None:
+        step = PostCommentStep(repo="org/repo")
+        pr = _pr_manager()
+        pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+
+        task = _task(pr=pr_url)
+        result = step.execute(task, "post-pr-comment", {})
+
+        assert result.outcome == StepOutcome.RETRY
+
+
+# ---------------------------------------------------------------------------
+# PRReviewStep tests
+# ---------------------------------------------------------------------------
+
+
+class TestPRReviewStep:
+    def test_no_pr_returns_advance(self) -> None:
+        step = PRReviewStep(repo="org/repo")
+
+        task = _task(pr=None)
+        result = step.execute(task, "pr-review", {})
+
+        assert result.outcome == StepOutcome.ADVANCE
+
+
+# ---------------------------------------------------------------------------
+# CompositeStepExecutor tests
+# ---------------------------------------------------------------------------
+
+
+class TestCompositeStepExecutor:
+    def test_routes_merge_to_pr_merge_step(self) -> None:
+        pr = _pr_manager()
+        merge = PRMergeStep(pr=pr, base_branch="main")
+        composite = CompositeStepExecutor(merge=merge)
+        pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+
+        task = _task(pr=pr_url)
+        result = composite.execute(task, "merge-pr", {})
+
+        assert result.outcome == StepOutcome.ADVANCE
+
+    def test_routes_mark_ready(self) -> None:
+        pr = _pr_manager()
+        mark_ready = MarkReadyStep(pr)
+        composite = CompositeStepExecutor(mark_ready=mark_ready)
+        pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+
+        task = _task(pr=pr_url)
+        result = composite.execute(task, "mark-pr-ready", {})
+
+        assert result.outcome == StepOutcome.ADVANCE
+
+    def test_unknown_step_returns_retry(self) -> None:
+        composite = CompositeStepExecutor()
+
+        task = _task()
+        result = composite.execute(task, "unknown-step", {})
+
+        assert result.outcome == StepOutcome.RETRY
+        assert "unknown" in result.detail.lower()
+
+
+# ---------------------------------------------------------------------------
+# NullChannel tests
+# ---------------------------------------------------------------------------
+
+
+class TestNullChannel:
+    def test_gate_blocked_does_nothing(self) -> None:
+        ch = NullChannel()
+        task = _task()
+        ch.gate_blocked(task=task, signal_name="lgtm")
+
+    def test_task_errored_does_nothing(self) -> None:
+        ch = NullChannel()
+        task = _task()
+        ch.task_errored(task=task, detail="Too many errors")
+
+    def test_worker_crashed_does_nothing(self) -> None:
+        ch = NullChannel()
+        task = _task()
+        ch.worker_crashed(task=task, role="implementer", branch="hyperloop/task-001")
+
+
+# ---------------------------------------------------------------------------
+# GitHubCommentChannel tests
+# ---------------------------------------------------------------------------
+
+
+class TestGitHubCommentChannel:
+    def test_gate_blocked_no_pr_is_noop(self) -> None:
+        ch = GitHubCommentChannel(repo="org/repo")
+        task = _task(pr=None)
+        # Should not raise
+        ch.gate_blocked(task=task, signal_name="lgtm")
+
+    def test_task_errored_no_pr_is_noop(self) -> None:
+        ch = GitHubCommentChannel(repo="org/repo")
+        task = _task(pr=None)
+        ch.task_errored(task=task, detail="merge failed")
+
+    def test_worker_crashed_no_pr_is_noop(self) -> None:
+        ch = GitHubCommentChannel(repo="org/repo")
+        task = _task(pr=None)
+        ch.worker_crashed(task=task, role="implementer", branch="hyperloop/task-001")
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +392,6 @@ class TestProcessImproverHook:
 
         hook.after_reap(results=results, cycle=1)
 
-        # No serial run should have been triggered
         assert len(runtime.serial_runs) == 0
 
     def test_after_reap_runs_on_failures(self) -> None:
@@ -239,7 +408,6 @@ class TestProcessImproverHook:
 
         hook.after_reap(results=results, cycle=3)
 
-        # Serial run should have been triggered
         assert len(runtime.serial_runs) == 1
         assert runtime.serial_runs[0].role == "process-improver"
         assert "Missing null check" in runtime.serial_runs[0].prompt
@@ -264,7 +432,6 @@ class TestProcessImproverHook:
         assert "Bug in parser" in prompt
         assert "task-002" in prompt
         assert "Timeout in API" in prompt
-        # task-003 passed, should not appear in findings section
         assert "Fine" not in prompt
 
     def test_after_reap_emits_probe_event(self) -> None:
@@ -284,22 +451,3 @@ class TestProcessImproverHook:
         assert len(pi_events) == 1
         assert pi_events[0]["cycle"] == 5
         assert pi_events[0]["success"] is True
-
-
-# ---------------------------------------------------------------------------
-# NullNotification tests
-# ---------------------------------------------------------------------------
-
-
-class TestNullNotification:
-    def test_gate_blocked_does_nothing(self) -> None:
-        notif = NullNotification()
-        task = _task()
-        # Should not raise
-        notif.gate_blocked(task=task, gate_name="lgtm")
-
-    def test_task_errored_does_nothing(self) -> None:
-        notif = NullNotification()
-        task = _task()
-        # Should not raise
-        notif.task_errored(task=task, attempts=3, detail="Too many errors")

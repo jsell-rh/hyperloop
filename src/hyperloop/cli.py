@@ -348,21 +348,17 @@ def run(
 
     # 5. Construct runtime and state store, run loop
     from hyperloop.adapters.git.state import GitStateStore
-    from hyperloop.domain.model import ActionStep, AgentStep, LoopStep, Process
+    from hyperloop.domain.model import PhaseStep, Process
     from hyperloop.loop import Orchestrator
 
-    # Default process: loop(implementer, verifier) -> merge-pr
+    # Default process: implement -> verify -> merge
     default_process = Process(
         name="default",
-        pipeline=(
-            LoopStep(
-                steps=(
-                    AgentStep(agent="implementer", on_pass=None, on_fail=None),
-                    AgentStep(agent="verifier", on_pass=None, on_fail=None),
-                )
-            ),
-            ActionStep(action="merge-pr"),
-        ),
+        phases={
+            "implement": PhaseStep(run="agent implementer", on_pass="verify", on_fail="implement"),
+            "verify": PhaseStep(run="agent verifier", on_pass="merge", on_fail="implement"),
+            "merge": PhaseStep(run="action merge", on_pass="done", on_fail="implement"),
+        },
     )
 
     state = GitStateStore(repo_path)
@@ -438,36 +434,34 @@ def run(
     if cfg.runtime == "ambient" and hasattr(runtime, "ensure_project"):
         runtime.ensure_project()  # type: ignore[attr-defined]
 
-    # Build gate + action + check adapters from PRPort
-    gate = None
-    action = None
-    check = None
+    # Build StepExecutor, SignalPort, ChannelPort adapters
+    step_executor = None
+    signal_port = None
+    channel = None
     if pr_manager is not None:
-        from hyperloop.adapters.action.composite import CompositeAction
-        from hyperloop.adapters.action.pr_actions import MarkPRReadyAction, PostPRCommentAction
-        from hyperloop.adapters.action.pr_merge import PRMergeAction
-        from hyperloop.adapters.check.pr_feedback import PRReviewCheck
-        from hyperloop.adapters.gate.label import LabelGate
+        from hyperloop.adapters.signal.label import LabelSignal
+        from hyperloop.adapters.step_executor.composite import CompositeStepExecutor
+        from hyperloop.adapters.step_executor.pr_actions import MarkReadyStep, PostCommentStep
+        from hyperloop.adapters.step_executor.pr_merge import PRMergeStep
+        from hyperloop.adapters.step_executor.pr_review import PRReviewStep
 
-        gate = LabelGate(pr_manager)
         assert cfg.repo is not None
-        action = CompositeAction(
-            merge=PRMergeAction(
+        step_executor = CompositeStepExecutor(
+            merge=PRMergeStep(
                 pr_manager,
                 base_branch=cfg.base_branch,
                 repo_path=str(repo_path),
             ),
-            mark_ready=MarkPRReadyAction(pr_manager),
-            post_comment=PostPRCommentAction(repo=cfg.repo),
+            mark_ready=MarkReadyStep(pr_manager),
+            post_comment=PostCommentStep(repo=cfg.repo),
+            pr_review=PRReviewStep(repo=cfg.repo),
         )
-        check = PRReviewCheck(repo=cfg.repo)
+        signal_port = LabelSignal(pr_manager)
 
-    # Build notification adapter
-    notification = None
     if cfg.notifications_type == "github-comment" and cfg.repo is not None:
-        from hyperloop.adapters.notification.github_comment import GitHubCommentNotification
+        from hyperloop.adapters.channel.github_comment import GitHubCommentChannel
 
-        notification = GitHubCommentNotification(repo=cfg.repo)
+        channel = GitHubCommentChannel(repo=cfg.repo)
 
     # Build hooks
     hooks: list[CycleHook] = []
@@ -488,13 +482,12 @@ def run(
         max_task_rounds=cfg.max_task_rounds,
         max_action_attempts=cfg.max_action_attempts,
         base_branch=cfg.base_branch,
-        gate=gate,
-        action=action,
-        check=check,
+        step_executor=step_executor,
+        signal_port=signal_port,
+        channel=channel,
         pr=pr_manager,
         spec_source=spec_source,
-        hooks=tuple(hooks),
-        notification=notification,
+        hooks=hooks,
         composer=composer,
         poll_interval=cfg.poll_interval,
         probe=probe,

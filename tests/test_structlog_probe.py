@@ -185,26 +185,6 @@ class TestNewObservabilityEvents:
         assert logs[0]["event"] == "step_executed"
 
 
-class TestDeprecatedMethods:
-    """Deprecated methods are kept as backward compat shims."""
-
-    def test_gate_checked_still_works(self) -> None:
-        with structlog.testing.capture_logs() as logs:
-            probe = StructlogProbe()
-            probe.gate_checked(task_id="t", gate="g", cleared=True, cycle=1)
-        assert len(logs) == 1
-        assert logs[0]["event"] == "gate_checked"
-
-    def test_task_looped_back_still_works(self) -> None:
-        with structlog.testing.capture_logs() as logs:
-            probe = StructlogProbe()
-            probe.task_looped_back(
-                task_id="t", spec_ref="s", round=1, cycle=1, findings_preview="x"
-            )
-        assert len(logs) == 1
-        assert logs[0]["event"] == "task_looped_back"
-
-
 class TestLogEntryContainsAllKwargs:
     """Log entries contain all kwargs as keys."""
 

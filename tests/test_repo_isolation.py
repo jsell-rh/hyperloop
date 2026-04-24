@@ -251,8 +251,8 @@ class TestWorktreeIsolation:
         assert _current_branch(repo) == "main"
 
 
-class TestPRMergeActionIsolation:
-    """PRMergeAction handles MERGED PRs with stale branch tips correctly.
+class TestPRMergeStepIsolation:
+    """PRMergeStep handles MERGED PRs with stale branch tips correctly.
 
     Uses a real git repo with an origin remote so _get_branch_tip returns
     an actual SHA.  The FakePRManager simulates GitHub PR state.
@@ -261,7 +261,7 @@ class TestPRMergeActionIsolation:
     def test_merged_pr_with_stale_head_creates_new_pr(self, tmp_path: Path) -> None:
         """When a PR was merged at an old commit but the branch has new work,
         a new PR is created for the remaining commits."""
-        from hyperloop.adapters.action.pr_merge import PRMergeAction
+        from hyperloop.adapters.step_executor.pr_merge import PRMergeStep
         from hyperloop.domain.model import (
             Phase,
             Task,
@@ -318,8 +318,8 @@ class TestPRMergeActionIsolation:
             pr=pr_url,
         )
 
-        action = PRMergeAction(pr_mgr, repo_path=str(repo))
-        result = action.execute(task, "merge-pr", {})
+        step = PRMergeStep(pr_mgr, repo_path=str(repo))
+        result = step.execute(task, "merge-pr", {})
 
         # A new PR should have been created (returned in pr_url)
         assert result.pr_url is not None
@@ -327,12 +327,12 @@ class TestPRMergeActionIsolation:
 
     def test_merged_pr_with_matching_head_succeeds(self, tmp_path: Path) -> None:
         """When a PR was merged and the branch tip matches, action succeeds."""
-        from hyperloop.adapters.action.pr_merge import PRMergeAction
+        from hyperloop.adapters.step_executor.pr_merge import PRMergeStep
         from hyperloop.domain.model import (
             Phase,
+            StepOutcome,
             Task,
         )
-        from hyperloop.ports.action import ActionOutcome
         from tests.fakes.pr import FakePRManager
 
         # --- Set up bare origin + clone ---
@@ -385,10 +385,10 @@ class TestPRMergeActionIsolation:
             pr=pr_url,
         )
 
-        action = PRMergeAction(pr_mgr, repo_path=str(repo))
-        result = action.execute(task, "merge-pr", {})
+        step = PRMergeStep(pr_mgr, repo_path=str(repo))
+        result = step.execute(task, "merge-pr", {})
 
-        assert result.outcome == ActionOutcome.SUCCESS
+        assert result.outcome == StepOutcome.ADVANCE
 
 
 class TestRebaseAutoResolution:

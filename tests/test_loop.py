@@ -553,7 +553,7 @@ class TestRecovery:
         assert handle is not None
 
 
-class TestActionStep:
+class TestStepExecution:
     """Action steps execute via StepExecutor and transition based on outcome."""
 
     def test_action_advance_completes_task(self) -> None:

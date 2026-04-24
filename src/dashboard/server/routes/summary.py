@@ -21,7 +21,7 @@ def summary() -> SummaryResponse:
     world = get_state().get_world()
     tasks = list(world.tasks.values())
 
-    counts = {"not-started": 0, "in-progress": 0, "complete": 0, "failed": 0}
+    counts = {"not-started": 0, "in-progress": 0, "completed": 0, "failed": 0}
     for task in tasks:
         status_key = _status_str(task.status)
         if status_key in counts:
@@ -33,18 +33,18 @@ def summary() -> SummaryResponse:
         base_ref = task.spec_ref.split("@")[0]
         specs.setdefault(base_ref, []).append(_status_str(task.status))
 
-    # A spec is "complete" when all tasks are terminal and at least one is complete
-    terminal = {"complete", "failed"}
+    # A spec is "complete" when all tasks are terminal and at least one is completed
+    terminal = {"completed", "failed"}
     specs_complete = 0
     for statuses in specs.values():
-        if all(s in terminal for s in statuses) and "complete" in statuses:
+        if all(s in terminal for s in statuses) and "completed" in statuses:
             specs_complete += 1
 
     return SummaryResponse(
         total=len(tasks),
         not_started=counts["not-started"],
         in_progress=counts["in-progress"],
-        complete=counts["complete"],
+        complete=counts["completed"],
         failed=counts["failed"],
         specs_total=len(specs),
         specs_complete=specs_complete,

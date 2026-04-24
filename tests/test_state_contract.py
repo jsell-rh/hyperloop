@@ -180,10 +180,10 @@ class TestTransitionTaskContract:
         self, state_store: InMemoryStateStore | GitStateStore
     ) -> None:
         state_store.transition_task("task-001", TaskStatus.IN_PROGRESS, Phase("implementer"))
-        state_store.transition_task("task-001", TaskStatus.COMPLETE, None)
+        state_store.transition_task("task-001", TaskStatus.COMPLETED, None)
 
         updated = state_store.get_task("task-001")
-        assert updated.status == TaskStatus.COMPLETE
+        assert updated.status == TaskStatus.COMPLETED
         assert updated.phase is None
 
     def test_transition_updates_round(

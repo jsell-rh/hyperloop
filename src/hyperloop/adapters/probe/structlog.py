@@ -197,26 +197,3 @@ class StructlogProbe:
 
     def state_synced(self, **kw: object) -> None:
         self._log.debug("state_synced", **kw)
-
-    # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
-
-    def gate_checked(self, **kw: object) -> None:
-        cleared = kw.get("cleared", False)
-        level = "info" if cleared else "debug"
-        getattr(self._log, level)("gate_checked", **kw)
-
-    def task_looped_back(self, **kw: object) -> None:
-        self._log.warning("task_looped_back", **kw)
-
-    def rebase_conflict(self, **kw: object) -> None:
-        self._log.warning("rebase_conflict", **kw)
-
-    def intake_specs_detected(self, **kw: object) -> None:
-        self._log.info("intake_specs_detected", **kw)
-
-    def pr_label_changed(self, **kw: object) -> None:
-        self._log.debug("pr_label_changed", **kw)
-
-    def branch_pushed(self, **kw: object) -> None:
-        self._log.debug("branch_pushed", **kw)

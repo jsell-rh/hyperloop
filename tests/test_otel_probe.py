@@ -652,38 +652,3 @@ class TestNewObservabilityEvents:
         """worker_crash_detected for unknown task_id must not raise."""
         probe, _exporter, _reader = _make_probe()
         probe.worker_crash_detected(task_id="unknown", role="impl", branch="hl/x")
-
-
-class TestDeprecatedMethods:
-    """Deprecated methods are kept as backward compat shims."""
-
-    def test_task_looped_back_adds_event_to_run_span(self) -> None:
-        probe, exporter, _reader = _make_probe()
-
-        probe.orchestrator_started(task_count=1, max_workers=1, max_task_rounds=10)
-        probe.task_looped_back(
-            task_id="task-001",
-            spec_ref="specs/task-001.md",
-            round=2,
-            cycle=4,
-            findings_preview="test failures",
-        )
-        probe.orchestrator_halted(
-            reason="all tasks complete",
-            total_cycles=10,
-            completed_tasks=1,
-            failed_tasks=0,
-        )
-
-        spans = exporter.get_finished_spans()
-        run_span = next(s for s in spans if s.name == "hyperloop.run")
-        assert any(e.name == "task_looped_back" for e in run_span.events)
-
-    def test_deprecated_noop_methods_accept_kwargs(self) -> None:
-        """Deprecated no-op methods accept kwargs without raising."""
-        probe, _exporter, _reader = _make_probe()
-        probe.gate_checked(task_id="t", gate="g", cleared=True, cycle=1)
-        probe.rebase_conflict(task_id="t", branch="b", attempt=1, max_attempts=3)
-        probe.intake_specs_detected(specs=("s",), cycle=1)
-        probe.pr_label_changed(pr_url="u", label="l", added=True)
-        probe.branch_pushed(branch="b")

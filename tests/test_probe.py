@@ -56,16 +56,6 @@ class TestNullProbe:
         probe.task_retried(task_id="t-1", spec_ref="s", round=1, cycle=1, findings_preview="x")
         probe.signal_checked(task_id="t-1", signal_name="ci", status="pass", message="ok", cycle=1)
 
-    def test_deprecated_methods_still_work(self) -> None:
-        """Deprecated methods are kept as backward compat shims."""
-        probe = NullProbe()
-        probe.rebase_conflict(task_id="t", branch="b", attempt=1, max_attempts=3)
-        probe.intake_specs_detected(specs=("s",), cycle=1)
-        probe.pr_label_changed(pr_url="u", label="l", added=True)
-        probe.branch_pushed(branch="b")
-        probe.gate_checked(task_id="t", gate="g", cleared=True, cycle=1)
-        probe.task_looped_back(task_id="t", spec_ref="s", round=1, cycle=1, findings_preview="x")
-
     def test_cycle_started_uses_completed_kwarg(self) -> None:
         """cycle_started accepts 'completed' not 'complete'."""
         probe = NullProbe()
@@ -167,16 +157,6 @@ class TestMultiProbe:
 
         multi.cycle_started(cycle=1)
 
-    def test_deprecated_methods_still_work(self) -> None:
-        """Deprecated methods are kept as backward compat shims."""
-        r1 = RecordingProbe()
-        multi = MultiProbe((r1,))
-        multi.gate_checked(task_id="t", gate="g", cleared=True, cycle=1)
-        multi.task_looped_back(task_id="t", spec_ref="s", round=1, cycle=1, findings_preview="x")
-        multi.rebase_conflict(task_id="t", branch="b", attempt=1, max_attempts=3)
-        assert len(r1.of_method("gate_checked")) == 1
-        assert len(r1.of_method("task_looped_back")) == 1
-
 
 class TestFileProbe:
     """FileProbe implements all protocol methods and writes JSONL."""
@@ -189,13 +169,6 @@ class TestFileProbe:
                 f"FileProbe is missing method '{method_name}' from OrchestratorProbe"
             )
             getattr(probe, method_name)(test_key="test_value")
-
-    def test_deprecated_methods_still_work(self, tmp_path: Path) -> None:
-        """Deprecated methods are kept as backward compat shims."""
-        probe = FileProbe(tmp_path / "events.jsonl")
-        probe.gate_checked(task_id="t", gate="g", cleared=True, cycle=1)
-        probe.task_looped_back(task_id="t", spec_ref="s", round=1, cycle=1, findings_preview="x")
-        probe.rebase_conflict(task_id="t", branch="b", attempt=1, max_attempts=3)
 
 
 class TestRecordingProbe:

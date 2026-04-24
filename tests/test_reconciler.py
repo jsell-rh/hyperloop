@@ -158,8 +158,8 @@ class TestNoDriftOnMatch:
 
 class TestAlignmentAudit:
     def test_all_completed_not_converged_needs_audit(self):
-        t1 = _task(id="t1", spec_ref="specs/auth.md@abc123", status=TaskStatus.COMPLETE)
-        t2 = _task(id="t2", spec_ref="specs/auth.md@abc123", status=TaskStatus.COMPLETE)
+        t1 = _task(id="t1", spec_ref="specs/auth.md@abc123", status=TaskStatus.COMPLETED)
+        t2 = _task(id="t2", spec_ref="specs/auth.md@abc123", status=TaskStatus.COMPLETED)
         tasks = {t1.id: t1, t2.id: t2}
         converged: set[str] = set()
 
@@ -168,7 +168,7 @@ class TestAlignmentAudit:
         assert "specs/auth.md@abc123" in needs
 
     def test_already_converged_skipped(self):
-        t1 = _task(id="t1", spec_ref="specs/auth.md@abc123", status=TaskStatus.COMPLETE)
+        t1 = _task(id="t1", spec_ref="specs/auth.md@abc123", status=TaskStatus.COMPLETED)
         tasks = {t1.id: t1}
         converged = {"specs/auth.md@abc123"}
 
@@ -177,7 +177,7 @@ class TestAlignmentAudit:
         assert needs == []
 
     def test_mixed_status_not_triggered(self):
-        t1 = _task(id="t1", spec_ref="specs/auth.md@abc123", status=TaskStatus.COMPLETE)
+        t1 = _task(id="t1", spec_ref="specs/auth.md@abc123", status=TaskStatus.COMPLETED)
         t2 = _task(id="t2", spec_ref="specs/auth.md@abc123", status=TaskStatus.IN_PROGRESS)
         tasks = {t1.id: t1, t2.id: t2}
         converged: set[str] = set()
@@ -258,7 +258,7 @@ class TestDeletedSpec:
 
 class TestDeletedSpecCompleted:
     def test_completed_tasks_not_retired(self):
-        t = _task(id="t1", spec_ref="specs/old-feature.md@abc123", status=TaskStatus.COMPLETE)
+        t = _task(id="t1", spec_ref="specs/old-feature.md@abc123", status=TaskStatus.COMPLETED)
         tasks = {t.id: t}
         current_specs = {"specs/auth.md"}
 
@@ -317,7 +317,7 @@ class TestPMFailureHalt:
 
 class TestGCPruning:
     def test_completed_past_retention_pruned(self):
-        t = _task(id="t1", spec_ref="specs/auth.md@abc123", status=TaskStatus.COMPLETE)
+        t = _task(id="t1", spec_ref="specs/auth.md@abc123", status=TaskStatus.COMPLETED)
         tasks = {t.id: t}
         task_ages = {"t1": 45.0}
 
@@ -337,7 +337,7 @@ class TestGCPruning:
         assert len(actions) == 1
 
     def test_terminal_within_retention_not_pruned(self):
-        t = _task(id="t1", spec_ref="specs/auth.md@abc123", status=TaskStatus.COMPLETE)
+        t = _task(id="t1", spec_ref="specs/auth.md@abc123", status=TaskStatus.COMPLETED)
         tasks = {t.id: t}
         task_ages = {"t1": 15.0}
 
@@ -413,7 +413,7 @@ class TestPhaseOrphans:
     def test_completed_task_not_checked_for_orphan(self):
         t = _task(
             id="t1",
-            status=TaskStatus.COMPLETE,
+            status=TaskStatus.COMPLETED,
             phase=Phase("old-phase"),
         )
         tasks = {t.id: t}

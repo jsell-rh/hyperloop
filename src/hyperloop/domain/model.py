@@ -5,7 +5,6 @@ All types are pure data with no I/O dependencies.
 
 from __future__ import annotations
 
-import dataclasses
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal, NewType
@@ -20,7 +19,6 @@ class TaskStatus(Enum):
 
     NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"
-    COMPLETE = "complete"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -143,87 +141,11 @@ PhaseMap = dict[str, PhaseStep]
 """Flat mapping of phase name to step definition."""
 
 
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-
-
-def _empty_args() -> dict[str, object]:
-    return {}
-
-
-@dataclass(frozen=True)
-class AgentStep:
-    """Spawn an agent with a given role."""
-
-    agent: str
-    on_pass: str | None
-    on_fail: str | None
-
-
-@dataclass(frozen=True)
-class GateStep:
-    """Block until an external signal is received."""
-
-    gate: str
-
-
-@dataclass(frozen=True)
-class LoopStep:
-    """Wrap steps — on fail retry from top, on pass continue."""
-
-    steps: tuple[PipelineStep, ...]
-
-
-@dataclass(frozen=True)
-class CheckStep:
-    """Evaluation step — mechanical or agent-backed.
-
-    On PASS, advance. On FAIL, enclosing loop restarts. On WAIT, stay and
-    re-evaluate next cycle.
-
-    When ``agent`` is set, the framework spawns that agent role for evaluation
-    after the check adapter's pre-conditions return PASS.
-    """
-
-    check: str
-    args: dict[str, object] = dataclasses.field(default_factory=_empty_args)
-    agent: str | None = None
-
-
-@dataclass(frozen=True)
-class ActionStep:
-    """Execute an operation (merge-pr, mark-pr-ready, post-pr-comment, etc.)."""
-
-    action: str
-    args: dict[str, object] = dataclasses.field(default_factory=_empty_args)
-
-
-PipelineStep = AgentStep | GateStep | LoopStep | CheckStep | ActionStep
-"""Union of all pipeline primitive types."""
-
-
-@dataclass(frozen=True)
-class PipelinePosition:
-    """Path through a nested pipeline structure.
-
-    Each element in `path` is an index into a list of steps at that nesting level.
-    Example: path=[0, 1] means "first step in pipeline (a LoopStep), second step within
-    that loop."
-    """
-
-    path: tuple[int, ...]
-
-
 @dataclass(frozen=True)
 class Process:
-    """A named process with a per-task pipeline.
-
-    Supports both the legacy nested pipeline and the new flat phase map.
-    """
+    """A named process with a flat phase map."""
 
     name: str
-    pipeline: tuple[PipelineStep, ...] = ()
     phases: PhaseMap = field(default_factory=dict)
 
 

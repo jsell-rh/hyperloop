@@ -22,13 +22,12 @@ if TYPE_CHECKING:
 _STATUS_FROM_YAML: dict[str, TaskStatus] = {
     "not-started": TaskStatus.NOT_STARTED,
     "in-progress": TaskStatus.IN_PROGRESS,
-    "complete": TaskStatus.COMPLETE,
+    "complete": TaskStatus.COMPLETED,  # legacy alias
     "completed": TaskStatus.COMPLETED,
     "failed": TaskStatus.FAILED,
 }
 
 _STATUS_TO_YAML: dict[TaskStatus, str] = {v: k for k, v in _STATUS_FROM_YAML.items()}
-# Ensure COMPLETED maps to "completed" (overrides COMPLETE->complete from reversed dict)
 _STATUS_TO_YAML[TaskStatus.COMPLETED] = "completed"
 
 

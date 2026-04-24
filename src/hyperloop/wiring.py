@@ -69,23 +69,22 @@ def wire_orchestrator(
             base_branch=cfg.base_branch,
         )
 
-    # Build StepExecutor, SignalPort, ChannelPort bridge adapters
-    # These wrap existing adapters (PRMergeAction, LabelGate, etc.)
-    # until Agent I2 creates proper implementations.
+    # Build StepExecutor, SignalPort, ChannelPort
     step_executor = None
     signal_port = None
     channel = None
 
     if pr_manager is not None:
-        from hyperloop.adapters.action.pr_merge import PRMergeAction
+        from hyperloop.adapters.step_executor.composite import CompositeStepExecutor
+        from hyperloop.adapters.step_executor.pr_merge import PRMergeStep
 
-        # Bridge: wrap PRMergeAction as a StepExecutor
-        pr_merge = PRMergeAction(
-            pr_manager,
-            base_branch=cfg.base_branch,
-            repo_path=str(repo_path),
+        step_executor = CompositeStepExecutor(
+            merge=PRMergeStep(
+                pr_manager,
+                base_branch=cfg.base_branch,
+                repo_path=str(repo_path),
+            ),
         )
-        step_executor = _BridgeStepExecutor(pr_merge)
 
     # Build hooks
     hooks: list[CycleHook] = []
@@ -112,38 +111,6 @@ def wire_orchestrator(
         poll_interval=cfg.poll_interval,
         probe=resolved_probe,
     )
-
-
-class _BridgeStepExecutor:
-    """Temporary bridge wrapping PRMergeAction as a StepExecutor."""
-
-    def __init__(self, pr_merge: object) -> None:
-        self._pr_merge = pr_merge
-
-    def execute(self, task: object, step_name: str, args: dict[str, object]) -> object:
-        from hyperloop.domain.model import StepOutcome, StepResult, Task
-        from hyperloop.ports.action import ActionOutcome
-
-        assert isinstance(task, Task)
-        result = self._pr_merge.execute(task, step_name, args)  # type: ignore[attr-defined]
-        if result.outcome == ActionOutcome.SUCCESS:
-            return StepResult(
-                outcome=StepOutcome.ADVANCE,
-                detail="merged",
-                pr_url=result.pr_url,
-            )
-        if result.outcome == ActionOutcome.RETRY:
-            return StepResult(
-                outcome=StepOutcome.WAIT,
-                detail=result.detail,
-                pr_url=result.pr_url,
-            )
-        # ERROR
-        return StepResult(
-            outcome=StepOutcome.RETRY,
-            detail=result.detail,
-            pr_url=result.pr_url,
-        )
 
 
 def _build_runtime(cfg: Config, repo_path: Path, probe: OrchestratorProbe) -> Runtime:

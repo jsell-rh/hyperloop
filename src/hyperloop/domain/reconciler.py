@@ -14,7 +14,7 @@ from hyperloop.domain.model import Task, TaskStatus
 # Value objects
 # ---------------------------------------------------------------------------
 
-_TERMINAL_STATUSES = frozenset({TaskStatus.COMPLETE, TaskStatus.FAILED})
+_TERMINAL_STATUSES = frozenset({TaskStatus.COMPLETED, TaskStatus.FAILED})
 _ACTIVE_STATUSES = frozenset({TaskStatus.NOT_STARTED, TaskStatus.IN_PROGRESS})
 
 PhaseMap = dict[str, object]
@@ -172,7 +172,7 @@ def check_convergence_needed(
     for spec_ref, group in spec_tasks.items():
         if spec_ref in converged_specs:
             continue
-        all_completed = all(t.status == TaskStatus.COMPLETE for t in group)
+        all_completed = all(t.status == TaskStatus.COMPLETED for t in group)
         if all_completed:
             results.append(spec_ref)
     return results
