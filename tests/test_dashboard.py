@@ -44,11 +44,31 @@ def _init_git_repo(path: Path) -> None:
 
 
 def _write_task_file(repo: Path, task_id: str, fm: dict[str, object]) -> None:
-    """Write a task file with YAML frontmatter."""
-    tasks_dir = repo / ".hyperloop" / "state" / "tasks"
-    tasks_dir.mkdir(parents=True, exist_ok=True)
-    fm_text = yaml.dump(fm, default_flow_style=False, sort_keys=False)
-    (tasks_dir / f"{task_id}.md").write_text(f"---\n{fm_text}---\n")
+    """Write a task file to the hyperloop/state branch via the store API."""
+    from hyperloop.adapters.git.state import GitStateStore
+    from hyperloop.domain.model import Phase, Task, TaskStatus
+
+    status_map = {
+        "not-started": TaskStatus.NOT_STARTED,
+        "in-progress": TaskStatus.IN_PROGRESS,
+        "complete": TaskStatus.COMPLETED,
+        "completed": TaskStatus.COMPLETED,
+        "failed": TaskStatus.FAILED,
+    }
+    task = Task(
+        id=fm["id"],  # type: ignore[arg-type]
+        title=fm["title"],  # type: ignore[arg-type]
+        spec_ref=fm["spec_ref"],  # type: ignore[arg-type]
+        status=status_map[fm["status"]],  # type: ignore[index]
+        phase=Phase(fm["phase"]) if fm.get("phase") else None,
+        deps=tuple(fm.get("deps", ())),  # type: ignore[arg-type]
+        round=fm.get("round", 0),  # type: ignore[arg-type]
+        branch=fm.get("branch"),  # type: ignore[arg-type]
+        pr=fm.get("pr"),  # type: ignore[arg-type]
+    )
+    store = GitStateStore(repo)
+    store.add_task(task)
+    store.persist(f"seed {task_id}")
 
 
 def _write_spec_file(repo: Path, spec_path: str, content: str) -> None:
@@ -61,12 +81,12 @@ def _write_spec_file(repo: Path, spec_path: str, content: str) -> None:
 def _write_review_file(
     repo: Path, task_id: str, round_num: int, role: str, verdict: str, detail: str
 ) -> None:
-    """Write a review file with YAML frontmatter."""
-    reviews_dir = repo / ".hyperloop" / "state" / "reviews"
-    reviews_dir.mkdir(parents=True, exist_ok=True)
-    fm = {"task_id": task_id, "round": round_num, "role": role, "verdict": verdict}
-    fm_text = yaml.dump(fm, default_flow_style=False, sort_keys=False)
-    (reviews_dir / f"{task_id}-round-{round_num}.md").write_text(f"---\n{fm_text}---\n{detail}")
+    """Write a review file via the store API."""
+    from hyperloop.adapters.git.state import GitStateStore
+
+    store = GitStateStore(repo)
+    store.store_review(task_id, round_num, role, verdict, detail)
+    store.persist(f"review {task_id} round {round_num}")
 
 
 def _commit_all(repo: Path, message: str = "seed") -> None:
@@ -93,43 +113,45 @@ def _make_client(repo: Path) -> TestClient:
 @pytest.fixture
 def seeded_repo(tmp_path: Path) -> Path:
     """Create a temp git repo with two tasks and one spec."""
+    from hyperloop.adapters.git.state import GitStateStore
+    from hyperloop.domain.model import Phase, Task, TaskStatus
+
     repo = tmp_path / "repo"
     repo.mkdir()
     _init_git_repo(repo)
 
     _write_spec_file(repo, "specs/widget.md", "# Widget Feature\n\nBuild the widget.\n")
-    _write_task_file(
-        repo,
-        "task-001",
-        {
-            "id": "task-001",
-            "title": "Build widget",
-            "spec_ref": "specs/widget.md@abc123",
-            "status": "in-progress",
-            "phase": "implementer",
-            "deps": [],
-            "round": 1,
-            "branch": "hyperloop/task-001",
-            "pr": "https://github.com/owner/repo/pull/1",
-        },
-    )
-    _write_task_file(
-        repo,
-        "task-002",
-        {
-            "id": "task-002",
-            "title": "Test widget",
-            "spec_ref": "specs/widget.md@abc123",
-            "status": "not-started",
-            "phase": None,
-            "deps": ["task-001"],
-            "round": 0,
-            "branch": None,
-            "pr": None,
-        },
-    )
-    _write_review_file(repo, "task-001", 0, "verifier", "fail", "Tests fail: missing null check.")
     _commit_all(repo)
+
+    store = GitStateStore(repo)
+    store.add_task(
+        Task(
+            id="task-001",
+            title="Build widget",
+            spec_ref="specs/widget.md@abc123",
+            status=TaskStatus.IN_PROGRESS,
+            phase=Phase("implementer"),
+            deps=(),
+            round=1,
+            branch="hyperloop/task-001",
+            pr="https://github.com/owner/repo/pull/1",
+        )
+    )
+    store.add_task(
+        Task(
+            id="task-002",
+            title="Test widget",
+            spec_ref="specs/widget.md@abc123",
+            status=TaskStatus.NOT_STARTED,
+            phase=None,
+            deps=("task-001",),
+            round=0,
+            branch=None,
+            pr=None,
+        )
+    )
+    store.store_review("task-001", 0, "verifier", "fail", "Tests fail: missing null check.")
+    store.persist("seed tasks")
     return repo
 
 

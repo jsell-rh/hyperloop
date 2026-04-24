@@ -28,14 +28,14 @@ STATE_PREFIX = ".hyperloop/state"
 _STATUS_FROM_YAML: dict[str, TaskStatus] = {
     "not-started": TaskStatus.NOT_STARTED,
     "in-progress": TaskStatus.IN_PROGRESS,
-    "complete": TaskStatus.COMPLETE,
-    "completed": TaskStatus.COMPLETE,
+    "complete": TaskStatus.COMPLETED,
+    "completed": TaskStatus.COMPLETED,
     "failed": TaskStatus.FAILED,
 }
 
 _STATUS_TO_YAML: dict[TaskStatus, str] = {v: k for k, v in _STATUS_FROM_YAML.items()}
 # Ensure COMPLETE maps to "complete" consistently
-_STATUS_TO_YAML[TaskStatus.COMPLETE] = "complete"
+_STATUS_TO_YAML[TaskStatus.COMPLETED] = "complete"
 
 
 def _parse_task_file(content: str) -> dict[str, object]:

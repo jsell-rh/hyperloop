@@ -245,18 +245,13 @@ class PRManager:
             capture_output=True,
             text=True,
         )
-        if self._probe is not None:
-            self._probe.pr_label_changed(pr_url=pr_url, label=label, added=True)
 
     def remove_label(self, pr_url: str, label: str) -> None:
-        """Remove a label from a PR."""
         subprocess.run(
             ["gh", "pr", "edit", pr_url, "--remove-label", label, "--repo", self.repo],
             capture_output=True,
             text=True,
         )
-        if self._probe is not None:
-            self._probe.pr_label_changed(pr_url=pr_url, label=label, added=False)
 
     def get_feedback(self, pr_url: str) -> str:
         """Collect PR feedback: CI check results and review comments."""
@@ -456,8 +451,6 @@ class PRManager:
                     if push.returncode != 0:
                         return False
 
-                if self._probe is not None:
-                    self._probe.branch_pushed(branch=branch)
                 return True
             finally:
                 # Clean up the worktree
