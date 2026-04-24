@@ -1037,11 +1037,17 @@ class TestHookIntegration:
     """CycleHooks are called after reap."""
 
     def test_hook_after_reap_called(self) -> None:
-        from tests.fakes.hook import FakeHook
+
+        class _FakeHook:
+            def __init__(self) -> None:
+                self.after_reap_calls: list[tuple[dict[str, WorkerResult], int]] = []
+
+            def after_reap(self, *, results: dict[str, WorkerResult], cycle: int) -> None:
+                self.after_reap_calls.append((dict(results), cycle))
 
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
-        hook = FakeHook()
+        hook = _FakeHook()
 
         state.add_task(_task())
 
