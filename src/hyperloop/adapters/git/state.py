@@ -25,14 +25,38 @@ if TYPE_CHECKING:
 STATE_BRANCH = "hyperloop/state"
 STATE_PREFIX = ".hyperloop/state"
 
-# Map between kebab-case YAML values and TaskStatus enum members
+# Map between kebab-case/underscore YAML values and TaskStatus enum members
 _STATUS_FROM_YAML: dict[str, TaskStatus] = {
     "not-started": TaskStatus.NOT_STARTED,
+    "not_started": TaskStatus.NOT_STARTED,
     "in-progress": TaskStatus.IN_PROGRESS,
+    "in_progress": TaskStatus.IN_PROGRESS,
     "complete": TaskStatus.COMPLETED,
     "completed": TaskStatus.COMPLETED,
     "failed": TaskStatus.FAILED,
 }
+
+
+# Map LLM-written field aliases to canonical field names
+_FIELD_ALIASES: dict[str, str] = {
+    "name": "title",
+    "spec": "spec_ref",
+    "spec_path": "spec_ref",
+    "specification": "spec_ref",
+    "dependencies": "deps",
+    "depends_on": "deps",
+    "depends": "deps",
+}
+
+
+def _normalize_frontmatter(fm: dict[str, object]) -> dict[str, object]:
+    """Map LLM-written field aliases to canonical names."""
+    normalized: dict[str, object] = {}
+    for key, value in fm.items():
+        canonical = _FIELD_ALIASES.get(key, key)
+        normalized[canonical] = value
+    return normalized
+
 
 _STATUS_TO_YAML: dict[TaskStatus, str] = {v: k for k, v in _STATUS_FROM_YAML.items()}
 # Ensure COMPLETE maps to "complete" consistently
@@ -52,9 +76,12 @@ def _parse_task_file(content: str) -> dict[str, object]:
         raise ValueError(msg)
     fm_raw = match.group(1)
     try:
-        frontmatter: dict[str, object] = yaml.safe_load(fm_raw)
+        frontmatter: dict[str, object] | None = yaml.safe_load(fm_raw)
     except yaml.YAMLError:
         frontmatter = _parse_frontmatter_lenient(fm_raw)
+    if frontmatter is None:
+        msg = "Empty YAML frontmatter"
+        raise ValueError(msg)
     return frontmatter
 
 
@@ -83,6 +110,7 @@ def _parse_frontmatter_lenient(fm_raw: str) -> dict[str, object]:
 
 def _frontmatter_to_task(fm: dict[str, object]) -> Task:
     """Convert parsed YAML frontmatter into a Task domain object."""
+    fm = _normalize_frontmatter(fm)
     raw_status = str(fm["status"])
     status = _STATUS_FROM_YAML[raw_status]
 
@@ -195,6 +223,8 @@ class GitStateStore:
         self._bootstrapped = False
         # Buffered writes: path -> content (relative to repo root)
         self._buffer: dict[str, str] = {}
+        # Paths to remove from the state branch on next persist
+        self._deletions: set[str] = set()
 
     def _ensure_bootstrapped(self) -> None:
         """Lazily bootstrap the state branch on first access."""
@@ -353,6 +383,10 @@ class GitStateStore:
         """
         buf_path = f"{STATE_PREFIX}/tasks/{task_id}.md"
 
+        # Check deletions first
+        if buf_path in self._deletions:
+            raise KeyError(task_id)
+
         # Check buffer first
         if buf_path in self._buffer:
             return _parse_task_file(self._buffer[buf_path])
@@ -404,6 +438,8 @@ class GitStateStore:
         # Read from branch
         for task_id in self._list_task_ids_on_branch():
             buf_path = f"{STATE_PREFIX}/tasks/{task_id}.md"
+            if buf_path in self._deletions:
+                continue  # Pending deletion, skip
             if buf_path in self._buffer:
                 continue  # Will be handled below
             content = self._git_show(buf_path)
@@ -413,7 +449,7 @@ class GitStateStore:
                 fm = _parse_task_file(content)
                 task = _frontmatter_to_task(fm)
                 tasks[task.id] = task
-            except (ValueError, yaml.YAMLError, KeyError):
+            except (ValueError, KeyError, TypeError, AttributeError, yaml.YAMLError):
                 continue
 
         # Overlay buffered tasks
@@ -423,7 +459,7 @@ class GitStateStore:
                     fm = _parse_task_file(content)
                     task = _frontmatter_to_task(fm)
                     tasks[task.id] = task
-                except (ValueError, yaml.YAMLError, KeyError):
+                except (ValueError, KeyError, TypeError, AttributeError, yaml.YAMLError):
                     continue
 
         try:
@@ -624,17 +660,18 @@ class GitStateStore:
                 task = _frontmatter_to_task(fm)
                 self.add_task(task)
                 ingested.append(task_id)
-            except (ValueError, KeyError, TypeError, yaml.YAMLError):
+            except (ValueError, KeyError, TypeError, AttributeError, yaml.YAMLError):
                 continue
 
         return ingested
 
     def delete_task(self, task_id: str) -> None:
-        """Remove a task from the store (buffered as empty content for next persist)."""
+        """Remove a task from the store (buffered for removal on next persist)."""
         self._ensure_bootstrapped()
         path = f"{STATE_PREFIX}/tasks/{task_id}.md"
-        # Buffer an empty string; persist() will handle deletion
-        self._buffer[path] = ""
+        self._deletions.add(path)
+        # Remove from write buffer if present so get_world() skips it
+        self._buffer.pop(path, None)
 
     def store_summary(self, spec_path: str, summary_data: str) -> None:
         """Write a summary record for a spec (YAML content) to the state branch."""
@@ -696,7 +733,7 @@ class GitStateStore:
         No-ops when there is nothing to commit.
         """
         self._ensure_bootstrapped()
-        if not self._buffer:
+        if not self._buffer and not self._deletions:
             return
 
         with tempfile.NamedTemporaryFile(
@@ -712,6 +749,25 @@ class GitStateStore:
 
             # Read current state branch tree into temp index
             self._git("read-tree", STATE_BRANCH, env=env)
+
+            # Remove deleted paths from the temp index
+            for path in self._deletions:
+                full_env = dict(os.environ)
+                full_env["GIT_INDEX_FILE"] = tmp_index
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(self._repo),
+                        "update-index",
+                        "--force-remove",
+                        path,
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=full_env,
+                )
 
             # Write each buffered file as a blob and update the temp index
             for path, content in self._buffer.items():
@@ -780,8 +836,9 @@ class GitStateStore:
             if os.path.exists(tmp_index):
                 os.unlink(tmp_index)
 
-        # Clear buffer after successful persist
+        # Clear buffer and deletions after successful persist
         self._buffer.clear()
+        self._deletions.clear()
 
     def sync(self) -> None:
         """Sync state branch with remote. Pull (rebase) then push. Best-effort."""
