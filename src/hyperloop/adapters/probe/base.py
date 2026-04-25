@@ -106,6 +106,9 @@ class NullProbe:
     def feedback_checked(self, **_: object) -> None:
         pass
 
+    def agent_retried(self, **_: object) -> None:
+        pass
+
     def state_synced(self, **_: object) -> None:
         pass
 
@@ -213,6 +216,9 @@ class MultiProbe:
 
     def feedback_checked(self, **kw: object) -> None:
         self._call("feedback_checked", **kw)
+
+    def agent_retried(self, **kw: object) -> None:
+        self._call("agent_retried", **kw)
 
     def state_synced(self, **kw: object) -> None:
         self._call("state_synced", **kw)

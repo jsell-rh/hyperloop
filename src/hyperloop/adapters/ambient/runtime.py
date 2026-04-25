@@ -18,11 +18,14 @@ import json
 import subprocess
 import threading
 import time
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import structlog
 
 from hyperloop.domain.model import Verdict, WorkerHandle, WorkerPollStatus, WorkerResult
+
+if TYPE_CHECKING:
+    from hyperloop.ports.probe import OrchestratorProbe
 
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
 
@@ -34,7 +37,7 @@ class AmbientRuntime:
     """Runtime implementation using the Ambient Code Platform via acpctl.
 
     Sessions-only model: each spawn creates a session with the full composed
-    prompt and repo_url.  No Ambient agents, no inbox — the session carries
+    prompt and repo_url.  No Ambient agents, no inbox -- the session carries
     everything.
     """
 
@@ -45,12 +48,14 @@ class AmbientRuntime:
         acpctl: str = "acpctl",
         base_branch: str = "main",
         repo_url: str = "",
+        probe: OrchestratorProbe | None = None,
     ) -> None:
         self._repo_path = repo_path
         self._project_id = project_id
         self._acpctl = acpctl
         self._base_branch = base_branch
         self._repo_url = repo_url
+        self._probe = probe
 
         self._sessions: dict[str, str] = {}  # task_id -> session ID
         self._branches: dict[str, str] = {}  # task_id -> branch name
@@ -142,52 +147,63 @@ class AmbientRuntime:
         """Create an Ambient session for a task.
 
         Uses ``acpctl create session`` with the full composed prompt and
-        repo_url.  The session auto-starts (operator sets phase=Pending→Running).
+        repo_url.  The session auto-starts (operator sets phase=Pending->Running).
+        Retries up to 3 times on transient failures.
         """
-        session_name = f"hyperloop-{task_id}-{role}"
+        from hyperloop.adapters.retry import retry_with_backoff
 
-        # Build create session args
-        args = [
-            "create",
-            "session",
-            "--name",
-            session_name,
-            "--prompt",
-            prompt,
-            "-o",
-            "json",
-        ]
-        if self._repo_url:
-            args.extend(["--repo-url", self._repo_url])
+        def _do_spawn() -> WorkerHandle:
+            session_name = f"hyperloop-{task_id}-{role}"
 
-        result = self._run_acpctl(args, parse_json=True)
-        data = cast("dict[str, object]", result)
-        session_id = str(data["id"])
+            args = [
+                "create",
+                "session",
+                "--name",
+                session_name,
+                "--prompt",
+                prompt,
+                "-o",
+                "json",
+            ]
+            if self._repo_url:
+                args.extend(["--repo-url", self._repo_url])
 
-        self._sessions[task_id] = session_id
-        self._branches[task_id] = branch
+            result = self._run_acpctl(args, parse_json=True)
+            data = cast("dict[str, object]", result)
+            session_id = str(data["id"])
 
-        # Start SSE background thread
-        thread = threading.Thread(
-            target=self._stream_sse,
-            args=(session_id,),
-            daemon=True,
-        )
-        self._sse_threads[session_id] = thread
-        thread.start()
+            self._sessions[task_id] = session_id
+            self._branches[task_id] = branch
 
-        log.info(
-            "ambient_worker_spawned",
-            task_id=task_id,
+            # Start SSE background thread
+            thread = threading.Thread(
+                target=self._stream_sse,
+                args=(session_id,),
+                daemon=True,
+            )
+            self._sse_threads[session_id] = thread
+            thread.start()
+
+            log.info(
+                "ambient_worker_spawned",
+                task_id=task_id,
+                role=role,
+                session_id=session_id,
+            )
+
+            return WorkerHandle(
+                task_id=task_id,
+                role=role,
+                agent_id=session_name,
+                session_id=session_id,
+            )
+
+        return retry_with_backoff(
+            _do_spawn,
             role=role,
-            session_id=session_id,
-        )
-
-        return WorkerHandle(
-            task_id=task_id,
-            role=role,
-            agent_id=session_name,
-            session_id=session_id,
+            operation="spawn",
+            probe=self._probe,
+            max_attempts=3,
         )
 
     def poll(self, handle: WorkerHandle) -> WorkerPollStatus:
@@ -323,60 +339,78 @@ class AmbientRuntime:
 
         Creates a session with the full prompt, streams SSE until
         RUN_FINISHED, then fetches and fast-forwards trunk.
+        Retries session creation up to 3 times on transient failures.
         """
-        session_name = f"hyperloop-serial-{role}"
+        from hyperloop.adapters.retry import retry_with_backoff
 
-        args = [
-            "create",
-            "session",
-            "--name",
-            session_name,
-            "--prompt",
-            prompt,
-            "-o",
-            "json",
-        ]
-        if self._repo_url:
-            args.extend(["--repo-url", self._repo_url])
+        def _do_serial() -> bool:
+            session_name = f"hyperloop-serial-{role}"
 
-        result = self._run_acpctl(args, parse_json=True)
-        data = cast("dict[str, object]", result)
-        session_id = str(data["id"])
+            args = [
+                "create",
+                "session",
+                "--name",
+                session_name,
+                "--prompt",
+                prompt,
+                "-o",
+                "json",
+            ]
+            if self._repo_url:
+                args.extend(["--repo-url", self._repo_url])
 
-        log.info("ambient_serial_started", role=role, session_id=session_id)
+            result = self._run_acpctl(args, parse_json=True)
+            data = cast("dict[str, object]", result)
+            session_id = str(data["id"])
 
-        # Stream SSE in foreground (blocking)
-        success = self._stream_sse_foreground(session_id)
+            log.info("ambient_serial_started", role=role, session_id=session_id)
 
-        if success:
-            # Fetch and fast-forward trunk
-            fetched = self._git_fetch_with_backoff(self._base_branch)
-            if fetched:
-                try:
-                    subprocess.run(
-                        [
-                            "git",
-                            "-C",
-                            self._repo_path,
-                            "merge",
-                            "--ff-only",
-                            f"origin/{self._base_branch}",
-                        ],
-                        check=True,
-                        capture_output=True,
-                        text=True,
-                    )
-                except subprocess.CalledProcessError as exc:
-                    log.warning("serial_ff_merge_failed", error=str(exc))
+            # Stream SSE in foreground (blocking)
+            success = self._stream_sse_foreground(session_id)
+
+            if success:
+                # Fetch and fast-forward trunk
+                fetched = self._git_fetch_with_backoff(self._base_branch)
+                if fetched:
+                    try:
+                        subprocess.run(
+                            [
+                                "git",
+                                "-C",
+                                self._repo_path,
+                                "merge",
+                                "--ff-only",
+                                f"origin/{self._base_branch}",
+                            ],
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                        )
+                    except subprocess.CalledProcessError as exc:
+                        log.warning("serial_ff_merge_failed", error=str(exc))
+                        success = False
+                else:
                     success = False
-            else:
-                success = False
 
-        # Stop session
-        self._stop_session(session_id)
+            # Stop session
+            self._stop_session(session_id)
 
-        log.info("ambient_serial_completed", role=role, success=success)
-        return success
+            log.info("ambient_serial_completed", role=role, success=success)
+
+            if not success:
+                raise RuntimeError(f"Serial session {role} failed")
+            return True
+
+        try:
+            return retry_with_backoff(
+                _do_serial,
+                role=role,
+                operation="run_serial",
+                probe=self._probe,
+                max_attempts=3,
+            )
+        except Exception:
+            return False
 
     # -- Private helpers -------------------------------------------------------
 

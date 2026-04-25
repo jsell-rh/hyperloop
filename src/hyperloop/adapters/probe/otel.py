@@ -533,5 +533,32 @@ class OtelProbe:
     def pr_marked_ready(self, **_kw: object) -> None:
         pass
 
+    def agent_retried(
+        self,
+        *,
+        role: str,
+        operation: str,
+        attempt: int,
+        max_attempts: int,
+        delay_s: float,
+        error: str,
+        **_kw: object,
+    ) -> None:
+        try:
+            if self._run_span is not None:
+                self._run_span.add_event(
+                    "agent_retried",
+                    attributes={
+                        "hyperloop.role": role,
+                        "hyperloop.operation": operation,
+                        "hyperloop.attempt": attempt,
+                        "hyperloop.max_attempts": max_attempts,
+                        "hyperloop.delay_s": delay_s,
+                        "hyperloop.error": error,
+                    },
+                )
+        except Exception:
+            _log.exception("otel: agent_retried failed")
+
     def state_synced(self, **_kw: object) -> None:
         pass

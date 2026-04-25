@@ -160,6 +160,7 @@ def _build_runtime(cfg: Config, repo_path: Path, probe: OrchestratorProbe) -> Ru
             acpctl=cfg.ambient.acpctl,
             base_branch=cfg.base_branch,
             repo_url=cfg.ambient.repo_url,
+            probe=probe,
         )
 
     from hyperloop.adapters.git.runtime import AgentSdkRuntime

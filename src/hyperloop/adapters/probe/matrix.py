@@ -353,5 +353,17 @@ class MatrixProbe:
         body = f"\U0001f4ac {task_id} · {count} unprocessed feedback comment(s) from {authors}"
         self._send(body, task_id=task_id)
 
+    def agent_retried(self, **kw: object) -> None:
+        if not self._verbose:
+            return
+        role = str(kw.get("role", ""))
+        operation = str(kw.get("operation", ""))
+        attempt = kw.get("attempt", 0)
+        max_attempts = kw.get("max_attempts", 0)
+        error = str(kw.get("error", ""))
+
+        body = f"⚠️ agent retry: {role}/{operation} attempt {attempt}/{max_attempts}\n{error}"
+        self._send(body)
+
     def signal_checked(self, **kw: object) -> None:
         pass

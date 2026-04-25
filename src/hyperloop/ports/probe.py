@@ -411,6 +411,19 @@ class OrchestratorProbe(Protocol):
         """Feedback was checked for unprocessed comments."""
         ...
 
+    def agent_retried(
+        self,
+        *,
+        role: str,
+        operation: str,
+        attempt: int,
+        max_attempts: int,
+        delay_s: float,
+        error: str,
+    ) -> None:
+        """An agent operation failed transiently and will be retried."""
+        ...
+
     def state_synced(self) -> None:
         """State was synced with remote (pull + push)."""
         ...

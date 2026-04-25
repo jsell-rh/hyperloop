@@ -81,32 +81,53 @@ class AgentSdkRuntime:
             )
 
     def spawn(self, task_id: str, role: str, prompt: str, branch: str) -> WorkerHandle:
-        """Create a worktree and start an SDK agent session."""
-        worktree_path = os.path.join(self._worktree_base, task_id)
+        """Create a worktree and start an SDK agent session.
 
-        os.makedirs(self._worktree_base, exist_ok=True)
-        ensure_worktrees_gitignored(self._repo_path)
-        create_worktree(self._repo_path, worktree_path, branch)
+        Retries up to 3 times on transient failures, cleaning up partial
+        worktrees before each retry.
+        """
+        from hyperloop.adapters.retry import retry_with_backoff
 
-        # Submit the agent to the background event loop
-        future = asyncio.run_coroutine_threadsafe(
-            self._run_agent(prompt, worktree_path, task_id=task_id, role=role), self._loop
-        )
-        self._futures[task_id] = future
-        self._worktrees[task_id] = worktree_path
+        def _do_spawn() -> WorkerHandle:
+            worktree_path = os.path.join(self._worktree_base, task_id)
 
-        log.info(
-            "sdk_worker_spawned",
-            task_id=task_id,
+            os.makedirs(self._worktree_base, exist_ok=True)
+            ensure_worktrees_gitignored(self._repo_path)
+            create_worktree(self._repo_path, worktree_path, branch)
+
+            try:
+                # Submit the agent to the background event loop
+                future = asyncio.run_coroutine_threadsafe(
+                    self._run_agent(prompt, worktree_path, task_id=task_id, role=role),
+                    self._loop,
+                )
+                self._futures[task_id] = future
+                self._worktrees[task_id] = worktree_path
+            except Exception:
+                # Clean up partial worktree before propagating
+                cleanup_worktree(self._repo_path, worktree_path)
+                raise
+
+            log.info(
+                "sdk_worker_spawned",
+                task_id=task_id,
+                role=role,
+                cwd=worktree_path,
+            )
+
+            return WorkerHandle(
+                task_id=task_id,
+                role=role,
+                agent_id=task_id,
+                session_id=None,
+            )
+
+        return retry_with_backoff(
+            _do_spawn,
             role=role,
-            cwd=worktree_path,
-        )
-
-        return WorkerHandle(
-            task_id=task_id,
-            role=role,
-            agent_id=task_id,
-            session_id=None,
+            operation="spawn",
+            probe=self._probe,
+            max_attempts=3,
         )
 
     def poll(self, handle: WorkerHandle) -> WorkerPollStatus:
@@ -207,24 +228,44 @@ class AgentSdkRuntime:
         )
 
     def run_serial(self, role: str, prompt: str) -> bool:
-        """Run a serial agent on trunk via the SDK. Blocks until complete."""
+        """Run a serial agent on trunk via the SDK. Blocks until complete.
+
+        Retries up to 3 times on transient failures. Timeout errors are not
+        retried (they have their own timeout semantics).
+        """
+        from hyperloop.adapters.retry import retry_with_backoff
+
         log.info("sdk_serial_started", role=role)
 
-        future = asyncio.run_coroutine_threadsafe(
-            self._run_agent(prompt, self._repo_path, task_id=f"serial-{role}", role=role),
-            self._loop,
-        )
+        def _do_serial() -> bool:
+            future = asyncio.run_coroutine_threadsafe(
+                self._run_agent(prompt, self._repo_path, task_id=f"serial-{role}", role=role),
+                self._loop,
+            )
+
+            try:
+                future.result(timeout=self._serial_timeout)
+                log.info("sdk_serial_completed", role=role)
+                return True
+            except concurrent.futures.TimeoutError:
+                log.warning("sdk_serial_timeout", role=role)
+                future.cancel()
+                raise  # Timeout is not retried
+            except Exception:
+                log.exception("sdk_serial_failed", role=role)
+                raise  # Let retry_with_backoff handle it
 
         try:
-            future.result(timeout=self._serial_timeout)
-            log.info("sdk_serial_completed", role=role)
-            return True
+            return retry_with_backoff(
+                _do_serial,
+                role=role,
+                operation="run_serial",
+                probe=self._probe,
+                max_attempts=3,
+            )
         except concurrent.futures.TimeoutError:
-            log.warning("sdk_serial_timeout", role=role)
-            future.cancel()
             return False
         except Exception:
-            log.exception("sdk_serial_failed", role=role)
             return False
 
     # -- Private helpers -------------------------------------------------------

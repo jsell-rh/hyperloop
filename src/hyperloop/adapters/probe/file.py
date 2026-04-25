@@ -199,5 +199,8 @@ class FileProbe:
     def feedback_checked(self, **kw: object) -> None:
         self._write("feedback_checked", **kw)
 
+    def agent_retried(self, **kw: object) -> None:
+        self._write("agent_retried", **kw)
+
     def state_synced(self, **kw: object) -> None:
         self._write("state_synced", **kw)

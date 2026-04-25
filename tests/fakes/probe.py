@@ -123,5 +123,8 @@ class RecordingProbe:
     def feedback_checked(self, **kw: object) -> None:
         self._record("feedback_checked", **kw)
 
+    def agent_retried(self, **kw: object) -> None:
+        self._record("agent_retried", **kw)
+
     def state_synced(self, **kw: object) -> None:
         self._record("state_synced", **kw)
