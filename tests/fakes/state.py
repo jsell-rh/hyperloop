@@ -5,7 +5,11 @@ A first-class fake, tested via contract tests, reusable across all tests.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+import yaml
 
 from hyperloop.domain.model import (
     Phase,
@@ -13,6 +17,9 @@ from hyperloop.domain.model import (
     TaskStatus,
     World,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -213,6 +220,63 @@ class InMemoryStateStore:
     def list_summaries(self) -> dict[str, str]:
         """Return all summary records as {spec_path: yaml_content}."""
         return dict(self._summaries)
+
+    def ingest_external_tasks(self, directory: Path) -> list[str]:
+        """Scan directory for task .md files, parse and add new tasks.
+
+        Returns list of ingested task IDs (sorted). Skips tasks whose IDs
+        already exist. Does NOT persist -- caller must call persist() after.
+        Does NOT delete source files -- caller handles cleanup.
+        """
+        ingested: list[str] = []
+        for task_file in sorted(directory.glob("*.md")):
+            task_id = task_file.stem
+            if task_id in self._tasks:
+                continue
+            content = task_file.read_text()
+            match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
+            if not match:
+                continue
+            try:
+                fm = yaml.safe_load(match.group(1))
+                if not isinstance(fm, dict):
+                    continue
+                raw_deps = fm.get("deps", [])
+                dep_list = list(raw_deps) if isinstance(raw_deps, list) else []
+                task = Task(
+                    id=str(fm["id"]),
+                    title=str(fm.get("title", "")),
+                    spec_ref=str(fm.get("spec_ref", "")),
+                    status=TaskStatus.NOT_STARTED,
+                    phase=None,
+                    deps=tuple(str(d) for d in dep_list),
+                    round=0,
+                    branch=None,
+                    pr=None,
+                )
+                self._tasks[task.id] = task
+                ingested.append(task.id)
+            except (ValueError, KeyError, TypeError, AttributeError, yaml.YAMLError):
+                continue
+        return ingested
+
+    def list_review_contents(self, task_id: str) -> list[str]:
+        """Return raw content of all review files for a task, sorted by round."""
+        matching = sorted(
+            (r for r in self._reviews if r.task_id == task_id),
+            key=lambda r: r.round,
+        )
+        contents: list[str] = []
+        for r in matching:
+            fm = {
+                "task_id": r.task_id,
+                "round": r.round,
+                "role": r.role,
+                "verdict": r.verdict,
+            }
+            fm_text = yaml.dump(fm, default_flow_style=False, sort_keys=False)
+            contents.append(f"---\n{fm_text}---\n{r.detail}")
+        return contents
 
     def persist(self, message: str) -> None:
         """Record the persist message (no-op for in-memory, but stores for test assertions)."""

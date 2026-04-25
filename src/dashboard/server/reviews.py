@@ -10,16 +10,15 @@ import yaml
 from dashboard.server.models import Review
 
 if TYPE_CHECKING:
-    from hyperloop.adapters.git.state import GitStateStore
+    from hyperloop.ports.state import StateStore
 
 
-def read_reviews(store: GitStateStore, task_id: str) -> list[Review]:
-    """Read all review files for a task from the state branch.
+def read_reviews(store: StateStore, task_id: str) -> list[Review]:
+    """Read all review files for a task from the state store.
 
-    Uses ``GitStateStore.list_review_contents`` to read review files
-    from the ``hyperloop/state`` branch. Each file has YAML frontmatter
-    containing round, role, and verdict metadata. The body after the
-    frontmatter is the review detail text.
+    Uses ``StateStore.list_review_contents`` to read review files.
+    Each file has YAML frontmatter containing round, role, and verdict
+    metadata. The body after the frontmatter is the review detail text.
     """
     contents = store.list_review_contents(task_id)
 

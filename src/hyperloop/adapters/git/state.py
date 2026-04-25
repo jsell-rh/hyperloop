@@ -602,6 +602,33 @@ class GitStateStore:
         fm = _task_to_frontmatter(task)
         self._write_task_to_buffer(task.id, fm)
 
+    def ingest_external_tasks(self, directory: Path) -> list[str]:
+        """Scan directory for task .md files, parse and add new tasks.
+
+        Returns list of ingested task IDs (sorted). Skips tasks whose IDs
+        already exist. Does NOT persist -- caller must call persist() after.
+        Does NOT delete source files -- caller handles cleanup.
+        """
+        self._ensure_bootstrapped()
+        world = self.get_world()
+        existing_ids = set(world.tasks.keys())
+        ingested: list[str] = []
+
+        for task_file in sorted(directory.glob("*.md")):
+            task_id = task_file.stem
+            if task_id in existing_ids:
+                continue
+            content = task_file.read_text()
+            try:
+                fm = _parse_task_file(content)
+                task = _frontmatter_to_task(fm)
+                self.add_task(task)
+                ingested.append(task_id)
+            except (ValueError, KeyError, TypeError, yaml.YAMLError):
+                continue
+
+        return ingested
+
     def delete_task(self, task_id: str) -> None:
         """Remove a task from the store (buffered as empty content for next persist)."""
         self._ensure_bootstrapped()

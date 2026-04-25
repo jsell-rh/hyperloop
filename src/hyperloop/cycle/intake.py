@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 from hyperloop.domain.model import IntakeContext, SpecChangeType, SpecIntakeEntry
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from hyperloop.compose import PromptComposer
     from hyperloop.ports.runtime import Runtime
     from hyperloop.ports.spec_source import SpecSource
@@ -159,46 +161,55 @@ def run_intake(
     )
 
 
-def _ingest_working_tree_tasks(state: StateStore) -> None:
-    """Scan the working tree for task files the PM wrote and ingest them into the state store.
+@dataclass(frozen=True)
+class IngestResult:
+    """Result of working-tree task ingestion."""
 
-    Serial agents (PM) run on trunk and write task files to the working tree at
-    .hyperloop/state/tasks/. The state store reads from the orphan state branch.
-    This bridge reads any working tree task files not yet in the store, adds them,
-    persists, and cleans up the working tree copies.
+    added_count: int
+    failed: tuple[Path, ...]
+
+
+def _ingest_working_tree_tasks(state: StateStore) -> IngestResult:
+    """Scan the working tree for task files the PM wrote and ingest them via the port.
+
+    Delegates to ``state.ingest_external_tasks()`` which knows how to parse
+    task .md files. Only successfully ingested files are deleted, and only
+    after ``persist()`` succeeds. Files that fail to parse remain on disk
+    for operator inspection and are reported in ``IngestResult.failed``.
+
+    Returns:
+        IngestResult with counts and paths of files that failed to parse.
     """
-    import os
     from pathlib import Path
 
-    from hyperloop.adapters.git.state import _frontmatter_to_task, _parse_task_file
+    empty = IngestResult(added_count=0, failed=())
 
-    repo_path: Path | None = None
-    if hasattr(state, "_repo"):
-        repo_path = Path(state._repo)  # type: ignore[union-attr]
+    repo_path: Path | None = getattr(state, "_repo", None)
     if repo_path is None:
-        return
+        return empty
 
-    tasks_dir = repo_path / ".hyperloop" / "state" / "tasks"
+    tasks_dir = Path(repo_path) / ".hyperloop" / "state" / "tasks"
     if not tasks_dir.is_dir():
-        return
+        return empty
 
+    # Collect all candidate files before ingestion
     world = state.get_world()
     existing_ids = set(world.tasks.keys())
-    added = False
+    candidate_files = [f for f in sorted(tasks_dir.glob("*.md")) if f.stem not in existing_ids]
 
-    for task_file in sorted(tasks_dir.glob("*.md")):
-        task_id = task_file.stem
-        if task_id in existing_ids:
-            continue
-        content = task_file.read_text()
-        try:
-            fm = _parse_task_file(content)
-            task = _frontmatter_to_task(fm)
-            state.add_task(task)
-            added = True
-        except (ValueError, KeyError):
-            continue
-        os.remove(task_file)
+    ingested = state.ingest_external_tasks(tasks_dir)
+    ingested_set = set(ingested)
 
-    if added:
+    # Identify files that were candidates but not ingested (parse failures)
+    failed_files = tuple(f for f in candidate_files if f.stem not in ingested_set)
+
+    if ingested:
         state.persist("ingest tasks from PM")
+
+        # Only delete successfully ingested files after persist succeeds
+        for task_id in ingested:
+            task_file = tasks_dir / f"{task_id}.md"
+            if task_file.exists():
+                task_file.unlink()
+
+    return IngestResult(added_count=len(ingested), failed=failed_files)

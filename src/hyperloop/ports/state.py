@@ -8,6 +8,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from hyperloop.domain.model import Phase, Task, TaskStatus, World
 
 
@@ -105,6 +107,19 @@ class StateStore(Protocol):
 
     def list_summaries(self) -> dict[str, str]:
         """Return all summary records as {spec_path: yaml_content}."""
+        ...
+
+    def ingest_external_tasks(self, directory: Path) -> list[str]:
+        """Scan directory for task .md files, parse and add new tasks.
+
+        Returns list of ingested task IDs (sorted). Skips tasks whose IDs
+        already exist. Does NOT persist -- caller must call persist() after.
+        Does NOT delete source files -- caller handles cleanup.
+        """
+        ...
+
+    def list_review_contents(self, task_id: str) -> list[str]:
+        """Return raw content of all review files for a task, sorted by round."""
         ...
 
     def sync(self) -> None:
