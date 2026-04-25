@@ -250,7 +250,7 @@ class TestCompositeStepExecutor:
         pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
 
         task = _task(pr=pr_url)
-        result = composite.execute(task, "merge-pr", {})
+        result = composite.execute(task, "merge", {})
 
         assert result.outcome == StepOutcome.ADVANCE
 
@@ -261,7 +261,7 @@ class TestCompositeStepExecutor:
         pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
 
         task = _task(pr=pr_url)
-        result = composite.execute(task, "mark-pr-ready", {})
+        result = composite.execute(task, "mark-ready", {})
 
         assert result.outcome == StepOutcome.ADVANCE
 

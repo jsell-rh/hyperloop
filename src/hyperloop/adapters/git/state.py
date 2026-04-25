@@ -841,7 +841,15 @@ class GitStateStore:
         self._deletions.clear()
 
     def sync(self) -> None:
-        """Sync state branch with remote. Pull (rebase) then push. Best-effort."""
+        """Sync state branch with remote. Pull then push with conflict resolution.
+
+        When local and remote have diverged, performs a plumbing-level merge
+        with deterministic conflict resolution per spec:
+
+        - Task files: remote wins
+        - Review files: local wins
+        - Summary files: local wins
+        """
         self._ensure_bootstrapped()
         remotes = self._git_try("remote")
         if not remotes:
@@ -868,6 +876,55 @@ class GitStateStore:
                 )
             return
 
+        local_ref = self._git_try("rev-parse", STATE_BRANCH)
+        if local_ref == remote_ref:
+            return
+
+        # Local ahead of remote -- push
+        ancestor_check = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self._repo),
+                "merge-base",
+                "--is-ancestor",
+                remote_ref,
+                local_ref or "",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if ancestor_check.returncode == 0:
+            with contextlib.suppress(subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                subprocess.run(
+                    ["git", "-C", str(self._repo), "push", "origin", STATE_BRANCH],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            return
+
+        # Remote ahead of local -- fast-forward
+        behind_check = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self._repo),
+                "merge-base",
+                "--is-ancestor",
+                local_ref or "",
+                remote_ref,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if behind_check.returncode == 0:
+            self._git("update-ref", f"refs/heads/{STATE_BRANCH}", remote_ref)
+            return
+
+        # Diverged -- merge with conflict resolution
+        self._merge_state_with_remote(local_ref or "", remote_ref)
+
         with contextlib.suppress(subprocess.CalledProcessError, subprocess.TimeoutExpired):
             subprocess.run(
                 ["git", "-C", str(self._repo), "push", "origin", STATE_BRANCH],
@@ -875,3 +932,132 @@ class GitStateStore:
                 text=True,
                 timeout=30,
             )
+
+    def _merge_state_with_remote(self, local_ref: str, remote_ref: str) -> None:
+        """Merge diverged state branches via ``git merge-tree --write-tree``."""
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self._repo),
+                "merge-tree",
+                "--write-tree",
+                local_ref,
+                remote_ref,
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        if result.returncode == 0:
+            merged_tree = result.stdout.strip().splitlines()[0]
+        else:
+            merged_tree = self._resolve_merge_conflicts(
+                local_ref,
+                remote_ref,
+                result.stdout,
+            )
+
+        if not merged_tree:
+            return
+
+        commit_result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self._repo),
+                "commit-tree",
+                merged_tree,
+                "-p",
+                local_ref,
+                "-p",
+                remote_ref,
+                "-m",
+                "chore: merge state branch (sync conflict resolution)",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self._git(
+            "update-ref",
+            f"refs/heads/{STATE_BRANCH}",
+            commit_result.stdout.strip(),
+        )
+
+    def _resolve_merge_conflicts(
+        self,
+        local_ref: str,
+        remote_ref: str,
+        merge_output: str,
+    ) -> str:
+        """Resolve merge-tree conflicts per the spec resolution strategy."""
+        lines = merge_output.strip().splitlines()
+        if not lines:
+            return ""
+        base_tree = lines[0]
+
+        conflicted_files: list[str] = []
+        for line in lines[1:]:
+            if "Merge conflict in" in line:
+                path = line.split("Merge conflict in ")[-1].strip()
+                conflicted_files.append(path)
+            elif line.startswith("CONFLICT") and ":" in line:
+                parts = line.split()
+                for part in reversed(parts):
+                    if part.startswith(f"{STATE_PREFIX}/"):
+                        conflicted_files.append(part)
+                        break
+
+        if not conflicted_files:
+            return base_tree
+
+        with tempfile.NamedTemporaryFile(
+            prefix="hyperloop-merge-idx-",
+            suffix=".tmp",
+            delete=False,
+            dir=str(self._repo),
+        ) as tmp:
+            tmp_index = tmp.name
+
+        try:
+            env = {"GIT_INDEX_FILE": tmp_index}
+            self._git("read-tree", base_tree, env=env)
+
+            for path in conflicted_files:
+                if path.startswith(f"{STATE_PREFIX}/tasks/"):
+                    source_ref = remote_ref
+                elif path.startswith(f"{STATE_PREFIX}/reviews/") or path.startswith(
+                    f"{STATE_PREFIX}/summaries/"
+                ):
+                    source_ref = local_ref
+                else:
+                    source_ref = remote_ref
+
+                blob = self._git_try("rev-parse", f"{source_ref}:{path}")
+                if blob is None:
+                    continue
+
+                full_env = dict(os.environ)
+                full_env["GIT_INDEX_FILE"] = tmp_index
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(self._repo),
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        f"100644,{blob},{path}",
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=full_env,
+                )
+
+            return self._git("write-tree", env=env)
+
+        finally:
+            if os.path.exists(tmp_index):
+                os.unlink(tmp_index)

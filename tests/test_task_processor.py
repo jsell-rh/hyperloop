@@ -121,9 +121,8 @@ class TestDetermineStepType:
         assert determine_step_type(check_phase) == StepType.CHECK
 
     def test_unknown_step_type_raises(self) -> None:
-        bad = PhaseStep(run="unknown foo", on_pass="done", on_fail="start")
-        with pytest.raises(ValueError, match="unknown"):
-            determine_step_type(bad)
+        with pytest.raises(ValueError, match="Unknown step type"):
+            PhaseStep(run="unknown foo", on_pass="done", on_fail="start")
 
 
 # ---------------------------------------------------------------------------

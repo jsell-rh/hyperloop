@@ -209,13 +209,42 @@ class Signal:
 
 @dataclass(frozen=True)
 class PhaseStep:
-    """A single step in a flat phase map."""
+    """A single step in a flat phase map.
+
+    The ``run`` field must be ``'<type> <target>'`` where type is a valid
+    ``StepType`` member.  Validation happens eagerly at construction time
+    so malformed values surface immediately rather than deep in the task
+    processor.
+    """
 
     run: str
     on_pass: str
     on_fail: str
     on_wait: str | None = None
     args: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        parts = self.run.split(maxsplit=1)
+        if len(parts) != 2:
+            msg = f"PhaseStep.run must be '<type> <target>', got '{self.run}'"
+            raise ValueError(msg)
+        try:
+            step_type = StepType(parts[0])
+        except ValueError:
+            msg = f"Unknown step type '{parts[0]}' in '{self.run}'"
+            raise ValueError(msg) from None
+        object.__setattr__(self, "_cached_step_type", step_type)
+        object.__setattr__(self, "_cached_target", parts[1])
+
+    @property
+    def step_type(self) -> StepType:
+        """Return the parsed step type (cached)."""
+        return self._cached_step_type  # type: ignore[attr-defined]
+
+    @property
+    def target(self) -> str:
+        """Return the target name (cached)."""
+        return self._cached_target  # type: ignore[attr-defined]
 
 
 PhaseMap = dict[str, PhaseStep]
@@ -246,7 +275,13 @@ class WorkerState:
 
 @dataclass(frozen=True)
 class World:
-    """Complete snapshot of orchestrator state — input to decide()."""
+    """Complete snapshot of orchestrator state for decision-making.
+
+    Note: ``workers`` is always empty when returned by ``StateStore.get_world()``
+    because worker liveness is runtime state, not persisted state. Use
+    ``build_world()`` from ``cycle.helpers`` to get a World with populated
+    workers by merging state store data with runtime poll results.
+    """
 
     tasks: dict[str, Task]
     workers: dict[str, WorkerState]

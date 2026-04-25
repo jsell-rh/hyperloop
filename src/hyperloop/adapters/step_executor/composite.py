@@ -29,13 +29,13 @@ class CompositeStepExecutor:
         self._feedback = feedback
 
     def execute(self, task: Task, step_name: str, args: dict[str, object]) -> StepResult:
-        if step_name == "merge-pr" and self._merge is not None:
+        if step_name == "merge" and self._merge is not None:
             return self._merge.execute(task, step_name, args)
 
-        if step_name == "mark-pr-ready" and self._mark_ready is not None:
+        if step_name == "mark-ready" and self._mark_ready is not None:
             return self._mark_ready.execute(task, step_name, args)
 
-        if step_name == "post-pr-comment" and self._post_comment is not None:
+        if step_name == "post-comment" and self._post_comment is not None:
             return self._post_comment.execute(task, step_name, args)
 
         if step_name == "feedback" and self._feedback is not None:
