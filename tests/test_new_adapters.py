@@ -9,11 +9,9 @@ from hyperloop.adapters.channel.github_comment import GitHubCommentChannel
 from hyperloop.adapters.channel.null import NullChannel
 from hyperloop.adapters.hook.process_improver import ProcessImproverHook
 from hyperloop.adapters.signal.label import LabelSignal
-from hyperloop.adapters.signal.pr_approval import PRApprovalSignal
 from hyperloop.adapters.step_executor.composite import CompositeStepExecutor
 from hyperloop.adapters.step_executor.pr_actions import MarkReadyStep, PostCommentStep
 from hyperloop.adapters.step_executor.pr_merge import PRMergeStep
-from hyperloop.adapters.step_executor.pr_review import PRReviewStep
 from hyperloop.compose import AgentTemplate, PromptComposer
 from hyperloop.domain.model import (
     SignalStatus,
@@ -122,41 +120,6 @@ class TestLabelSignal:
         task = _task(pr=None)
         result = signal.check(task, "pr-require-label", {})
         assert result.status == SignalStatus.PENDING
-
-
-# ---------------------------------------------------------------------------
-# PRApprovalSignal tests
-# ---------------------------------------------------------------------------
-
-
-class TestPRApprovalSignal:
-    def test_pending_when_no_pr(self) -> None:
-        pr = _pr_manager()
-        signal = PRApprovalSignal(pr, repo="org/repo")
-
-        task = _task(pr=None)
-        result = signal.check(task, "pr-require-approval", {})
-        assert result.status == SignalStatus.PENDING
-
-    def test_approved_when_pr_merged(self) -> None:
-        pr = _pr_manager()
-        signal = PRApprovalSignal(pr, repo="org/repo")
-        pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        pr.merge(pr_url, "task-001", "specs/widget.md")
-
-        task = _task(pr=pr_url)
-        result = signal.check(task, "pr-require-approval", {})
-        assert result.status == SignalStatus.APPROVED
-
-    def test_rejected_when_pr_closed(self) -> None:
-        pr = _pr_manager()
-        signal = PRApprovalSignal(pr, repo="org/repo")
-        pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
-        pr.close_pr(pr_url)
-
-        task = _task(pr=pr_url)
-        result = signal.check(task, "pr-require-approval", {})
-        assert result.status == SignalStatus.REJECTED
 
 
 # ---------------------------------------------------------------------------
@@ -272,21 +235,6 @@ class TestPostCommentStep:
         result = step.execute(task, "post-pr-comment", {})
 
         assert result.outcome == StepOutcome.RETRY
-
-
-# ---------------------------------------------------------------------------
-# PRReviewStep tests
-# ---------------------------------------------------------------------------
-
-
-class TestPRReviewStep:
-    def test_no_pr_returns_advance(self) -> None:
-        step = PRReviewStep(repo="org/repo")
-
-        task = _task(pr=None)
-        result = step.execute(task, "pr-review", {})
-
-        assert result.outcome == StepOutcome.ADVANCE
 
 
 # ---------------------------------------------------------------------------

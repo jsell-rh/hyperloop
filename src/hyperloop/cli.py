@@ -443,7 +443,6 @@ def run(
         from hyperloop.adapters.step_executor.composite import CompositeStepExecutor
         from hyperloop.adapters.step_executor.pr_actions import MarkReadyStep, PostCommentStep
         from hyperloop.adapters.step_executor.pr_merge import PRMergeStep
-        from hyperloop.adapters.step_executor.pr_review import PRReviewStep
 
         assert cfg.repo is not None
         step_executor = CompositeStepExecutor(
@@ -454,7 +453,6 @@ def run(
             ),
             mark_ready=MarkReadyStep(pr_manager),
             post_comment=PostCommentStep(repo=cfg.repo),
-            pr_review=PRReviewStep(repo=cfg.repo),
         )
         signal_port = LabelSignal(pr_manager)
 
