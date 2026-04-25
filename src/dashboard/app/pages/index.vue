@@ -2,6 +2,7 @@
 import type { SpecSummary, Summary, GraphData, PipelineStepInfo } from '~/types'
 
 const { fetchSpecs, fetchSummary, fetchGraph, fetchPipeline } = useApi()
+
 const { markFetched } = useLiveness()
 
 const { data: specs, error: specsError } = useAsyncData<SpecSummary[]>(

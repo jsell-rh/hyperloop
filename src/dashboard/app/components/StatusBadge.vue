@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import type { TaskStatusValue } from '~/types'
+
 const props = defineProps<{
-  status: 'not-started' | 'in-progress' | 'complete' | 'failed'
+  status: TaskStatusValue
 }>()
 
 const styleMap: Record<string, { bg: string; text: string; label: string }> = {
@@ -14,10 +16,10 @@ const styleMap: Record<string, { bg: string; text: string; label: string }> = {
     text: 'text-blue-700 dark:text-blue-400',
     label: 'In Progress',
   },
-  complete: {
+  completed: {
     bg: 'bg-green-100 dark:bg-green-900/30',
     text: 'text-green-700 dark:text-green-400',
-    label: 'Complete',
+    label: 'Completed',
   },
   failed: {
     bg: 'bg-red-100 dark:bg-red-900/30',
@@ -26,7 +28,7 @@ const styleMap: Record<string, { bg: string; text: string; label: string }> = {
   },
 }
 
-const style = computed(() => styleMap[props.status])
+const style = computed(() => styleMap[props.status] ?? styleMap['not-started'])
 </script>
 
 <template>
@@ -43,8 +45,8 @@ const style = computed(() => styleMap[props.status])
       <circle cx="12" cy="12" r="9" />
       <path stroke-linecap="round" d="M12 7v5l3 3" />
     </svg>
-    <!-- complete: checkmark -->
-    <svg v-else-if="status === 'complete'" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+    <!-- completed: checkmark -->
+    <svg v-else-if="status === 'completed'" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
       <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
     </svg>
     <!-- failed: X mark -->

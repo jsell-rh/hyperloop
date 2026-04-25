@@ -14,10 +14,12 @@ export interface SpecDetail {
   tasks: TaskSummary[]
 }
 
+export type TaskStatusValue = 'not-started' | 'in-progress' | 'completed' | 'failed'
+
 export interface TaskSummary {
   id: string
   title: string
-  status: 'not-started' | 'in-progress' | 'complete' | 'failed'
+  status: TaskStatusValue
   phase: string | null
   round: number
   branch: string | null
@@ -30,7 +32,7 @@ export interface TaskSummary {
 export interface DepDetail {
   id: string
   title: string
-  status: 'not-started' | 'in-progress' | 'complete' | 'failed'
+  status: TaskStatusValue
 }
 
 export interface TaskDetail extends TaskSummary {
@@ -61,7 +63,6 @@ export interface PromptSection {
 export interface PipelineStepInfo {
   name: string
   type: string
-  in_loop: boolean
 }
 
 export interface ReconstructedPrompt {
@@ -86,7 +87,7 @@ export interface Summary {
 export interface GraphNode {
   id: string
   title: string
-  status: 'not-started' | 'in-progress' | 'complete' | 'failed'
+  status: TaskStatusValue
   phase: string | null
   spec_ref: string
   round: number
@@ -104,13 +105,14 @@ export interface GraphData {
 }
 
 // ---------------------------------------------------------------------------
-// Process types
+// Process types — flat phase map
 // ---------------------------------------------------------------------------
 
-export interface PipelineTreeStep {
-  type: string
-  name: string | null
-  children: PipelineTreeStep[] | null
+export interface PhaseDefinition {
+  run: string
+  on_pass: string
+  on_fail: string
+  on_wait?: string
 }
 
 export interface ProcessLearning {
@@ -119,7 +121,8 @@ export interface ProcessLearning {
 }
 
 export interface ProcessData {
-  pipeline_steps: PipelineTreeStep[]
+  phases: Record<string, PhaseDefinition>
+  phase_order: string[]
   pipeline_raw: string
   gates: Record<string, unknown>
   actions: Record<string, unknown>
@@ -275,4 +278,16 @@ export interface CheckScript {
   name: string
   path: string
   content: string
+}
+
+// ---------------------------------------------------------------------------
+// Control operation types
+// ---------------------------------------------------------------------------
+
+export interface ControlRequest {
+  expected_round: number
+}
+
+export interface ControlResponse {
+  status: string
 }

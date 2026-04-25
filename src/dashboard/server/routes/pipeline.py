@@ -1,4 +1,4 @@
-"""GET /api/pipeline — pipeline step definitions."""
+"""GET /api/pipeline — pipeline step definitions (flat phase list)."""
 
 from __future__ import annotations
 
@@ -16,13 +16,12 @@ if TYPE_CHECKING:
 router = APIRouter()
 
 
-def _flatten_steps(steps: list[object], *, in_loop: bool = False) -> list[PipelineStepInfo]:
+def _flatten_steps(steps: list[object]) -> list[PipelineStepInfo]:
     """Walk a pipeline definition and flatten steps into an ordered list.
 
     Loop steps are recursed into; each child appears in order.  The step
     ``type`` is derived from whichever primitive key (agent/gate/action/loop)
-    is present.  Steps inside a ``loop:`` block are tagged with
-    ``in_loop=True`` so the frontend can visually group them.
+    is present.
     """
     result: list[PipelineStepInfo] = []
     for raw_step in steps:
@@ -30,27 +29,45 @@ def _flatten_steps(steps: list[object], *, in_loop: bool = False) -> list[Pipeli
             continue
         step = cast("dict[str, object]", raw_step)
         if "agent" in step:
-            result.append(PipelineStepInfo(name=str(step["agent"]), type="agent", in_loop=in_loop))
+            result.append(PipelineStepInfo(name=str(step["agent"]), type="agent"))
         elif "gate" in step:
-            result.append(PipelineStepInfo(name=str(step["gate"]), type="gate", in_loop=in_loop))
+            result.append(PipelineStepInfo(name=str(step["gate"]), type="gate"))
         elif "check" in step:
-            result.append(PipelineStepInfo(name=str(step["check"]), type="check", in_loop=in_loop))
+            result.append(PipelineStepInfo(name=str(step["check"]), type="check"))
         elif "action" in step:
-            result.append(
-                PipelineStepInfo(name=str(step["action"]), type="action", in_loop=in_loop)
-            )
+            result.append(PipelineStepInfo(name=str(step["action"]), type="action"))
         elif "loop" in step:
             children = step["loop"]
             if isinstance(children, list):
-                result.extend(_flatten_steps(cast("list[object]", children), in_loop=True))
+                result.extend(_flatten_steps(cast("list[object]", children)))
+    return result
+
+
+def _steps_from_phases(phases: dict[str, object]) -> list[PipelineStepInfo]:
+    """Build an ordered step list from a flat phases dict.
+
+    Each phase entry has a ``run`` key that may be prefixed with a type
+    (e.g. ``gate:pr_checks``).  If no prefix, the type defaults to
+    ``agent``.
+    """
+    result: list[PipelineStepInfo] = []
+    for name, cfg in phases.items():
+        step_type = "agent"
+        if isinstance(cfg, dict):
+            run = cast("dict[str, str]", cfg).get("run", name)
+            colon = run.find(":")
+            if colon > 0:
+                step_type = run[:colon]
+        result.append(PipelineStepInfo(name=name, type=step_type))
     return result
 
 
 def _load_pipeline_steps(repo_path: Path) -> list[PipelineStepInfo]:
     """Read the process definition and return flattened pipeline steps.
 
-    Tries the repo-local ``.hyperloop/agents/process/process.yaml`` first,
-    then falls back to ``base/process.yaml`` (the hyperloop default).
+    Supports both the new flat ``phases`` key and the legacy ``pipeline``
+    list.  Tries the repo-local process.yaml first, then falls back to
+    ``base/process.yaml`` (the hyperloop default).
     """
     candidates = [
         repo_path / ".hyperloop" / "agents" / "process" / "process.yaml",
@@ -66,6 +83,13 @@ def _load_pipeline_steps(repo_path: Path) -> list[PipelineStepInfo]:
                 if isinstance(doc, dict):
                     typed_doc = cast("dict[str, object]", doc)
                     if typed_doc.get("kind") == "Process":
+                        # New format: flat phases dict
+                        phases_raw = typed_doc.get("phases")
+                        if isinstance(phases_raw, dict):
+                            return _steps_from_phases(
+                                cast("dict[str, object]", phases_raw),
+                            )
+                        # Legacy format: pipeline list
                         pipeline_raw = typed_doc.get("pipeline")
                         if isinstance(pipeline_raw, list):
                             return _flatten_steps(cast("list[object]", pipeline_raw))

@@ -13,6 +13,8 @@ import type {
   CheckScript,
   ActivityResponse,
   HeartbeatResponse,
+  ControlRequest,
+  ControlResponse,
 } from '~/types'
 
 const API_BASE = '/api'
@@ -60,6 +62,24 @@ export function useApi() {
   const fetchWorkerHeartbeats = (params?: { since?: string }) =>
     $fetch<HeartbeatResponse>(`${API_BASE}/activity/worker-heartbeats`, { params })
 
+  const restartTask = (taskId: string, body: ControlRequest) =>
+    $fetch<ControlResponse>(`${API_BASE}/tasks/${taskId}/restart`, {
+      method: 'POST',
+      body,
+    })
+
+  const retireTask = (taskId: string, body: ControlRequest) =>
+    $fetch<ControlResponse>(`${API_BASE}/tasks/${taskId}/retire`, {
+      method: 'POST',
+      body,
+    })
+
+  const forceClearTask = (taskId: string, body: ControlRequest) =>
+    $fetch<ControlResponse>(`${API_BASE}/tasks/${taskId}/force-clear`, {
+      method: 'POST',
+      body,
+    })
+
   return {
     fetchSpecs,
     fetchSpec,
@@ -75,5 +95,8 @@ export function useApi() {
     fetchChecks,
     fetchActivity,
     fetchWorkerHeartbeats,
+    restartTask,
+    retireTask,
+    forceClearTask,
   }
 }

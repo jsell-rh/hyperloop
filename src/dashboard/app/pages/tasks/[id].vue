@@ -2,7 +2,7 @@
 import type { TaskDetail, PipelineStepInfo, ReconstructedPrompt } from '~/types'
 
 const route = useRoute()
-const { fetchTask, fetchPipeline, fetchTaskPrompt } = useApi()
+const { fetchTask, fetchPipeline, fetchTaskPrompt, restartTask, retireTask, forceClearTask } = useApi()
 const { markFetched } = useLiveness()
 
 const taskId = computed(() => route.params.id as string)
@@ -35,7 +35,7 @@ const sortedReviews = computed(() => {
   return [...task.value.reviews].sort((a, b) => b.round - a.round)
 })
 
-// Latest review for inline preview on overview tab (A3)
+// Latest review for inline preview on overview tab
 const latestReview = computed(() => {
   if (sortedReviews.value.length === 0) return null
   return sortedReviews.value[0]
@@ -97,6 +97,84 @@ const breadcrumbItems = computed(() => {
   return items
 })
 
+// ---------------------------------------------------------------------------
+// Control operations
+// ---------------------------------------------------------------------------
+
+const controlLoading = ref(false)
+const controlError = ref<string | null>(null)
+const controlSuccess = ref<string | null>(null)
+
+async function handleRestart(): Promise<void> {
+  if (!task.value) return
+  controlLoading.value = true
+  controlError.value = null
+  controlSuccess.value = null
+  try {
+    await restartTask(task.value.id, { expected_round: task.value.round })
+    controlSuccess.value = 'Task restarted successfully'
+    await refreshNuxtData(`task-${taskId.value}`)
+  } catch (e: unknown) {
+    if (e && typeof e === 'object' && 'statusCode' in e && (e as { statusCode: number }).statusCode === 409) {
+      controlError.value = 'Task was modified by the orchestrator. Please refresh and try again.'
+    } else {
+      controlError.value = e instanceof Error ? e.message : 'Failed to restart task'
+    }
+  } finally {
+    controlLoading.value = false
+  }
+}
+
+async function handleRetire(): Promise<void> {
+  if (!task.value) return
+  controlLoading.value = true
+  controlError.value = null
+  controlSuccess.value = null
+  try {
+    await retireTask(task.value.id, { expected_round: task.value.round })
+    controlSuccess.value = 'Task retired successfully'
+    await refreshNuxtData(`task-${taskId.value}`)
+  } catch (e: unknown) {
+    if (e && typeof e === 'object' && 'statusCode' in e && (e as { statusCode: number }).statusCode === 409) {
+      controlError.value = 'Task was modified by the orchestrator. Please refresh and try again.'
+    } else {
+      controlError.value = e instanceof Error ? e.message : 'Failed to retire task'
+    }
+  } finally {
+    controlLoading.value = false
+  }
+}
+
+async function handleForceClear(): Promise<void> {
+  if (!task.value) return
+  controlLoading.value = true
+  controlError.value = null
+  controlSuccess.value = null
+  try {
+    await forceClearTask(task.value.id, { expected_round: task.value.round })
+    controlSuccess.value = 'Task force-cleared successfully'
+    await refreshNuxtData(`task-${taskId.value}`)
+  } catch (e: unknown) {
+    if (e && typeof e === 'object' && 'statusCode' in e && (e as { statusCode: number }).statusCode === 409) {
+      controlError.value = 'Task was modified by the orchestrator. Please refresh and try again.'
+    } else {
+      controlError.value = e instanceof Error ? e.message : 'Failed to force-clear task'
+    }
+  } finally {
+    controlLoading.value = false
+  }
+}
+
+function dismissControlMessage(): void {
+  controlError.value = null
+  controlSuccess.value = null
+}
+
+// Show force-clear only when task has a phase (is at a step)
+const showForceClear = computed(() => {
+  return task.value?.status === 'in-progress' && task.value?.phase != null
+})
+
 // Poll every 10 seconds
 let refreshInterval: ReturnType<typeof setInterval> | undefined
 
@@ -135,6 +213,60 @@ onUnmounted(() => {
           </p>
         </div>
         <StatusBadge :status="task.status" />
+      </div>
+
+      <!-- Control operation feedback -->
+      <div v-if="controlError" class="mb-4 rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 p-3 flex items-center justify-between">
+        <span class="text-sm text-red-700 dark:text-red-400">{{ controlError }}</span>
+        <button class="text-xs text-red-500 hover:text-red-700 dark:hover:text-red-300" @click="dismissControlMessage">Dismiss</button>
+      </div>
+      <div v-if="controlSuccess" class="mb-4 rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 p-3 flex items-center justify-between">
+        <span class="text-sm text-green-700 dark:text-green-400">{{ controlSuccess }}</span>
+        <button class="text-xs text-green-500 hover:text-green-700 dark:hover:text-green-300" @click="dismissControlMessage">Dismiss</button>
+      </div>
+
+      <!-- Control buttons -->
+      <div class="flex items-center gap-2 mb-6">
+        <button
+          class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium border transition-colors"
+          :class="controlLoading
+            ? 'border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+            : 'border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30'"
+          :disabled="controlLoading"
+          @click="handleRestart"
+        >
+          <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M2.985 19.644l3.181-3.182" />
+          </svg>
+          Restart
+        </button>
+        <button
+          class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium border transition-colors"
+          :class="controlLoading
+            ? 'border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+            : 'border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30'"
+          :disabled="controlLoading"
+          @click="handleRetire"
+        >
+          <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+          Retire
+        </button>
+        <button
+          v-if="showForceClear"
+          class="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium border transition-colors"
+          :class="controlLoading
+            ? 'border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+            : 'border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30'"
+          :disabled="controlLoading"
+          @click="handleForceClear"
+        >
+          <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 010 1.972l-11.54 6.347a1.125 1.125 0 01-1.667-.986V5.653z" />
+          </svg>
+          Force Clear
+        </button>
       </div>
 
       <!-- Tab navigation -->
@@ -226,7 +358,7 @@ onUnmounted(() => {
               <p class="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-line">{{ task.pr_description }}</p>
             </div>
 
-            <!-- Latest review inline (A3) -->
+            <!-- Latest review inline -->
             <div
               v-if="latestReview"
               class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none"

@@ -330,10 +330,10 @@ class TestPipeline:
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 4
-        assert data[0] == {"name": "implementer", "type": "agent", "in_loop": True}
-        assert data[1] == {"name": "verifier", "type": "agent", "in_loop": True}
-        assert data[2] == {"name": "pr-require-label", "type": "gate", "in_loop": False}
-        assert data[3] == {"name": "merge-pr", "type": "action", "in_loop": False}
+        assert data[0] == {"name": "implementer", "type": "agent"}
+        assert data[1] == {"name": "verifier", "type": "agent"}
+        assert data[2] == {"name": "pr-require-label", "type": "gate"}
+        assert data[3] == {"name": "merge-pr", "type": "action"}
 
     def test_pipeline_empty_when_no_process(self, tmp_path: Path) -> None:
         """Pipeline endpoint returns empty list when no process.yaml exists."""
@@ -918,14 +918,15 @@ class TestProcess:
         assert resp.status_code == 200
         data = resp.json()
 
-        steps = data["pipeline_steps"]
-        assert len(steps) == 3
-        assert steps[0]["type"] == "loop"
-        assert len(steps[0]["children"]) == 2
-        assert steps[0]["children"][0] == {"type": "agent", "name": "implementer", "children": None}
-        assert steps[0]["children"][1] == {"type": "agent", "name": "verifier", "children": None}
-        assert steps[1] == {"type": "gate", "name": "pr-require-label", "children": None}
-        assert steps[2] == {"type": "action", "name": "merge-pr", "children": None}
+        phases = data["phases"]
+        phase_order = data["phase_order"]
+        assert phase_order == ["implementer", "verifier", "pr-require-label", "merge-pr"]
+        assert phases["implementer"]["on_pass"] == "verifier"
+        assert phases["implementer"]["on_fail"] == "implementer"
+        assert phases["verifier"]["on_pass"] == "pr-require-label"
+        assert phases["verifier"]["on_fail"] == "implementer"
+        assert phases["pr-require-label"]["run"] == "gate:pr-require-label"
+        assert phases["merge-pr"]["run"] == "action:merge-pr"
 
     def test_process_returns_gates_and_actions(self, tmp_path: Path) -> None:
         """Process endpoint returns gate and action configs."""
@@ -1006,7 +1007,8 @@ class TestProcess:
         assert resp.status_code == 200
         data = resp.json()
 
-        assert data["pipeline_steps"] == []
+        assert data["phases"] == {}
+        assert data["phase_order"] == []
         assert data["gates"] == {}
         assert data["actions"] == {}
         assert data["hooks"] == {}

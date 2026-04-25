@@ -14,7 +14,8 @@ const { data: process, error } = useAsyncData<ProcessData>(
   {
     server: false,
     default: () => ({
-      pipeline_steps: [],
+      phases: {},
+      phase_order: [],
       pipeline_raw: '',
       gates: {},
       actions: {},
@@ -43,6 +44,10 @@ const hookEntries = computed(() =>
 const guidelineEntries = computed(() =>
   Object.entries(process.value?.process_learning?.guidelines || {})
 )
+
+const hasPhases = computed(() =>
+  process.value && process.value.phase_order.length > 0
+)
 </script>
 
 <template>
@@ -51,7 +56,7 @@ const guidelineEntries = computed(() =>
       Process
     </h1>
     <p class="text-gray-500 dark:text-gray-400 mb-8">
-      Pipeline definition, gates, actions, and process learning.
+      Phase map, gates, actions, and process learning.
     </p>
 
     <!-- Error banner -->
@@ -62,20 +67,21 @@ const guidelineEntries = computed(() =>
       <span class="text-sm text-red-700 dark:text-red-400">Unable to reach the Hyperloop API. Retrying...</span>
     </div>
 
-    <!-- Section 1: Pipeline Flowchart -->
+    <!-- Section 1: Phase Map Flowchart -->
     <div class="rounded-lg bg-white dark:bg-gray-900 p-5 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none mb-6">
       <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100 mb-4">
-        Pipeline
+        Phase Map
       </h2>
       <PipelineFlowchart
-        v-if="process && process.pipeline_steps.length > 0"
-        :steps="process.pipeline_steps"
+        v-if="hasPhases"
+        :phases="process!.phases"
+        :phase-order="process!.phase_order"
       />
       <p
         v-else
         class="text-gray-400 dark:text-gray-500 text-sm"
       >
-        No pipeline definition found.
+        No phase map definition found.
       </p>
 
       <!-- Collapsible raw YAML -->

@@ -210,7 +210,7 @@ interface LayoutEdge {
 // Node style helpers
 // ---------------------------------------------------------------------------
 function getNodeFill(status: string): string {
-  if (status === 'complete') return isDark.value ? '#1a1a24' : '#f3f4f6'
+  if (status === 'completed') return isDark.value ? '#1a1a24' : '#f3f4f6'
   if (status === 'in-progress') return isDark.value ? '#0f172a' : '#ffffff'
   if (status === 'failed') return isDark.value ? '#1c0a0a' : '#fef2f2'
   // not-started
@@ -218,7 +218,7 @@ function getNodeFill(status: string): string {
 }
 
 function getNodeStroke(status: string): string {
-  if (status === 'complete') return isDark.value ? '#2d2d35' : '#d1d5db'
+  if (status === 'completed') return isDark.value ? '#2d2d35' : '#d1d5db'
   if (status === 'in-progress') return isDark.value ? '#60a5fa' : '#3b82f6'
   if (status === 'failed') return isDark.value ? '#f87171' : '#ef4444'
   // not-started
@@ -228,7 +228,7 @@ function getNodeStroke(status: string): string {
 function getNodeStrokeWidth(status: string): number {
   if (status === 'in-progress' || status === 'failed') return 2.5
   if (status === 'not-started') return 1.5
-  return 1 // complete
+  return 1 // completed
 }
 
 function getNodeStrokeDash(status: string): string | undefined {
@@ -237,7 +237,7 @@ function getNodeStrokeDash(status: string): string | undefined {
 }
 
 function getNodeOpacity(status: string): number {
-  if (status === 'complete') return isDark.value ? 0.85 : 0.9
+  if (status === 'completed') return isDark.value ? 0.85 : 0.9
   return 1
 }
 
@@ -250,7 +250,7 @@ function getNodeFilter(status: string, isHovered: boolean, nodeId: string): stri
 }
 
 function getTitleFill(status: string): string {
-  if (status === 'complete') return isDark.value ? '#6b7280' : '#6b7280'
+  if (status === 'completed') return isDark.value ? '#6b7280' : '#6b7280'
   if (status === 'in-progress') return isDark.value ? '#f8fafc' : '#0f172a'
   if (status === 'failed') return isDark.value ? '#fca5a5' : '#7f1d1d'
   // not-started
@@ -258,7 +258,7 @@ function getTitleFill(status: string): string {
 }
 
 function getIdFill(status: string): string {
-  if (status === 'complete') return isDark.value ? '#374151' : '#d1d5db'
+  if (status === 'completed') return isDark.value ? '#374151' : '#d1d5db'
   if (status === 'in-progress') return isDark.value ? '#60a5fa' : '#3b82f6'
   if (status === 'failed') return isDark.value ? '#f87171' : '#ef4444'
   // not-started
@@ -278,14 +278,14 @@ function getMiniBarFill(stepName: string, currentPhase: string | null, stepIndex
 // Edge style helpers
 // ---------------------------------------------------------------------------
 function getEdgeColor(sourceStatus: string): string {
-  if (sourceStatus === 'complete') return isDark.value ? '#374151' : '#d1d5db'
+  if (sourceStatus === 'completed') return isDark.value ? '#374151' : '#d1d5db'
   if (sourceStatus === 'in-progress') return isDark.value ? '#60a5fa' : '#3b82f6'
   if (sourceStatus === 'failed') return isDark.value ? '#f87171' : '#ef4444'
   return isDark.value ? '#4b5563' : '#9ca3af'
 }
 
 function getEdgeOpacity(sourceStatus: string): number {
-  if (sourceStatus === 'complete') return 0.5
+  if (sourceStatus === 'completed') return 0.5
   if (sourceStatus === 'in-progress') return 0.8
   if (sourceStatus === 'failed') return 0.7
   return 0.5
@@ -391,13 +391,13 @@ function getNodeDimOpacity(nodeId: string, status: string): number {
   // Node hover takes precedence over spec highlight
   if (activeNodeId.value) {
     if (isRelated(nodeId)) return getNodeOpacity(status)
-    if (status === 'complete') return 0.08
+    if (status === 'completed') return 0.08
     return 0.15
   }
   // Spec card hover
   if (props.highlightSpecRef) {
     if (isNodeHighlightedBySpec(nodeId)) return 1
-    if (status === 'complete') return 0.08
+    if (status === 'completed') return 0.08
     return 0.15
   }
   return getNodeOpacity(status)
@@ -1026,7 +1026,7 @@ onUnmounted(() => {
           :stroke-width="getEdgeStrokeWidth(edge.isCritical)"
           :stroke-dasharray="getEdgeDashArray(edge.sourceStatus, edge.isCritical)"
           :marker-end="
-            edge.sourceStatus === 'complete' ? 'url(#arrowhead-gray)' :
+            edge.sourceStatus === 'completed' ? 'url(#arrowhead-gray)' :
             edge.sourceStatus === 'in-progress' ? 'url(#arrowhead-blue)' :
             edge.sourceStatus === 'failed' ? 'url(#arrowhead-red)' :
             'url(#arrowhead-muted)'

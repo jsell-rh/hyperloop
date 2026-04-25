@@ -50,7 +50,6 @@ class PipelineStepInfo(BaseModel):
 
     name: str
     type: str
-    in_loop: bool = False
 
 
 class PromptSectionResponse(BaseModel):
@@ -293,11 +292,20 @@ class HeartbeatResponse(BaseModel):
 
 
 class PipelineTreeStep(BaseModel):
-    """A step in the pipeline tree (preserving nesting)."""
+    """A step in the pipeline tree (preserving nesting). Legacy."""
 
     type: str
     name: str | None = None
     children: list[PipelineTreeStep] | None = None
+
+
+class PhaseDefinition(BaseModel):
+    """A single phase in the flat phase map."""
+
+    run: str
+    on_pass: str
+    on_fail: str
+    on_wait: str | None = None
 
 
 class ProcessLearning(BaseModel):
@@ -310,7 +318,8 @@ class ProcessLearning(BaseModel):
 class ProcessResponse(BaseModel):
     """Full process definition with learning state."""
 
-    pipeline_steps: list[PipelineTreeStep]
+    phases: dict[str, PhaseDefinition]
+    phase_order: list[str]
     pipeline_raw: str
     gates: dict[str, object]
     actions: dict[str, object]

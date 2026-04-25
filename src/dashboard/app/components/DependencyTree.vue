@@ -27,7 +27,7 @@ defineProps<{
       <div
         class="absolute left-0 top-1 h-[14px] w-[14px] rounded-full border-2 flex items-center justify-center"
         :class="{
-          'border-green-500 bg-green-500 dark:border-green-400 dark:bg-green-400': dep.status === 'complete',
+          'border-green-500 bg-green-500 dark:border-green-400 dark:bg-green-400': dep.status === 'completed',
           'border-blue-500 bg-blue-500 dark:border-blue-400 dark:bg-blue-400': dep.status === 'in-progress',
           'border-red-500 bg-red-500 dark:border-red-400 dark:bg-red-400': dep.status === 'failed',
           'border-gray-300 bg-white dark:border-gray-600 dark:bg-gray-900': dep.status === 'not-started',
@@ -35,7 +35,7 @@ defineProps<{
       >
         <!-- Checkmark for complete -->
         <svg
-          v-if="dep.status === 'complete'"
+          v-if="dep.status === 'completed'"
           class="h-2 w-2 text-white dark:text-gray-900"
           fill="none"
           viewBox="0 0 24 24"
@@ -59,7 +59,7 @@ defineProps<{
         </span>
         <StatusBadge :status="dep.status" />
         <span
-          v-if="dep.status !== 'complete'"
+          v-if="dep.status !== 'completed'"
           class="text-[10px] text-amber-600 dark:text-amber-400 font-medium"
         >
           blocking

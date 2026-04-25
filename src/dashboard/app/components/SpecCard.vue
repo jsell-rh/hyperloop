@@ -16,7 +16,7 @@ const useDiscrete = computed(() => props.spec.tasks_total > 0 && props.spec.task
 const segments = computed(() => {
   const s = props.spec
   const items: { status: string }[] = []
-  for (let i = 0; i < s.tasks_complete; i++) items.push({ status: 'complete' })
+  for (let i = 0; i < s.tasks_complete; i++) items.push({ status: 'completed' })
   for (let i = 0; i < s.tasks_failed; i++) items.push({ status: 'failed' })
   for (let i = 0; i < s.tasks_in_progress; i++) items.push({ status: 'in-progress' })
   const notStarted = s.tasks_total - s.tasks_complete - s.tasks_failed - s.tasks_in_progress
@@ -87,7 +87,7 @@ const isBlocked = computed(() => {
           :key="i"
           class="flex-1 rounded-full transition-all"
           :class="{
-            'bg-green-500 dark:bg-green-400': seg.status === 'complete',
+            'bg-green-500 dark:bg-green-400': seg.status === 'completed',
             'bg-red-500 dark:bg-red-400': seg.status === 'failed',
             'bg-blue-500 dark:bg-blue-400 progress-bar-shimmer': seg.status === 'in-progress',
             'bg-gray-200 dark:bg-gray-700': seg.status === 'not-started',
