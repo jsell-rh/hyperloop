@@ -398,6 +398,9 @@ class Orchestrator:
         if self._composer is None:
             return
 
+        if "auditor" not in self._composer._templates:
+            return
+
         needs_audit = check_convergence_needed(tasks, self._converged_specs)
         for spec_ref in needs_audit:
             spec_path = spec_ref.split("@")[0] if "@" in spec_ref else spec_ref

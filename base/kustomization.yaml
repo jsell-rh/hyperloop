@@ -6,3 +6,4 @@ resources:
   - process-improver.yaml
   - rebase-resolver.yaml
   - pm.yaml
+  - auditor.yaml
