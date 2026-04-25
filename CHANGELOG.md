@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.40.2 (2026-04-25)
+
+### Bug Fixes
+
+- Add auditor.yaml to base kustomization, guard convergence check
+  ([`2c52bd6`](https://github.com/jsell-rh/hyperloop/commit/2c52bd604da34e7faa81ea9fb7f7589faa7cf46c))
+
+
 ## v0.40.1 (2026-04-25)
 
 
