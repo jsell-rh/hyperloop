@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.40.0 (2026-04-25)
+
+### Bug Fixes
+
+- Add timeouts and cleanup to prevent dashboard zombie processes
+  ([`3db62bb`](https://github.com/jsell-rh/hyperloop/commit/3db62bbd76c725f489f0a58eeb821a68708edab1))
+
+- Add timeouts to git fetch/push in state branch operations
+  ([`f73305b`](https://github.com/jsell-rh/hyperloop/commit/f73305ba6a540bffe35537ecc277ab105f83f7bc))
+
+### Features
+
+- Runtime retry with exponential backoff for transient failures
+  ([`4f9fad5`](https://github.com/jsell-rh/hyperloop/commit/4f9fad5817cd8ae12083b48fa6c445505e9ec4f4))
+
+
 ## v0.39.0 (2026-04-25)
 
 
