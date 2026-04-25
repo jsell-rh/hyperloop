@@ -8,6 +8,7 @@ git plumbing (temporary index) without touching the working tree.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import subprocess
@@ -236,10 +237,16 @@ class GitStateStore:
             self._bootstrapped = True
             return
 
-        # Check remote
+        # Check remote (with timeout to avoid hanging on auth)
         remotes = self._git_try("remote")
         if remotes:
-            self._git_try("fetch", "origin", STATE_BRANCH)
+            with contextlib.suppress(subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                subprocess.run(
+                    ["git", "-C", str(self._repo), "fetch", "origin", STATE_BRANCH],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
             if self._git_try("rev-parse", "--verify", f"refs/remotes/origin/{STATE_BRANCH}"):
                 self._git("branch", STATE_BRANCH, f"origin/{STATE_BRANCH}")
                 self._bootstrapped = True
@@ -251,9 +258,6 @@ class GitStateStore:
 
     def _create_orphan_branch(self) -> None:
         """Create the orphan state branch with empty directory structure using plumbing."""
-        # Create .gitkeep blobs
-        empty_blob = self._git("hash-object", "-w", "--stdin", env={"GIT_INPUT": ""})
-        # hash-object --stdin reads from stdin, but we need to pipe empty content
         result = subprocess.run(
             ["git", "-C", str(self._repo), "hash-object", "-w", "--stdin"],
             input="",
@@ -758,23 +762,31 @@ class GitStateStore:
         if not remotes:
             return
 
-        # Fetch
-        self._git_try("fetch", "origin", STATE_BRANCH)
-
-        # Check if remote branch exists
-        remote_ref = self._git_try("rev-parse", "--verify", f"refs/remotes/origin/{STATE_BRANCH}")
-        if not remote_ref:
-            # Push our local branch
+        try:
             subprocess.run(
-                ["git", "-C", str(self._repo), "push", "-u", "origin", STATE_BRANCH],
+                ["git", "-C", str(self._repo), "fetch", "origin", STATE_BRANCH],
                 capture_output=True,
                 text=True,
+                timeout=30,
             )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return
 
-        # Push
-        subprocess.run(
-            ["git", "-C", str(self._repo), "push", "origin", STATE_BRANCH],
-            capture_output=True,
-            text=True,
-        )
+        remote_ref = self._git_try("rev-parse", "--verify", f"refs/remotes/origin/{STATE_BRANCH}")
+        if not remote_ref:
+            with contextlib.suppress(subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                subprocess.run(
+                    ["git", "-C", str(self._repo), "push", "-u", "origin", STATE_BRANCH],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            return
+
+        with contextlib.suppress(subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            subprocess.run(
+                ["git", "-C", str(self._repo), "push", "origin", STATE_BRANCH],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
