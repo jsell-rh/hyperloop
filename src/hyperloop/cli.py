@@ -256,6 +256,11 @@ def dashboard(
     port: int = typer.Option(8787, help="Port for the dashboard server."),
 ) -> None:
     """Start the read-only dashboard server."""
+    import atexit
+    import contextlib
+    import os
+    import signal
+
     import uvicorn
 
     from dashboard.server.app import create_app
@@ -264,6 +269,13 @@ def dashboard(
     if not (repo_path / ".git").exists():
         console.print(f"[bold red]Error:[/bold red] {repo_path} is not a git repository.")
         raise typer.Exit(code=1)
+
+    def _cleanup_children() -> None:
+        """Kill all child processes in our process group on exit."""
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(os.getpgid(os.getpid()), signal.SIGTERM)
+
+    atexit.register(_cleanup_children)
 
     console.print(f"[bold green]Starting dashboard[/bold green] on http://localhost:{port}")
     console.print(f"  Repo: {repo_path}")
@@ -409,6 +421,7 @@ def run(
             acpctl=cfg.ambient.acpctl,
             base_branch=cfg.base_branch,
             repo_url=cfg.ambient.repo_url,
+            probe=probe,
         )
     else:
         from hyperloop.adapters.git.runtime import AgentSdkRuntime

@@ -201,7 +201,7 @@ class GitStateStore:
         if not self._bootstrapped:
             self.bootstrap()
 
-    def _git(self, *args: str, env: dict[str, str] | None = None) -> str:
+    def _git(self, *args: str, env: dict[str, str] | None = None, timeout: float = 30.0) -> str:
         """Run a git command in the repo and return stdout."""
         full_env = dict(os.environ)
         if env:
@@ -212,6 +212,7 @@ class GitStateStore:
             capture_output=True,
             text=True,
             env=full_env,
+            timeout=timeout,
         )
         return result.stdout.strip()
 
