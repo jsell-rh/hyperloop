@@ -142,6 +142,8 @@ def run_intake(
     intake_start = time.monotonic()
     success = runtime.run_serial("pm", prompt)
 
+    _ingest_working_tree_tasks(state)
+
     world_after = state.get_world()
     task_count_after = len(world_after.tasks)
     created_count = task_count_after - task_count_before
@@ -155,3 +157,48 @@ def run_intake(
         unprocessed_count=len(entries),
         unprocessed_specs=spec_paths,
     )
+
+
+def _ingest_working_tree_tasks(state: StateStore) -> None:
+    """Scan the working tree for task files the PM wrote and ingest them into the state store.
+
+    Serial agents (PM) run on trunk and write task files to the working tree at
+    .hyperloop/state/tasks/. The state store reads from the orphan state branch.
+    This bridge reads any working tree task files not yet in the store, adds them,
+    persists, and cleans up the working tree copies.
+    """
+    import os
+    from pathlib import Path
+
+    from hyperloop.adapters.git.state import _frontmatter_to_task, _parse_task_file
+
+    repo_path: Path | None = None
+    if hasattr(state, "_repo"):
+        repo_path = Path(state._repo)  # type: ignore[union-attr]
+    if repo_path is None:
+        return
+
+    tasks_dir = repo_path / ".hyperloop" / "state" / "tasks"
+    if not tasks_dir.is_dir():
+        return
+
+    world = state.get_world()
+    existing_ids = set(world.tasks.keys())
+    added = False
+
+    for task_file in sorted(tasks_dir.glob("*.md")):
+        task_id = task_file.stem
+        if task_id in existing_ids:
+            continue
+        content = task_file.read_text()
+        try:
+            fm = _parse_task_file(content)
+            task = _frontmatter_to_task(fm)
+            state.add_task(task)
+            added = True
+        except (ValueError, KeyError):
+            continue
+        os.remove(task_file)
+
+    if added:
+        state.persist("ingest tasks from PM")
