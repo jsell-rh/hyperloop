@@ -195,5 +195,8 @@ class StructlogProbe:
     def pr_marked_ready(self, **kw: object) -> None:
         self._log.debug("pr_marked_ready", **kw)
 
+    def feedback_checked(self, **kw: object) -> None:
+        self._log.info("feedback_checked", **kw)
+
     def state_synced(self, **kw: object) -> None:
         self._log.debug("state_synced", **kw)

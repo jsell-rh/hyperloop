@@ -149,6 +149,16 @@ class WorkerHandle:
 
 
 @dataclass(frozen=True)
+class PRComment:
+    """A comment on a pull request, used for feedback tracking."""
+
+    id: str
+    author: str
+    body: str
+    url: str
+
+
+@dataclass(frozen=True)
 class TaskProposal:
     """Value object produced by the PM agent during intake."""
 

@@ -505,6 +505,28 @@ class OtelProbe:
     def prompt_composed(self, **_kw: object) -> None:
         pass
 
+    def feedback_checked(
+        self,
+        *,
+        task_id: str,
+        unprocessed_count: int,
+        cycle: int,
+        **_kw: object,
+    ) -> None:
+        try:
+            span = self._worker_spans.get(task_id)
+            if span is not None:
+                span.add_event(
+                    "feedback_checked",
+                    attributes={
+                        "hyperloop.task_id": task_id,
+                        "hyperloop.unprocessed_count": unprocessed_count,
+                        "hyperloop.cycle": cycle,
+                    },
+                )
+        except Exception:
+            _log.exception("otel: feedback_checked failed")
+
     def pr_created(self, **_kw: object) -> None:
         pass
 

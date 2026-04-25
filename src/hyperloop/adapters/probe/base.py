@@ -103,6 +103,9 @@ class NullProbe:
     def pr_marked_ready(self, **_: object) -> None:
         pass
 
+    def feedback_checked(self, **_: object) -> None:
+        pass
+
     def state_synced(self, **_: object) -> None:
         pass
 
@@ -207,6 +210,9 @@ class MultiProbe:
 
     def pr_marked_ready(self, **kw: object) -> None:
         self._call("pr_marked_ready", **kw)
+
+    def feedback_checked(self, **kw: object) -> None:
+        self._call("feedback_checked", **kw)
 
     def state_synced(self, **kw: object) -> None:
         self._call("state_synced", **kw)

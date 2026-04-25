@@ -196,5 +196,8 @@ class FileProbe:
     def pr_marked_ready(self, **kw: object) -> None:
         self._write("pr_marked_ready", **kw)
 
+    def feedback_checked(self, **kw: object) -> None:
+        self._write("feedback_checked", **kw)
+
     def state_synced(self, **kw: object) -> None:
         self._write("state_synced", **kw)

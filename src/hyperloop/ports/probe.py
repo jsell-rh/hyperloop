@@ -400,6 +400,17 @@ class OrchestratorProbe(Protocol):
         """A PR was marked as ready for review."""
         ...
 
+    def feedback_checked(
+        self,
+        *,
+        task_id: str,
+        unprocessed_count: int,
+        allowed_authors: tuple[str, ...],
+        cycle: int,
+    ) -> None:
+        """Feedback was checked for unprocessed comments."""
+        ...
+
     def state_synced(self) -> None:
         """State was synced with remote (pull + push)."""
         ...

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from hyperloop.domain.model import StepOutcome, StepResult
 
 if TYPE_CHECKING:
+    from hyperloop.adapters.step_executor.feedback import FeedbackStep
     from hyperloop.adapters.step_executor.pr_actions import MarkReadyStep, PostCommentStep
     from hyperloop.adapters.step_executor.pr_merge import PRMergeStep
     from hyperloop.adapters.step_executor.pr_review import PRReviewStep
@@ -22,11 +23,13 @@ class CompositeStepExecutor:
         mark_ready: MarkReadyStep | None = None,
         post_comment: PostCommentStep | None = None,
         pr_review: PRReviewStep | None = None,
+        feedback: FeedbackStep | None = None,
     ) -> None:
         self._merge = merge
         self._mark_ready = mark_ready
         self._post_comment = post_comment
         self._pr_review = pr_review
+        self._feedback = feedback
 
     def execute(self, task: Task, step_name: str, args: dict[str, object]) -> StepResult:
         if step_name == "merge-pr" and self._merge is not None:
@@ -40,6 +43,9 @@ class CompositeStepExecutor:
 
         if step_name == "pr-review" and self._pr_review is not None:
             return self._pr_review.execute(task, step_name, args)
+
+        if step_name == "feedback" and self._feedback is not None:
+            return self._feedback.execute(task, step_name, args)
 
         return StepResult(
             outcome=StepOutcome.RETRY,

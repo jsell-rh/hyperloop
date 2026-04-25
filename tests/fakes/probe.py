@@ -120,5 +120,8 @@ class RecordingProbe:
     def pr_marked_ready(self, **kw: object) -> None:
         self._record("pr_marked_ready", **kw)
 
+    def feedback_checked(self, **kw: object) -> None:
+        self._record("feedback_checked", **kw)
+
     def state_synced(self, **kw: object) -> None:
         self._record("state_synced", **kw)

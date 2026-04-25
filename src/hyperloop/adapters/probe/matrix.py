@@ -343,5 +343,15 @@ class MatrixProbe:
     def step_executed(self, **kw: object) -> None:
         pass
 
+    def feedback_checked(self, **kw: object) -> None:
+        count = kw.get("unprocessed_count", 0)
+        if not count:
+            return
+        task_id = str(kw.get("task_id", ""))
+        allowed = kw.get("allowed_authors", ())
+        authors = ", ".join(str(a) for a in allowed) if isinstance(allowed, tuple) else ""
+        body = f"\U0001f4ac {task_id} · {count} unprocessed feedback comment(s) from {authors}"
+        self._send(body, task_id=task_id)
+
     def signal_checked(self, **kw: object) -> None:
         pass
