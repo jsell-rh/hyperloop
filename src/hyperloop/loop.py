@@ -7,7 +7,7 @@ Each phase returns a result dataclass; the Orchestrator applies mutations.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from hyperloop.adapters.probe import NullProbe
 from hyperloop.cycle import (
@@ -22,6 +22,7 @@ from hyperloop.cycle.helpers import build_world
 from hyperloop.cycle.intake import _detect_spec_entries
 from hyperloop.domain.deps import detect_cycles
 from hyperloop.domain.model import (
+    Phase,
     PMFailureResponse,
     TaskContext,
     TaskStatus,
@@ -476,14 +477,14 @@ class Orchestrator:
     def _handle_phase_orphans(self, tasks: dict[str, Task], cycle_num: int) -> None:
         """Detect tasks at phases not in the current phase map and reset them."""
         orphans = detect_phase_orphans(tasks, self._process.phases)
-        first_phase = next(iter(self._process.phases), None) if self._process.phases else None
+        first_phase_key = next(iter(self._process.phases), None) if self._process.phases else None
         for orphan in orphans:
             task = self._state.get_task(orphan.task_id)
-            if first_phase is not None:
+            if first_phase_key is not None:
                 self._state.transition_task(
                     orphan.task_id,
                     TaskStatus.IN_PROGRESS,
-                    phase=first_phase,
+                    phase=Phase(first_phase_key),
                     round=task.round + 1,
                 )
             else:
@@ -530,15 +531,24 @@ class Orchestrator:
             parsed = yaml.safe_load(content)
             if not isinstance(parsed, dict):
                 continue
+            d = cast("dict[str, object]", parsed)
+            raw_themes = d.get("failure_themes", [])
+            themes = (
+                [str(t) for t in cast("list[object]", raw_themes)]
+                if isinstance(raw_themes, list)
+                else []
+            )
             summaries[spec_path] = Summary(
-                spec_path=parsed.get("spec_path", spec_path),
-                spec_ref=parsed.get("spec_ref", spec_path),
-                total_tasks=parsed.get("total_tasks", 0),
-                completed=parsed.get("completed", 0),
-                failed=parsed.get("failed", 0),
-                failure_themes=parsed.get("failure_themes", []),
-                last_audit=parsed.get("last_audit"),
-                last_audit_result=parsed.get("last_audit_result"),
+                spec_path=str(d.get("spec_path", spec_path)),
+                spec_ref=str(d.get("spec_ref", spec_path)),
+                total_tasks=int(str(d.get("total_tasks", 0))),
+                completed=int(str(d.get("completed", 0))),
+                failed=int(str(d.get("failed", 0))),
+                failure_themes=themes,
+                last_audit=str(d["last_audit"]) if d.get("last_audit") is not None else None,
+                last_audit_result=str(d["last_audit_result"])
+                if d.get("last_audit_result") is not None
+                else None,
             )
         return summaries
 

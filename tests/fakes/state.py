@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import yaml
 
@@ -241,15 +241,16 @@ class InMemoryStateStore:
                 fm = yaml.safe_load(match.group(1))
                 if not isinstance(fm, dict):
                     continue
-                raw_deps = fm.get("deps", [])
-                dep_list = list(raw_deps) if isinstance(raw_deps, list) else []
+                d = cast("dict[str, object]", fm)
+                raw_deps = d.get("deps", [])
+                dep_list = cast("list[object]", raw_deps) if isinstance(raw_deps, list) else []
                 task = Task(
-                    id=str(fm["id"]),
-                    title=str(fm.get("title", "")),
-                    spec_ref=str(fm.get("spec_ref", "")),
+                    id=str(d["id"]),
+                    title=str(d.get("title", "")),
+                    spec_ref=str(d.get("spec_ref", "")),
                     status=TaskStatus.NOT_STARTED,
                     phase=None,
-                    deps=tuple(str(d) for d in dep_list),
+                    deps=tuple(str(item) for item in dep_list),
                     round=0,
                     branch=None,
                     pr=None,

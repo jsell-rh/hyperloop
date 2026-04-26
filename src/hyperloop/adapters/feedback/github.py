@@ -6,7 +6,7 @@ import json
 import logging
 import re
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from hyperloop.domain.model import PRComment
 
@@ -52,7 +52,9 @@ class GitHubFeedbackAdapter:
         result: list[PRComment] = []
 
         for comment in issue_comments:
-            author = comment.get("user", {}).get("login", "")
+            user_obj = comment.get("user")
+            user = cast("dict[str, object]", user_obj) if isinstance(user_obj, dict) else {}
+            author = str(user.get("login", ""))
             if author not in allowed_set:
                 continue
             comment_id = str(comment.get("id", ""))
@@ -68,7 +70,9 @@ class GitHubFeedbackAdapter:
             )
 
         for comment in review_comments:
-            author = comment.get("user", {}).get("login", "")
+            user_obj = comment.get("user")
+            user = cast("dict[str, object]", user_obj) if isinstance(user_obj, dict) else {}
+            author = str(user.get("login", ""))
             if author not in allowed_set:
                 continue
             comment_id = str(comment.get("id", ""))
@@ -114,8 +118,10 @@ class GitHubFeedbackAdapter:
             _log.warning("Failed to fetch issue comments: %s", result.stderr)
             return []
         try:
-            data = json.loads(result.stdout)
-            return data if isinstance(data, list) else []
+            data: object = json.loads(result.stdout)
+            if isinstance(data, list):
+                return cast("list[dict[str, object]]", data)
+            return []
         except json.JSONDecodeError:
             return []
 
@@ -134,8 +140,10 @@ class GitHubFeedbackAdapter:
             _log.warning("Failed to fetch review comments: %s", result.stderr)
             return []
         try:
-            data = json.loads(result.stdout)
-            return data if isinstance(data, list) else []
+            data: object = json.loads(result.stdout)
+            if isinstance(data, list):
+                return cast("list[dict[str, object]]", data)
+            return []
         except json.JSONDecodeError:
             return []
 
@@ -160,9 +168,10 @@ class GitHubFeedbackAdapter:
         if result.returncode != 0:
             return False
         try:
-            reactions = json.loads(result.stdout)
-            if not isinstance(reactions, list):
+            raw: object = json.loads(result.stdout)
+            if not isinstance(raw, list):
                 return False
+            reactions = cast("list[dict[str, object]]", raw)
             return any(r.get("content") == emoji for r in reactions)
         except json.JSONDecodeError:
             return False

@@ -349,7 +349,7 @@ class MatrixProbe:
             return
         task_id = str(kw.get("task_id", ""))
         allowed = kw.get("allowed_authors", ())
-        authors = ", ".join(str(a) for a in allowed) if isinstance(allowed, tuple) else ""
+        authors = ", ".join(str(a) for a in allowed) if isinstance(allowed, (tuple, list)) else ""  # type: ignore[reportUnknownVariableType,reportUnknownArgumentType]
         body = f"\U0001f4ac {task_id} · {count} unprocessed feedback comment(s) from {authors}"
         self._send(body, task_id=task_id)
 

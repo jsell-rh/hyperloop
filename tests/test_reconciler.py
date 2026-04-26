@@ -18,7 +18,7 @@ Covers every scenario from specs/reconciler.spec.md:
 15. No drift when everything is covered and fresh
 """
 
-from hyperloop.domain.model import DriftType, Phase, PMFailureResponse, Task, TaskStatus
+from hyperloop.domain.model import DriftType, Phase, PhaseStep, PMFailureResponse, Task, TaskStatus
 from hyperloop.domain.reconciler import (
     PhaseMap,
     Summary,
@@ -385,8 +385,8 @@ class TestPhaseOrphans:
         )
         tasks = {t.id: t}
         phase_map: PhaseMap = {
-            "implement": {"run": "implementer"},
-            "verify": {"run": "verifier"},
+            "implement": PhaseStep(run="agent implementer", on_pass="verify", on_fail="implement"),
+            "verify": PhaseStep(run="agent verifier", on_pass="done", on_fail="implement"),
         }
 
         orphans = detect_phase_orphans(tasks, phase_map)
@@ -403,7 +403,7 @@ class TestPhaseOrphans:
         )
         tasks = {t.id: t}
         phase_map: PhaseMap = {
-            "implement": {"run": "implementer"},
+            "implement": PhaseStep(run="agent implementer", on_pass="done", on_fail="implement"),
         }
 
         orphans = detect_phase_orphans(tasks, phase_map)

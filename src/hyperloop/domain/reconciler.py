@@ -8,7 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from hyperloop.domain.model import DriftType, PMFailureResponse, Task, TaskStatus
+from hyperloop.domain.model import (
+    DriftType,
+    PhaseMap,
+    PMFailureResponse,
+    Task,
+    TaskStatus,
+)
 
 # ---------------------------------------------------------------------------
 # Value objects
@@ -16,9 +22,6 @@ from hyperloop.domain.model import DriftType, PMFailureResponse, Task, TaskStatu
 
 _TERMINAL_STATUSES = frozenset({TaskStatus.COMPLETED, TaskStatus.FAILED})
 _ACTIVE_STATUSES = frozenset({TaskStatus.NOT_STARTED, TaskStatus.IN_PROGRESS})
-
-PhaseMap = dict[str, object]
-"""Flat mapping of phase name to step definition (phase map from process config)."""
 
 
 @dataclass(frozen=True)
@@ -63,7 +66,7 @@ class Summary:
     total_tasks: int
     completed: int
     failed: int
-    failure_themes: list[str] = field(default_factory=list)
+    failure_themes: list[str] = field(default_factory=lambda: list[str]())
     last_audit: str | None = None
     last_audit_result: str | None = None
 

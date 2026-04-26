@@ -8,6 +8,7 @@ Uses InMemoryStateStore and InMemoryRuntime. No mocks.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from hyperloop.adapters.hook.process_improver import ProcessImproverHook
 from hyperloop.adapters.probe import NullProbe
@@ -26,6 +27,9 @@ from hyperloop.loop import Orchestrator
 from tests.fakes.runtime import InMemoryRuntime
 from tests.fakes.spec_source import FakeSpecSource
 from tests.fakes.state import InMemoryStateStore
+
+if TYPE_CHECKING:
+    from hyperloop.ports.hook import CycleHook
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -75,7 +79,7 @@ def _make_orchestrator(
     spec_source: FakeSpecSource | None = None,
 ) -> Orchestrator:
     probe = NullProbe()
-    hooks: list[ProcessImproverHook] = []
+    hooks: list[CycleHook] = []
     if composer is not None:
         hooks.append(ProcessImproverHook(runtime, composer, probe))
     return Orchestrator(

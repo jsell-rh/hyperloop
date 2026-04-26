@@ -60,7 +60,7 @@ def process_result(
     if isinstance(result, StepResult):
         return result.outcome, _target_for_outcome(phase, result.outcome, current_phase)
 
-    if isinstance(result, Signal):
+    if isinstance(result, Signal):  # pyright: ignore[reportUnnecessaryIsInstance]
         if result.status == SignalStatus.APPROVED:
             return StepOutcome.ADVANCE, phase.on_pass
         if result.status == SignalStatus.REJECTED:

@@ -221,7 +221,7 @@ class PhaseStep:
     on_pass: str
     on_fail: str
     on_wait: str | None = None
-    args: dict[str, object] = field(default_factory=dict)
+    args: dict[str, object] = field(default_factory=lambda: dict[str, object]())
 
     def __post_init__(self) -> None:
         parts = self.run.split(maxsplit=1)
@@ -256,7 +256,7 @@ class Process:
     """A named process with a flat phase map."""
 
     name: str
-    phases: PhaseMap = field(default_factory=dict)
+    phases: PhaseMap = field(default_factory=lambda: PhaseMap())
 
 
 # ---------------------------------------------------------------------------

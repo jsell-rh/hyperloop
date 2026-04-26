@@ -60,7 +60,7 @@ def _write_task_file(repo: Path, task_id: str, fm: dict[str, object]) -> None:
         title=fm["title"],  # type: ignore[arg-type]
         spec_ref=fm["spec_ref"],  # type: ignore[arg-type]
         status=status_map[fm["status"]],  # type: ignore[index]
-        phase=Phase(fm["phase"]) if fm.get("phase") else None,
+        phase=Phase(str(fm["phase"])) if fm.get("phase") else None,  # type: ignore[index]
         deps=tuple(fm.get("deps", ())),  # type: ignore[arg-type]
         round=fm.get("round", 0),  # type: ignore[arg-type]
         branch=fm.get("branch"),  # type: ignore[arg-type]
@@ -76,17 +76,6 @@ def _write_spec_file(repo: Path, spec_path: str, content: str) -> None:
     full_path = repo / spec_path
     full_path.parent.mkdir(parents=True, exist_ok=True)
     full_path.write_text(content)
-
-
-def _write_review_file(
-    repo: Path, task_id: str, round_num: int, role: str, verdict: str, detail: str
-) -> None:
-    """Write a review file via the store API."""
-    from hyperloop.adapters.git.state import GitStateStore
-
-    store = GitStateStore(repo)
-    store.store_review(task_id, round_num, role, verdict, detail)
-    store.persist(f"review {task_id} round {round_num}")
 
 
 def _commit_all(repo: Path, message: str = "seed") -> None:

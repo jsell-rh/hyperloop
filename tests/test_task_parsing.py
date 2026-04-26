@@ -12,8 +12,12 @@ Covers:
 from __future__ import annotations
 
 from textwrap import dedent
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from hyperloop.adapters.git.state import (
     _frontmatter_to_task,
@@ -171,7 +175,7 @@ class TestFieldNormalization:
 
 
 class TestIngestWorkingTreeTasks:
-    def test_none_frontmatter_does_not_crash(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_none_frontmatter_does_not_crash(self, tmp_path: Path) -> None:
         """Empty frontmatter yields None from yaml.safe_load; ingestion should not crash."""
         from hyperloop.cycle.intake import _ingest_working_tree_tasks
         from tests.fakes.state import InMemoryStateStore
@@ -194,7 +198,7 @@ class TestIngestWorkingTreeTasks:
         world = state.get_world()
         assert len(world.tasks) == 0
 
-    def test_malformed_files_skipped(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_malformed_files_skipped(self, tmp_path: Path) -> None:
         """Parse failures are silently skipped by ingest_external_tasks."""
         from hyperloop.cycle.intake import _ingest_working_tree_tasks
         from tests.fakes.state import InMemoryStateStore
@@ -214,7 +218,7 @@ class TestIngestWorkingTreeTasks:
         assert len(world.tasks) == 0
         assert (tasks_dir / "garbled.md").exists()
 
-    def test_successful_parse_adds_task(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_successful_parse_adds_task(self, tmp_path: Path) -> None:
         """Successfully parsed tasks are added to the store and source files deleted."""
         from hyperloop.cycle.intake import _ingest_working_tree_tasks
         from tests.fakes.state import InMemoryStateStore
@@ -251,7 +255,7 @@ class TestIngestWorkingTreeTasks:
 
 
 class TestDeleteAfterPersist:
-    def test_files_not_deleted_if_persist_fails(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_files_not_deleted_if_persist_fails(self, tmp_path: Path) -> None:
         """Task files must survive if state.persist() raises."""
         from hyperloop.cycle.intake import _ingest_working_tree_tasks
         from tests.fakes.state import InMemoryStateStore
@@ -288,7 +292,7 @@ class TestDeleteAfterPersist:
         # File must still exist because persist failed
         assert (tasks_dir / "persist-test.md").exists()
 
-    def test_files_deleted_after_successful_persist(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_files_deleted_after_successful_persist(self, tmp_path: Path) -> None:
         """Task files should be removed after a successful persist."""
         from hyperloop.cycle.intake import _ingest_working_tree_tasks
         from tests.fakes.state import InMemoryStateStore
@@ -319,9 +323,7 @@ class TestDeleteAfterPersist:
         # File should be deleted after successful persist
         assert not (tasks_dir / "delete-test.md").exists()
 
-    def test_malformed_file_not_deleted_good_file_deleted(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_malformed_file_not_deleted_good_file_deleted(self, tmp_path: Path) -> None:
         """Only successfully ingested files are deleted; malformed files remain."""
         from hyperloop.cycle.intake import _ingest_working_tree_tasks
         from tests.fakes.state import InMemoryStateStore

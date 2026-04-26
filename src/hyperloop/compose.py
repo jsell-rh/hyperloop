@@ -51,8 +51,8 @@ class AgentTemplate:
 
     name: str
     prompt: str
-    guidelines: list[str] = field(default_factory=list)
-    annotations: dict[str, str] = field(default_factory=dict)
+    guidelines: list[str] = field(default_factory=lambda: list[str]())
+    annotations: dict[str, str] = field(default_factory=lambda: dict[str, str]())
 
 
 def _format_guidelines(guidelines: list[str]) -> str:
@@ -378,7 +378,7 @@ def _extract_name(doc: dict[str, object]) -> str:
 def _parse_guidelines(raw_guidelines: object) -> list[str]:
     """Parse guidelines from YAML — supports list or string."""
     if isinstance(raw_guidelines, list):
-        return [str(g) for g in raw_guidelines]
+        return [str(g) for g in cast("list[object]", raw_guidelines)]
     if isinstance(raw_guidelines, str):
         stripped = raw_guidelines.strip()
         if stripped:
