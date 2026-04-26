@@ -36,6 +36,10 @@ class SpecSource(Protocol):
         """Return the current version marker (for tracking last-processed)."""
         ...
 
+    def file_version(self, spec_path: str) -> str:
+        """Return the content-based version of a single spec file (e.g. blob SHA)."""
+        ...
+
     def has_changed(self, spec_path: str, since_version: str) -> bool:
         """Return True if the spec file has changed since the given version."""
         ...

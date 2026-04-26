@@ -381,11 +381,12 @@ class Orchestrator:
             )
             self._has_drift = True
 
-        # Freshness drift -- build spec_versions mapping from spec_source
-        current_version = self._spec_source.current_version()
+        # Freshness drift -- per-file blob SHA, not repo HEAD
         spec_versions: dict[str, str] = {}
         for spec_path in current_specs:
-            spec_versions[spec_path] = current_version
+            v = self._spec_source.file_version(spec_path)
+            if v:
+                spec_versions[spec_path] = v
 
         freshness_drifts = detect_freshness_drift(tasks, spec_versions, summaries)
         for drift in freshness_drifts:
@@ -593,13 +594,14 @@ class Orchestrator:
             return
         self._has_failures_since_intake = False
         if self._spec_source is not None:
-            version = self._spec_source.current_version()
             world = self._state.get_world()
-            # Pin new tasks
+            # Pin new tasks using per-file blob SHA
             if result.created_count > 0:
                 for task in world.tasks.values():
                     if task.id not in result.tasks_before and "@" not in task.spec_ref:
-                        self._state.set_spec_ref(task.id, f"{task.spec_ref}@{version}")
+                        v = self._spec_source.file_version(task.spec_ref)
+                        if v:
+                            self._state.set_spec_ref(task.id, f"{task.spec_ref}@{v}")
             # Re-pin pre-existing tasks whose specs were modified
             new_task_specs = {
                 t.spec_ref.split("@")[0]
@@ -614,7 +616,9 @@ class Orchestrator:
                     continue
                 should_repin = task.status == TaskStatus.IN_PROGRESS or spec_path in new_task_specs
                 if should_repin:
-                    self._state.set_spec_ref(task.id, f"{spec_path}@{version}")
+                    v = self._spec_source.file_version(spec_path)
+                    if v:
+                        self._state.set_spec_ref(task.id, f"{spec_path}@{v}")
         self._probe.intake_ran(
             unprocessed_specs=result.unprocessed_count,
             created_tasks=result.created_count,

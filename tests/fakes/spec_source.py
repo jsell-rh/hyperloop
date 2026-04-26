@@ -19,6 +19,7 @@ class FakeSpecSource:
         self._specs: dict[str, str] = {}  # path -> content
         self._changes: list[SpecChange] = []
         self._version: str = "fake-v1"
+        self._file_versions: dict[str, str] = {}  # path -> blob sha
         self._changed_since: set[str] = set()  # spec paths that have changed
 
     def add_spec(self, path: str, content: str) -> None:
@@ -46,9 +47,17 @@ class FakeSpecSource:
         """Mark a spec as having changed since its pinned version."""
         self._changed_since.add(spec_path)
 
+    def set_file_version(self, spec_path: str, version: str) -> None:
+        """Set the blob SHA for a specific file."""
+        self._file_versions[spec_path] = version
+
     def current_version(self) -> str:
         """Return the pre-configured version marker."""
         return self._version
+
+    def file_version(self, spec_path: str) -> str:
+        """Return per-file version, falling back to the global version."""
+        return self._file_versions.get(spec_path, self._version)
 
     def has_changed(self, spec_path: str, since_version: str) -> bool:
         """Return whether the spec has been marked as changed."""

@@ -73,6 +73,12 @@ class GitSpecSource:
             return ""
         return result.stdout.strip()
 
+    def file_version(self, spec_path: str) -> str:
+        result = self._git("rev-parse", f"HEAD:{spec_path}")
+        if result.returncode != 0:
+            return ""
+        return result.stdout.strip()
+
     def has_changed(self, spec_path: str, since_version: str) -> bool:
         result = self._git("diff", "--quiet", since_version, "HEAD", "--", spec_path)
         return result.returncode != 0
