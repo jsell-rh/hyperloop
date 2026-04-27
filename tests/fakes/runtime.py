@@ -5,6 +5,7 @@ A first-class fake, tested via contract tests, reusable across all tests.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,7 @@ class InMemoryRuntime:
         self.serial_runs: list[SerialRunRecord] = []
         self._serial_callbacks: dict[str, Callable[[str], bool]] = {}
         self._serial_default_success: bool = True
+        self._serial_lock = threading.Lock()
 
     # -- Public accessors (for test assertions) -------------------------------
 
@@ -125,7 +127,8 @@ class InMemoryRuntime:
 
     def run_serial(self, role: str, prompt: str) -> bool:
         """Record the invocation and optionally execute a callback."""
-        self.serial_runs.append(SerialRunRecord(role=role, prompt=prompt))
+        with self._serial_lock:
+            self.serial_runs.append(SerialRunRecord(role=role, prompt=prompt))
         if role in self._serial_callbacks:
             return self._serial_callbacks[role](prompt)
         return self._serial_default_success

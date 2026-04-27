@@ -254,6 +254,15 @@ class OrchestratorProbe(Protocol):
     # Audit and GC
     # ------------------------------------------------------------------
 
+    def auditors_started(
+        self,
+        *,
+        count: int,
+        cycle: int,
+    ) -> None:
+        """A batch of parallel auditors was launched."""
+        ...
+
     def audit_ran(
         self,
         *,

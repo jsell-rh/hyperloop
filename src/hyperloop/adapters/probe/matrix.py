@@ -288,6 +288,15 @@ class MatrixProbe:
         body = f"\U0001f50d drift detected: {spec_path} ({drift_type})\n{detail}"
         self._send(body)
 
+    def auditors_started(self, **kw: object) -> None:
+        if not self._verbose:
+            return
+        count = kw.get("count", 0)
+        cycle = kw.get("cycle", 0)
+
+        body = f"\U0001f50d auditors started: {count} auditor(s) launched (cycle {cycle})"
+        self._send(body)
+
     def audit_ran(self, **kw: object) -> None:
         if not self._verbose:
             return

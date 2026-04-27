@@ -67,6 +67,9 @@ class NullProbe:
     def convergence_marked(self, **_: object) -> None:
         pass
 
+    def auditors_started(self, **_: object) -> None:
+        pass
+
     def audit_ran(self, **_: object) -> None:
         pass
 
@@ -177,6 +180,9 @@ class MultiProbe:
 
     def convergence_marked(self, **kw: object) -> None:
         self._call("convergence_marked", **kw)
+
+    def auditors_started(self, **kw: object) -> None:
+        self._call("auditors_started", **kw)
 
     def audit_ran(self, **kw: object) -> None:
         self._call("audit_ran", **kw)

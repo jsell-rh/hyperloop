@@ -7,6 +7,7 @@ Each phase returns a result dataclass; the Orchestrator applies mutations.
 from __future__ import annotations
 
 import time
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, cast
 
 from hyperloop.adapters.probe import NullProbe
@@ -80,6 +81,7 @@ class Orchestrator:
         gc_retention_days: int = 30,
         gc_run_every_cycles: int = 10,
         pm_max_failures: int = 5,
+        max_auditors: int = 3,
     ) -> None:
         self._state = state
         self._runtime = runtime
@@ -100,6 +102,7 @@ class Orchestrator:
         self._gc_retention_days = gc_retention_days
         self._gc_run_every_cycles = gc_run_every_cycles
         self._pm_max_failures = pm_max_failures
+        self._max_auditors = max_auditors
 
         self._workers: dict[str, tuple[WorkerHandle, float]] = {}
         self._current_cycle: int = 0
@@ -396,7 +399,7 @@ class Orchestrator:
             self._has_drift = True
 
     def _run_convergence_check(self, tasks: dict[str, Task], cycle_num: int) -> None:
-        """Check for specs needing alignment audit and run auditor."""
+        """Check for specs needing alignment audit and run auditors concurrently."""
         if self._composer is None:
             return
 
@@ -404,34 +407,55 @@ class Orchestrator:
             return
 
         needs_audit = check_convergence_needed(tasks, self._converged_specs)
-        for spec_ref in needs_audit:
-            spec_path = spec_ref.split("@")[0] if "@" in spec_ref else spec_ref
-            audit_start = time.monotonic()
+        if not needs_audit:
+            return
+
+        self._probe.auditors_started(count=len(needs_audit), cycle=cycle_num)
+
+        def _run_one(spec_ref: str) -> tuple[str, bool]:
             prompt = self._compose_auditor_prompt(spec_ref)
             success = self._runtime.run_serial("auditor", prompt)
-            duration_s = time.monotonic() - audit_start
+            return spec_ref, success
 
-            if success:
-                self._converged_specs.add(spec_ref)
-                self._probe.convergence_marked(
-                    spec_path=spec_path, spec_ref=spec_ref, cycle=cycle_num
-                )
-                self._probe.audit_ran(
-                    spec_ref=spec_ref, result="aligned", cycle=cycle_num, duration_s=duration_s
-                )
-            else:
-                self._probe.audit_ran(
-                    spec_ref=spec_ref, result="misaligned", cycle=cycle_num, duration_s=duration_s
-                )
-                # Store audit finding so it is available to process-improver and PM
-                self._state.store_review(
-                    task_id=f"audit-{spec_ref}",
-                    round=0,
-                    role="auditor",
-                    verdict="fail",
-                    detail=f"Alignment audit failed for {spec_ref}",
-                )
-                self._has_drift = True
+        start_times: dict[str, float] = {}
+        with ThreadPoolExecutor(max_workers=self._max_auditors) as executor:
+            futures: dict[Future[tuple[str, bool]], str] = {}
+            for spec_ref in needs_audit:
+                start_times[spec_ref] = time.monotonic()
+                futures[executor.submit(_run_one, spec_ref)] = spec_ref
+
+            for future in as_completed(futures):
+                spec_ref, success = future.result()
+                duration_s = time.monotonic() - start_times[spec_ref]
+                spec_path = spec_ref.split("@")[0] if "@" in spec_ref else spec_ref
+
+                if success:
+                    self._converged_specs.add(spec_ref)
+                    self._probe.convergence_marked(
+                        spec_path=spec_path, spec_ref=spec_ref, cycle=cycle_num
+                    )
+                    self._probe.audit_ran(
+                        spec_ref=spec_ref,
+                        result="aligned",
+                        cycle=cycle_num,
+                        duration_s=duration_s,
+                    )
+                else:
+                    self._probe.audit_ran(
+                        spec_ref=spec_ref,
+                        result="misaligned",
+                        cycle=cycle_num,
+                        duration_s=duration_s,
+                    )
+                    # Store audit finding so it is available to process-improver and PM
+                    self._state.store_review(
+                        task_id=f"audit-{spec_ref}",
+                        round=0,
+                        role="auditor",
+                        verdict="fail",
+                        detail=f"Alignment audit failed for {spec_ref}",
+                    )
+                    self._has_drift = True
 
     def _compose_auditor_prompt(self, spec_ref: str) -> str:
         """Compose the auditor prompt for a spec_ref."""

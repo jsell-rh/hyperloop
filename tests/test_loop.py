@@ -1697,6 +1697,65 @@ class TestConvergenceTracking:
         auditor_runs = [r for r in runtime.serial_runs if r.role == "auditor"]
         assert len(auditor_runs) == 0
 
+    def test_multiple_specs_audited_in_parallel(self) -> None:
+        """When 3 specs need audit, auditors run concurrently, not serially."""
+        import threading
+
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        # Seed 3 completed specs
+        for i in range(1, 4):
+            state.add_task(
+                Task(
+                    id=f"task-{i:03d}",
+                    title=f"Task {i}",
+                    spec_ref=f"specs/spec-{i}.md@abc123",
+                    status=TaskStatus.COMPLETED,
+                    phase=None,
+                    deps=(),
+                    round=1,
+                    branch=f"hyperloop/task-{i:03d}",
+                    pr=None,
+                )
+            )
+            state.set_file(f"specs/spec-{i}.md", f"Spec {i} content")
+
+        spec_source = FakeSpecSource()
+        for i in range(1, 4):
+            spec_source.add_spec(f"specs/spec-{i}.md", f"Spec {i} content")
+        spec_source.set_version("abc123")
+
+        # Use a barrier to prove all 3 auditors run concurrently.
+        # If they ran serially, the barrier would never be satisfied and would timeout.
+        barrier = threading.Barrier(3, timeout=10)
+
+        def auditor_callback(prompt: str) -> bool:
+            barrier.wait()  # Block until all 3 threads arrive
+            return True
+
+        runtime.set_serial_callback("auditor", auditor_callback)
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+
+        orch.run_cycle()
+
+        # All 3 auditors should have run
+        auditor_runs = [r for r in runtime.serial_runs if r.role == "auditor"]
+        assert len(auditor_runs) == 3
+
+        # All 3 specs should be converged
+        assert len(orch._converged_specs) == 3
+
+        # Probe should have recorded auditors_started
+        started_calls = probe.of_method("auditors_started")
+        assert len(started_calls) >= 1
+        assert started_calls[0]["count"] == 3
+
     def test_auditor_failure_does_not_mark_converged(self) -> None:
         """When auditor finds misalignment, spec is NOT marked converged."""
         state = InMemoryStateStore()

@@ -136,6 +136,9 @@ class FileProbe:
     # Audit and GC
     # ------------------------------------------------------------------
 
+    def auditors_started(self, **kw: object) -> None:
+        self._write("auditors_started", **kw)
+
     def audit_ran(self, **kw: object) -> None:
         self._write("audit_ran", **kw)
 

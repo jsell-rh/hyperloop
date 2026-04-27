@@ -391,6 +391,9 @@ class OtelProbe:
     # Audit and GC
     # ------------------------------------------------------------------
 
+    def auditors_started(self, **_kw: object) -> None:
+        pass
+
     def audit_ran(
         self,
         *,

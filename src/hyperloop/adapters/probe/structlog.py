@@ -114,6 +114,9 @@ class StructlogProbe:
     # Audit and GC
     # ------------------------------------------------------------------
 
+    def auditors_started(self, **kw: object) -> None:
+        self._log.info("auditors_started", **kw)
+
     def audit_ran(self, **kw: object) -> None:
         duration_s = kw.get("duration_s")
         if isinstance(duration_s, float):
