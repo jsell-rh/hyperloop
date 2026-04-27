@@ -285,6 +285,76 @@ def dashboard(
 
 
 @app.command()
+def baseline(
+    path: Path = typer.Option(
+        Path.cwd(),
+        help="Path to the target repo. Default: current directory.",
+    ),
+    spec: str | None = typer.Option(
+        None,
+        "--spec",
+        help="Glob pattern to select specs. Default: all specs.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be baselined without writing.",
+    ),
+) -> None:
+    """Pre-seed Summary records for brownfield projects.
+
+    Discovers spec files, computes blob SHAs, and creates Summary records
+    so hyperloop treats existing code as already implemented.
+    """
+    from hyperloop.commands.baseline import baseline_specs
+
+    repo_path = path.resolve()
+    if not (repo_path / ".git").exists():
+        console.print(f"[bold red]Error:[/bold red] {repo_path} is not a git repository.")
+        raise typer.Exit(code=1)
+
+    result = baseline_specs(repo_path, spec_glob=spec, dry_run=dry_run)
+
+    total = result.new + result.updated + result.skipped + result.failed
+    if total == 0:
+        console.print("No specs found.")
+        return
+
+    console.print(f"Found {total} specs")
+    console.print()
+
+    if dry_run:
+        console.print("[bold yellow]Dry run[/bold yellow] -- no changes written.")
+        console.print()
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Spec", style="bold")
+    table.add_column("SHA")
+    table.add_column("Action")
+
+    action_styles = {
+        "new": "green",
+        "updated": "yellow",
+        "skipped": "dim",
+        "failed": "red",
+    }
+    for action in result.actions:
+        style = action_styles.get(action.action, "")
+        sha_display = action.sha[:12] if action.sha else "[red]error[/red]"
+        table.add_row(action.spec_path, sha_display, f"[{style}]{action.action}[/{style}]")
+
+    console.print(table)
+    console.print()
+    console.print(
+        f"Baselined {total} specs "
+        f"({result.new} new, {result.updated} updated, {result.skipped} skipped)"
+    )
+    if result.failed > 0:
+        console.print(f"[bold red]{result.failed} failed[/bold red]")
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def run(
     path: Path = typer.Option(
         Path.cwd(),
