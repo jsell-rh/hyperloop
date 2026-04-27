@@ -113,6 +113,7 @@ The probe protocol SHALL define methods for these observation points:
 |---|---|---|
 | drift_detected | Spec drift found | spec_path, drift_type (coverage, freshness, alignment), detail |
 | intake_ran | PM intake completed | unprocessed_specs, created_tasks, success, cycle, duration_s |
+| auditors_started | Parallel audit batch launched | count, cycle |
 | audit_ran | Alignment audit completed | spec_ref, result (aligned, misaligned), cycle, duration_s |
 | process_improver_ran | Process-improver completed | failed_task_ids, success, cycle, duration_s |
 | gc_ran | Garbage collection completed | pruned_count, cycle |

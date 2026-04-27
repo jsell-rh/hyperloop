@@ -41,8 +41,8 @@ The reconciler SHALL detect drift at three levels, checked in order:
 
 - GIVEN all tasks for spec "auth.md@abc123" have status "completed"
 - WHEN the reconciler evaluates convergence
-- THEN it spawns an auditor agent to compare the spec against the merged code
-- AND if the auditor finds misalignment, the reconciler triggers PM intake with the audit finding
+- THEN it spawns auditor agents (up to `max_auditors` concurrently) to compare specs against the merged code
+- AND if any auditor finds misalignment, the reconciler triggers PM intake with the audit finding
 
 ### Requirement: PM Intake
 
@@ -79,7 +79,7 @@ The PM agent SHALL be a mandatory, first-class component of the reconciler. It i
 
 ### Requirement: Alignment Audit
 
-The reconciler SHALL spawn an auditor agent after all tasks for a spec reach "completed" status. The auditor compares the spec against the merged code to verify actual alignment.
+The reconciler SHALL spawn auditor agents after all tasks for a spec reach "completed" status. Auditors run in parallel with a separate concurrency budget (`max_auditors`, default 3) that does not compete with the task worker pool. Each auditor compares a spec against the merged code to verify actual alignment.
 
 #### Scenario: Auditor confirms alignment
 
@@ -97,6 +97,14 @@ The reconciler SHALL spawn an auditor agent after all tasks for a spec reach "co
 - AND the reconciler stores the finding in the state store
 - AND the reconciler triggers PM intake with the audit finding as context
 - AND the finding is available to the process-improver for guideline updates
+
+#### Scenario: Multiple specs audited in parallel
+
+- GIVEN specs "auth.md", "users.md", and "tenants.md" all have completed tasks
+- WHEN the reconciler evaluates convergence
+- THEN it spawns up to `max_auditors` auditor agents concurrently
+- AND collects all results before proceeding
+- AND marks each spec converged or misaligned independently
 
 #### Scenario: Audit finding reaches process-improver
 

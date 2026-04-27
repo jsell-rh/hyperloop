@@ -47,10 +47,18 @@ The Runtime port SHALL manage worker agent lifecycle and serial agent execution.
 
 #### Scenario: Run serial agent
 
-- GIVEN a prompt for a serial agent (PM, auditor, process-improver)
+- GIVEN a prompt for a serial agent (PM, process-improver)
 - WHEN run_serial is called with role and prompt
 - THEN the agent runs on the trunk branch, blocking until complete
 - AND returns true on success, false on failure
+
+#### Scenario: Run concurrent auditors
+
+- GIVEN multiple specs need alignment auditing
+- WHEN the orchestrator invokes auditors
+- THEN it calls run_serial for each auditor from concurrent threads (up to `max_auditors`)
+- AND each auditor runs on trunk independently
+- AND results are collected after all complete
 
 #### Scenario: Push branch
 
