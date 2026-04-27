@@ -59,10 +59,15 @@ def ensure_worktrees_gitignored(repo_path: str) -> None:
         gitignore.write_text(content)
 
 
-def create_worktree(repo_path: str, worktree_path: str, branch: str) -> None:
+def create_worktree(repo_path: str, worktree_path: str, branch: str | None) -> None:
     """Create a git worktree, handling stale state from previous runs.
 
-    Cleans up any stale worktree directory or branch before creating.
+    When ``branch`` is None, creates a detached worktree at HEAD — used for
+    isolated read-only auditors that must not share branch state.
+
+    When ``branch`` is a string, creates (or attaches to) a named branch —
+    used for workers that commit to a feature branch.
+
     Always prunes stale worktree references first — git's internal tracking
     can outlive the worktree directory (e.g. after a crash or manual cleanup).
 
@@ -84,6 +89,16 @@ def create_worktree(repo_path: str, worktree_path: str, branch: str) -> None:
     # Clean up stale worktree directory from a previous run
     if os.path.exists(worktree_path):
         cleanup_worktree(repo_path, worktree_path)
+
+    if branch is None:
+        # Detached worktree at HEAD — no branch, safe for concurrent auditors
+        subprocess.run(
+            ["git", "-C", repo_path, "worktree", "add", "--detach", worktree_path],
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+        return
 
     # If the main repo is on this branch (from a previous crash), free it
     _free_branch_from_main_repo(repo_path, branch, env)

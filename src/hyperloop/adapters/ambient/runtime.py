@@ -334,16 +334,75 @@ class AmbientRuntime:
 
         return None
 
-    def run_serial(self, role: str, prompt: str) -> bool:
-        """Run a serial session blocking the main thread.
+    def run_auditor(self, spec_ref: str, prompt: str) -> WorkerResult:
+        """Run an isolated read-only auditor session. Blocks until complete.
 
-        Creates a session with the full prompt, streams SSE until
-        RUN_FINISHED, then fetches and fast-forwards trunk.
-        Retries session creation up to 3 times on transient failures.
+        Creates a session, streams SSE until completion, reads verdict from
+        the agent's output. Safe to call concurrently from multiple threads.
         """
         from hyperloop.adapters.retry import retry_with_backoff
 
-        def _do_serial() -> bool:
+        def _do_auditor() -> WorkerResult:
+            session_name = f"hyperloop-audit-{spec_ref.replace('/', '-').replace('@', '-')}"
+
+            args = [
+                "create",
+                "session",
+                "--name",
+                session_name,
+                "--prompt",
+                prompt,
+                "-o",
+                "json",
+            ]
+            if self._repo_url:
+                args.extend(["--repo-url", self._repo_url])
+
+            result = self._run_acpctl(args, parse_json=True)
+            data = cast("dict[str, object]", result)
+            session_id = str(data["id"])
+
+            log.info("ambient_auditor_started", spec_ref=spec_ref, session_id=session_id)
+
+            success = self._stream_sse_foreground(session_id)
+
+            self._stop_session(session_id)
+
+            if not success:
+                return WorkerResult(
+                    verdict=Verdict.FAIL,
+                    detail="Auditor session failed",
+                )
+
+            return WorkerResult(
+                verdict=Verdict.PASS,
+                detail="Auditor completed",
+            )
+
+        try:
+            return retry_with_backoff(
+                _do_auditor,
+                role="auditor",
+                operation="run_auditor",
+                probe=self._probe,
+                max_attempts=3,
+            )
+        except Exception:
+            return WorkerResult(
+                verdict=Verdict.FAIL,
+                detail="Auditor failed after retries",
+            )
+
+    def run_trunk_agent(self, role: str, prompt: str) -> WorkerResult:
+        """Run a mutating trunk agent session. Blocks until complete.
+
+        Creates a session, streams SSE until completion, fetches and
+        fast-forwards trunk. Returns WorkerResult with verdict.
+        Must NOT be called concurrently.
+        """
+        from hyperloop.adapters.retry import retry_with_backoff
+
+        def _do_trunk() -> WorkerResult:
             session_name = f"hyperloop-serial-{role}"
 
             args = [
@@ -363,13 +422,11 @@ class AmbientRuntime:
             data = cast("dict[str, object]", result)
             session_id = str(data["id"])
 
-            log.info("ambient_serial_started", role=role, session_id=session_id)
+            log.info("ambient_trunk_agent_started", role=role, session_id=session_id)
 
-            # Stream SSE in foreground (blocking)
             success = self._stream_sse_foreground(session_id)
 
             if success:
-                # Fetch and fast-forward trunk
                 fetched = self._git_fetch_with_backoff(self._base_branch)
                 if fetched:
                     try:
@@ -387,30 +444,35 @@ class AmbientRuntime:
                             text=True,
                         )
                     except subprocess.CalledProcessError as exc:
-                        log.warning("serial_ff_merge_failed", error=str(exc))
+                        log.warning("trunk_agent_ff_merge_failed", error=str(exc))
                         success = False
                 else:
                     success = False
 
-            # Stop session
             self._stop_session(session_id)
 
-            log.info("ambient_serial_completed", role=role, success=success)
+            log.info("ambient_trunk_agent_completed", role=role, success=success)
 
             if not success:
-                raise RuntimeError(f"Serial session {role} failed")
-            return True
+                raise RuntimeError(f"Trunk agent session {role} failed")
+            return WorkerResult(
+                verdict=Verdict.PASS,
+                detail=f"Trunk agent {role} completed",
+            )
 
         try:
             return retry_with_backoff(
-                _do_serial,
+                _do_trunk,
                 role=role,
-                operation="run_serial",
+                operation="run_trunk_agent",
                 probe=self._probe,
                 max_attempts=3,
             )
         except Exception:
-            return False
+            return WorkerResult(
+                verdict=Verdict.FAIL,
+                detail=f"Trunk agent {role} failed after retries",
+            )
 
     # -- Private helpers -------------------------------------------------------
 

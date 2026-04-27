@@ -371,11 +371,11 @@ class TestSpecRefPinning:
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
 
-        def create_task_during_intake(prompt: str) -> bool:
+        def create_task_during_intake(prompt: str) -> WorkerResult:
             state.add_task(_task(task_id="task-new", spec_ref="specs/widget.spec.md"))
-            return True
+            return WorkerResult(verdict=Verdict.PASS, detail="tasks created")
 
-        runtime.set_serial_callback("pm", create_task_during_intake)
+        runtime.set_trunk_agent_callback("pm", create_task_during_intake)
         orch = _make_orchestrator(state, runtime, composer=composer, spec_source=spec_source)
 
         orch.run_cycle()
@@ -412,13 +412,13 @@ class TestSpecRefPinning:
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
 
-        def create_pinned_task(prompt: str) -> bool:
+        def create_pinned_task(prompt: str) -> WorkerResult:
             state.add_task(
                 _task(task_id="task-pre-pinned", spec_ref="specs/widget.spec.md@already")
             )
-            return True
+            return WorkerResult(verdict=Verdict.PASS, detail="tasks created")
 
-        runtime.set_serial_callback("pm", create_pinned_task)
+        runtime.set_trunk_agent_callback("pm", create_pinned_task)
         orch = _make_orchestrator(state, runtime, composer=composer, spec_source=spec_source)
 
         orch.run_cycle()
@@ -434,11 +434,11 @@ class TestSpecRefPinning:
 
         composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
 
-        def create_task(prompt: str) -> bool:
+        def create_task(prompt: str) -> WorkerResult:
             state.add_task(_task(task_id="task-bare", spec_ref="specs/widget.spec.md"))
-            return True
+            return WorkerResult(verdict=Verdict.PASS, detail="tasks created")
 
-        runtime.set_serial_callback("pm", create_task)
+        runtime.set_trunk_agent_callback("pm", create_task)
         orch = _make_orchestrator(state, runtime, composer=composer)
 
         orch.run_cycle()
@@ -541,40 +541,89 @@ class TestProcessImprover:
 
 
 # ---------------------------------------------------------------------------
-# InMemoryRuntime.run_serial contract
+# InMemoryRuntime.run_trunk_agent contract
 # ---------------------------------------------------------------------------
 
 
-class TestInMemoryRuntimeSerial:
-    """InMemoryRuntime.run_serial records invocations and supports callbacks."""
+class TestInMemoryRuntimeTrunkAgent:
+    """InMemoryRuntime.run_trunk_agent records invocations and supports callbacks."""
 
     def test_records_runs(self) -> None:
         runtime = InMemoryRuntime()
-        runtime.run_serial("pm", "prompt text")
+        runtime.run_trunk_agent("pm", "prompt text")
 
+        assert len(runtime.trunk_agent_runs) == 1
+        assert runtime.trunk_agent_runs[0].role == "pm"
+        assert runtime.trunk_agent_runs[0].prompt == "prompt text"
+        # Also recorded in serial_runs for backward compat
         assert len(runtime.serial_runs) == 1
         assert runtime.serial_runs[0].role == "pm"
-        assert runtime.serial_runs[0].prompt == "prompt text"
 
-    def test_default_success(self) -> None:
+    def test_default_pass(self) -> None:
         runtime = InMemoryRuntime()
-        assert runtime.run_serial("pm", "prompt") is True
+        result = runtime.run_trunk_agent("pm", "prompt")
+        assert result.verdict == Verdict.PASS
 
     def test_configurable_failure(self) -> None:
         runtime = InMemoryRuntime()
-        runtime.set_serial_default_success(False)
-        assert runtime.run_serial("pm", "prompt") is False
+        runtime.set_trunk_agent_default_result(
+            WorkerResult(verdict=Verdict.FAIL, detail="PM failed")
+        )
+        result = runtime.run_trunk_agent("pm", "prompt")
+        assert result.verdict == Verdict.FAIL
 
     def test_callback_for_role(self) -> None:
         runtime = InMemoryRuntime()
         callback_called_with: list[str] = []
 
-        def callback(prompt: str) -> bool:
+        def callback(prompt: str) -> WorkerResult:
             callback_called_with.append(prompt)
-            return True
+            return WorkerResult(verdict=Verdict.PASS, detail="ok")
 
-        runtime.set_serial_callback("pm", callback)
-        runtime.run_serial("pm", "my prompt")
+        runtime.set_trunk_agent_callback("pm", callback)
+        runtime.run_trunk_agent("pm", "my prompt")
+
+        assert callback_called_with == ["my prompt"]
+
+
+# ---------------------------------------------------------------------------
+# InMemoryRuntime.run_auditor contract
+# ---------------------------------------------------------------------------
+
+
+class TestInMemoryRuntimeAuditor:
+    """InMemoryRuntime.run_auditor records invocations and supports callbacks."""
+
+    def test_records_runs(self) -> None:
+        runtime = InMemoryRuntime()
+        runtime.run_auditor("specs/auth.md@abc123", "audit prompt")
+
+        assert len(runtime.auditor_runs) == 1
+        assert runtime.auditor_runs[0].spec_ref == "specs/auth.md@abc123"
+        assert runtime.auditor_runs[0].prompt == "audit prompt"
+
+    def test_default_pass(self) -> None:
+        runtime = InMemoryRuntime()
+        result = runtime.run_auditor("specs/auth.md@abc123", "prompt")
+        assert result.verdict == Verdict.PASS
+
+    def test_configurable_failure(self) -> None:
+        runtime = InMemoryRuntime()
+        runtime.set_auditor_default_result(WorkerResult(verdict=Verdict.FAIL, detail="misaligned"))
+        result = runtime.run_auditor("specs/auth.md@abc123", "prompt")
+        assert result.verdict == Verdict.FAIL
+        assert result.detail == "misaligned"
+
+    def test_callback(self) -> None:
+        runtime = InMemoryRuntime()
+        callback_called_with: list[str] = []
+
+        def callback(prompt: str) -> WorkerResult:
+            callback_called_with.append(prompt)
+            return WorkerResult(verdict=Verdict.PASS, detail="aligned")
+
+        runtime.set_auditor_callback(callback)
+        runtime.run_auditor("specs/auth.md@abc123", "my prompt")
 
         assert callback_called_with == ["my prompt"]
 

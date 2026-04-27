@@ -50,9 +50,20 @@ class Runtime(Protocol):
         """
         ...
 
-    def run_serial(self, role: str, prompt: str) -> bool:
-        """Run an agent serially on trunk. Blocks until complete.
+    def run_auditor(self, spec_ref: str, prompt: str) -> WorkerResult:
+        """Run an isolated read-only auditor. Returns verdict with detail.
 
-        Used for PM intake and process-improver. Returns True on success.
+        SDK: creates detached worktree, runs agent, reads verdict, cleans up.
+        Ambient: creates session, blocks until complete, reads verdict.
+        Safe to call concurrently from multiple threads.
+        """
+        ...
+
+    def run_trunk_agent(self, role: str, prompt: str) -> WorkerResult:
+        """Run a mutating agent on trunk (PM, process-improver). Blocks until complete.
+
+        Agent can commit to trunk. Runtime pushes trunk after success.
+        Returns WorkerResult with verdict and detail.
+        Must NOT be called concurrently.
         """
         ...

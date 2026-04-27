@@ -230,20 +230,85 @@ class AgentSdkRuntime:
             session_id=None,
         )
 
-    def run_serial(self, role: str, prompt: str) -> bool:
-        """Run a serial agent on trunk via the SDK. Blocks until complete.
+    def run_auditor(self, spec_ref: str, prompt: str) -> WorkerResult:
+        """Run an isolated read-only auditor in a detached worktree.
 
-        Retries up to 3 times on transient failures. Timeout errors are not
-        retried (they have their own timeout semantics).
+        Creates a detached worktree, runs the agent, reads the verdict from
+        worker-result.yaml, cleans up, and returns the WorkerResult.
+        Safe to call concurrently from multiple threads.
+        """
+        import uuid
+
+        from hyperloop.adapters.retry import retry_with_backoff
+        from hyperloop.adapters.verdict import read_verdict_file
+
+        worktree_id = uuid.uuid4().hex[:8]
+        worktree_path = os.path.join(self._worktree_base, f"audit-{worktree_id}")
+
+        log.info("sdk_auditor_started", spec_ref=spec_ref, worktree=worktree_path)
+
+        def _do_auditor() -> WorkerResult:
+            os.makedirs(self._worktree_base, exist_ok=True)
+            ensure_worktrees_gitignored(self._repo_path)
+            create_worktree(self._repo_path, worktree_path, branch=None)
+
+            try:
+                loop = asyncio.new_event_loop()
+                try:
+                    agent_result = loop.run_until_complete(
+                        asyncio.wait_for(
+                            self._run_agent(
+                                prompt,
+                                worktree_path,
+                                task_id=f"audit-{spec_ref}",
+                                role="auditor",
+                            ),
+                            timeout=self._serial_timeout,
+                        )
+                    )
+                except TimeoutError:
+                    log.warning("sdk_auditor_timeout", spec_ref=spec_ref)
+                    raise
+                except Exception:
+                    log.exception("sdk_auditor_failed", spec_ref=spec_ref)
+                    raise
+                finally:
+                    loop.close()
+
+                # Prefer verdict file over SDK result
+                file_result = read_verdict_file(worktree_path)
+                return file_result if file_result is not None else agent_result
+            finally:
+                cleanup_worktree(self._repo_path, worktree_path)
+
+        try:
+            return retry_with_backoff(
+                _do_auditor,
+                role="auditor",
+                operation="run_auditor",
+                probe=self._probe,
+                max_attempts=3,
+            )
+        except TimeoutError:
+            return WorkerResult(verdict=Verdict.FAIL, detail="Auditor timed out")
+        except Exception:
+            return WorkerResult(verdict=Verdict.FAIL, detail="Auditor failed")
+
+    def run_trunk_agent(self, role: str, prompt: str) -> WorkerResult:
+        """Run a mutating agent on trunk via the SDK. Blocks until complete.
+
+        Returns WorkerResult with the agent's actual verdict.
+        Pushes trunk after success. Must NOT be called concurrently.
+        Retries up to 3 times on transient failures.
         """
         from hyperloop.adapters.retry import retry_with_backoff
 
-        log.info("sdk_serial_started", role=role)
+        log.info("sdk_trunk_agent_started", role=role)
 
-        def _do_serial() -> bool:
+        def _do_trunk() -> WorkerResult:
             loop = asyncio.new_event_loop()
             try:
-                loop.run_until_complete(
+                result = loop.run_until_complete(
                     asyncio.wait_for(
                         self._run_agent(
                             prompt,
@@ -254,30 +319,30 @@ class AgentSdkRuntime:
                         timeout=self._serial_timeout,
                     )
                 )
-                log.info("sdk_serial_completed", role=role)
+                log.info("sdk_trunk_agent_completed", role=role)
                 self._push_trunk()
-                return True
+                return result
             except TimeoutError:
-                log.warning("sdk_serial_timeout", role=role)
+                log.warning("sdk_trunk_agent_timeout", role=role)
                 raise
             except Exception:
-                log.exception("sdk_serial_failed", role=role)
+                log.exception("sdk_trunk_agent_failed", role=role)
                 raise
             finally:
                 loop.close()
 
         try:
             return retry_with_backoff(
-                _do_serial,
+                _do_trunk,
                 role=role,
-                operation="run_serial",
+                operation="run_trunk_agent",
                 probe=self._probe,
                 max_attempts=3,
             )
         except TimeoutError:
-            return False
+            return WorkerResult(verdict=Verdict.FAIL, detail="Trunk agent timed out")
         except Exception:
-            return False
+            return WorkerResult(verdict=Verdict.FAIL, detail="Trunk agent failed")
 
     def _push_trunk(self) -> None:
         """Push trunk (base branch) to origin after serial agent commits."""

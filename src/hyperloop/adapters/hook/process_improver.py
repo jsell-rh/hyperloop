@@ -44,7 +44,8 @@ class ProcessImproverHook:
         failed_ids = tuple(task_id for task_id, r in results.items() if r.verdict == Verdict.FAIL)
 
         start = time.monotonic()
-        success = self._runtime.run_serial("process-improver", prompt)
+        result = self._runtime.run_trunk_agent("process-improver", prompt)
+        success = result.verdict == Verdict.PASS
         self._probe.process_improver_ran(
             failed_task_ids=failed_ids,
             success=success,
