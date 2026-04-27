@@ -1,3 +1,17 @@
+export type SpecStage =
+  | 'written'
+  | 'in-progress'
+  | 'pending-audit'
+  | 'converged'
+  | 'freshness-drift'
+  | 'alignment-gap'
+  | 'failed'
+  | 'baselined'
+
+export type SyncStatus = 'synced' | 'syncing' | 'drifted'
+
+export type DriftType = 'coverage' | 'freshness' | 'alignment' | null
+
 export interface SpecSummary {
   spec_ref: string
   title: string
@@ -6,6 +20,12 @@ export interface SpecSummary {
   tasks_in_progress: number
   tasks_failed: number
   tasks_not_started: number
+  drift_type: DriftType
+  drift_detail: string
+  stage: SpecStage
+  last_audit_result: 'aligned' | 'misaligned' | null
+  current_sha: string | null
+  pinned_sha: string | null
 }
 
 export interface SpecDetail {
@@ -318,4 +338,31 @@ export interface ControlRequest {
 
 export interface ControlResponse {
   status: string
+}
+
+// ---------------------------------------------------------------------------
+// Drift detail types (from /api/specs/{ref}/drift)
+// ---------------------------------------------------------------------------
+
+export interface SpecDriftDetail {
+  drift_type: DriftType
+  old_sha: string | null
+  new_sha: string | null
+  old_content: string | null
+  new_content: string | null
+  finding: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Spec summary record types
+// ---------------------------------------------------------------------------
+
+export interface SpecSummaryRecord {
+  total_tasks: number
+  completed: number
+  failed: number
+  failure_themes: string[]
+  last_audit_result: string | null
+  last_audit_at: string | null
+  baselined: boolean
 }

@@ -1,6 +1,8 @@
 import type {
   SpecSummary,
   SpecDetail,
+  SpecDriftDetail,
+  SpecSummaryRecord,
   TaskSummary,
   TaskDetail,
   Summary,
@@ -25,6 +27,12 @@ export function useApi() {
 
   const fetchSpec = (specRef: string) =>
     $fetch<SpecDetail>(`${API_BASE}/specs/${specRef}`)
+
+  const fetchSpecDrift = (specRef: string) =>
+    $fetch<SpecDriftDetail>(`${API_BASE}/specs/${specRef}/drift`)
+
+  const fetchSpecSummaryRecord = (specRef: string) =>
+    $fetch<SpecSummaryRecord>(`${API_BASE}/specs/${specRef}/summary`)
 
   const fetchTasks = (params?: { status?: string; spec_ref?: string }) =>
     $fetch<TaskSummary[]>(`${API_BASE}/tasks`, { params })
@@ -83,6 +91,8 @@ export function useApi() {
   return {
     fetchSpecs,
     fetchSpec,
+    fetchSpecDrift,
+    fetchSpecSummaryRecord,
     fetchTasks,
     fetchTask,
     fetchSummary,
