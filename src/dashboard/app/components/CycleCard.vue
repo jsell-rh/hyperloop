@@ -32,6 +32,14 @@ const spawnCount = computed(() => props.cycle.phases.spawn.spawned.length)
 
 // Reconcile detail
 const reconcile = computed(() => props.cycle.reconcile)
+
+// Cycle timeline bar: show reconcile proportion within total cycle duration
+const reconcilePct = computed(() => {
+  const total = props.cycle.duration_s
+  const rec = reconcile.value?.reconcile_duration_s
+  if (total == null || total <= 0 || rec == null) return 0
+  return Math.min(100, Math.round((rec / total) * 100))
+})
 </script>
 
 <template>
@@ -55,37 +63,70 @@ const reconcile = computed(() => props.cycle.reconcile)
       </span>
     </div>
 
-    <!-- Phase breakdown summary pills -->
-    <div class="flex flex-wrap items-center gap-2 mb-3">
+    <!-- Cycle duration bar -->
+    <div v-if="cycle.duration_s != null && cycle.duration_s > 0" class="mb-3">
+      <div class="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden flex">
+        <!-- Non-reconcile portion (collect + advance + spawn) -->
+        <div
+          class="bg-blue-200 dark:bg-blue-800/50 transition-all"
+          :style="{ width: `${100 - reconcilePct}%` }"
+        />
+        <!-- Reconcile portion -->
+        <div
+          v-if="reconcilePct > 0"
+          class="bg-purple-300 dark:bg-purple-700/50 transition-all"
+          :style="{ width: `${reconcilePct}%` }"
+          :title="`Reconcile: ${reconcile?.reconcile_duration_s?.toFixed(1)}s (${reconcilePct}% of cycle)`"
+        />
+      </div>
+      <div v-if="reconcilePct > 10" class="flex justify-between mt-0.5">
+        <span class="text-[9px] text-blue-400 dark:text-blue-500">collect+advance+spawn</span>
+        <span class="text-[9px] text-purple-400 dark:text-purple-500">reconcile {{ reconcilePct }}%</span>
+      </div>
+    </div>
+
+    <!-- Phase breakdown pills — always visible to show cycle structure -->
+    <div class="flex flex-wrap items-center gap-1.5 mb-3">
       <span
-        v-if="collectCount > 0"
-        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full"
+        :class="collectCount > 0
+          ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+          : 'bg-gray-50 text-gray-400 dark:bg-gray-800/50 dark:text-gray-500'"
       >
-        Collect: reaped {{ collectCount }}
+        Collect{{ collectCount > 0 ? `: ${collectCount}` : '' }}
       </span>
+      <span class="text-gray-300 dark:text-gray-600 text-[10px]">&rarr;</span>
       <span
-        v-if="reconcile"
-        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
+        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full"
+        :class="reconcile
+          ? 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+          : 'bg-gray-50 text-gray-400 dark:bg-gray-800/50 dark:text-gray-500'"
       >
-        Reconcile<template v-if="reconcile.reconcile_duration_s != null">: {{ formatDuration(reconcile.reconcile_duration_s) }}</template>
+        Reconcile<template v-if="reconcile?.reconcile_duration_s != null">: {{ formatDuration(reconcile.reconcile_duration_s) }}</template>
       </span>
+      <span class="text-gray-300 dark:text-gray-600 text-[10px]">&rarr;</span>
       <span
-        v-if="advanceCount > 0"
-        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full"
+        :class="advanceCount > 0
+          ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+          : 'bg-gray-50 text-gray-400 dark:bg-gray-800/50 dark:text-gray-500'"
       >
-        Advance: {{ advanceCount }} transitions
+        Advance{{ advanceCount > 0 ? `: ${advanceCount}` : '' }}
       </span>
+      <span class="text-gray-300 dark:text-gray-600 text-[10px]">&rarr;</span>
       <span
-        v-if="spawnCount > 0"
-        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full"
+        :class="spawnCount > 0
+          ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+          : 'bg-gray-50 text-gray-400 dark:bg-gray-800/50 dark:text-gray-500'"
       >
-        Spawn: {{ spawnCount }} workers
+        Spawn{{ spawnCount > 0 ? `: ${spawnCount}` : '' }}
       </span>
       <span
         v-if="cycle.phases.intake.ran"
-        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400"
+        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400 ml-1"
       >
-        Intake{{ cycle.phases.intake.created_tasks != null ? `: ${cycle.phases.intake.created_tasks} tasks` : '' }}
+        Intake{{ cycle.phases.intake.created_tasks != null ? `: ${cycle.phases.intake.created_tasks}` : '' }}
       </span>
     </div>
 
