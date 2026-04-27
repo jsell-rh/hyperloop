@@ -288,6 +288,30 @@ class MatrixProbe:
         body = f"\U0001f50d drift detected: {spec_path} ({drift_type})\n{detail}"
         self._send(body)
 
+    def reconcile_started(self, **kw: object) -> None:
+        if not self._verbose:
+            return
+        cycle = kw.get("cycle", 0)
+
+        body = f"\U0001f504 reconcile started (cycle {cycle})"
+        self._send(body)
+
+    def reconcile_completed(self, **kw: object) -> None:
+        if not self._verbose:
+            return
+        cycle = kw.get("cycle", 0)
+        duration_s = kw.get("duration_s", 0.0)
+        dur = round(float(duration_s), 1) if isinstance(duration_s, int | float) else duration_s
+        drift_count = kw.get("drift_count", 0)
+        audits_run = kw.get("audits_run", 0)
+        gc_pruned = kw.get("gc_pruned", 0)
+
+        body = (
+            f"\U0001f504 reconcile completed (cycle {cycle}, {dur}s)\n"
+            f"drifts={drift_count}  audits={audits_run}  gc_pruned={gc_pruned}"
+        )
+        self._send(body)
+
     def auditors_started(self, **kw: object) -> None:
         if not self._verbose:
             return
@@ -295,6 +319,15 @@ class MatrixProbe:
         cycle = kw.get("cycle", 0)
 
         body = f"\U0001f50d auditors started: {count} auditor(s) launched (cycle {cycle})"
+        self._send(body)
+
+    def audit_started(self, **kw: object) -> None:
+        if not self._verbose:
+            return
+        spec_ref = str(kw.get("spec_ref", ""))
+        cycle = kw.get("cycle", 0)
+
+        body = f"\U0001f50d audit started: {spec_ref} (cycle {cycle})"
         self._send(body)
 
     def audit_ran(self, **kw: object) -> None:

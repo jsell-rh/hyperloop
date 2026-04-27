@@ -391,7 +391,16 @@ class OtelProbe:
     # Audit and GC
     # ------------------------------------------------------------------
 
+    def reconcile_started(self, **_kw: object) -> None:
+        pass
+
+    def reconcile_completed(self, **_kw: object) -> None:
+        pass
+
     def auditors_started(self, **_kw: object) -> None:
+        pass
+
+    def audit_started(self, **_kw: object) -> None:
         pass
 
     def audit_ran(

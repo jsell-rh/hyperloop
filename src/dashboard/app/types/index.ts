@@ -196,11 +196,39 @@ export interface CyclePhases {
   spawn: SpawnPhase
 }
 
+export interface AuditDetail {
+  spec_ref: string
+  result: string
+  duration_s: number
+}
+
+export interface ReconcileDetail {
+  drift_count: number
+  audits: AuditDetail[]
+  gc_pruned: number
+  reconcile_duration_s: number | null
+}
+
+export interface AuditEntry {
+  spec_ref: string
+  result: string
+  started_at: string
+  duration_s: number
+}
+
+export interface AuditTimeline {
+  entries: AuditEntry[]
+  total_duration_s: number
+  max_parallelism: number
+}
+
 export interface CycleDetail {
   cycle: number
   timestamp: string
   duration_s: number | null
   phases: CyclePhases
+  reconcile: ReconcileDetail | null
+  audit_timeline: AuditTimeline | null
 }
 
 export interface WorkerHistoryEntry {

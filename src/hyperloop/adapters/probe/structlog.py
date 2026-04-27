@@ -114,8 +114,20 @@ class StructlogProbe:
     # Audit and GC
     # ------------------------------------------------------------------
 
+    def reconcile_started(self, **kw: object) -> None:
+        self._log.info("reconcile_started", **kw)
+
+    def reconcile_completed(self, **kw: object) -> None:
+        duration_s = kw.get("duration_s")
+        if isinstance(duration_s, float):
+            kw = {**kw, "duration_s": round(duration_s, 1)}
+        self._log.info("reconcile_completed", **kw)
+
     def auditors_started(self, **kw: object) -> None:
         self._log.info("auditors_started", **kw)
+
+    def audit_started(self, **kw: object) -> None:
+        self._log.info("audit_started", **kw)
 
     def audit_ran(self, **kw: object) -> None:
         duration_s = kw.get("duration_s")

@@ -108,5 +108,12 @@ function formatDuration(d: number): string {
         </ul>
       </div>
     </div>
+
+    <!-- Auditor Timeline (Gantt chart) -->
+    <AuditorGantt
+      v-if="cycle.audit_timeline && cycle.audit_timeline.entries.length > 0"
+      :timeline="cycle.audit_timeline"
+      :cycle-timestamp="cycle.timestamp"
+    />
   </div>
 </template>

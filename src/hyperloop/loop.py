@@ -110,6 +110,7 @@ class Orchestrator:
         self._spawn_skip_until: int = 0
         self._spawn_task_failures: dict[str, int] = {}
         self._has_failures_since_intake: bool = False
+        self._last_audits_run: int = 0
 
         # Reconciler state
         self._converged_specs: set[str] = set()
@@ -304,6 +305,9 @@ class Orchestrator:
 
         Returns halt reason if PM failure threshold is reached, else None.
         """
+        reconcile_start = time.monotonic()
+        self._probe.reconcile_started(cycle=cycle_num)
+
         world = self._state.get_world()
 
         # 1. Handle deleted specs -- retire tasks referencing missing specs
@@ -313,10 +317,14 @@ class Orchestrator:
         self._handle_phase_orphans(world.tasks, cycle_num)
 
         # 3. Drift detection (coverage + freshness)
-        self._run_drift_detection(world.tasks)
+        drift_count = self._run_drift_detection(world.tasks, cycle_num)
 
         # 4. Convergence tracking (auditor for completed specs)
+        self._last_audits_run = 0
         self._run_convergence_check(world.tasks, cycle_num)
+
+        # audits_run is returned by the convergence check
+        audits_run = self._last_audits_run
 
         # 5. Run intake (PM agent for task creation) -- skip during backoff
         if self._current_cycle < self._pm_skip_until:
@@ -337,52 +345,71 @@ class Orchestrator:
         self._apply_intake(intake_result)
 
         # 6. Track PM failures and apply backoff
+        halt_reason: str | None = None
         if intake_result.ran and not intake_result.success:
             self._pm_consecutive_failures += 1
             response = handle_pm_failure(self._pm_consecutive_failures, self._pm_max_failures)
             if response == PMFailureResponse.HALT:
-                reason = (
+                halt_reason = (
                     f"PM agent unreachable after {self._pm_consecutive_failures} "
                     f"consecutive failures"
                 )
-                return reason
-            # Apply exponential backoff
-            backoff_cycles = min(2**self._pm_consecutive_failures, 32)
-            self._pm_skip_until = self._current_cycle + backoff_cycles
         elif intake_result.ran and intake_result.success:
             self._pm_consecutive_failures = 0
             self._pm_skip_until = 0
 
+        if halt_reason is None and intake_result.ran and not intake_result.success:
+            # Apply exponential backoff (non-halt case)
+            backoff_cycles = min(2**self._pm_consecutive_failures, 32)
+            self._pm_skip_until = self._current_cycle + backoff_cycles
+
         # 7. Garbage collection
-        self._run_gc(cycle_num)
+        gc_pruned = self._run_gc(cycle_num)
 
         # Reset drift flag after intake has had a chance to process it
         self._has_drift = False
 
-        return None
+        self._probe.reconcile_completed(
+            cycle=cycle_num,
+            duration_s=time.monotonic() - reconcile_start,
+            drift_count=drift_count,
+            audits_run=audits_run,
+            gc_pruned=gc_pruned,
+        )
 
-    def _run_drift_detection(self, tasks: dict[str, Task]) -> None:
-        """Run coverage and freshness drift detection."""
+        return halt_reason
+
+    def _run_drift_detection(self, tasks: dict[str, Task], cycle_num: int) -> int:
+        """Run coverage and freshness drift detection.
+
+        Returns the number of drifts detected.
+        """
         if self._spec_source is None:
-            return
+            return 0
 
         spec_files = self._state.list_files("specs/**/*.spec.md")
         spec_files_alt = self._state.list_files("specs/**/*.md")
         current_specs = sorted(set(spec_files) | set(spec_files_alt))
 
         if not current_specs:
-            return
+            return 0
 
         # Load summaries from state
         summaries = self._load_summaries()
+
+        drift_count = 0
 
         # Coverage gaps
         coverage_gaps = detect_coverage_gaps(tasks, current_specs, summaries)
         for gap in coverage_gaps:
             self._probe.drift_detected(
-                spec_path=gap.spec_path, drift_type=gap.drift_type, detail=gap.detail
+                spec_path=gap.spec_path,
+                drift_type=gap.drift_type,
+                detail=gap.detail,
+                cycle=cycle_num,
             )
             self._has_drift = True
+            drift_count += 1
 
         # Freshness drift -- per-file blob SHA, not repo HEAD
         spec_versions: dict[str, str] = {}
@@ -394,9 +421,15 @@ class Orchestrator:
         freshness_drifts = detect_freshness_drift(tasks, spec_versions, summaries)
         for drift in freshness_drifts:
             self._probe.drift_detected(
-                spec_path=drift.spec_path, drift_type=drift.drift_type, detail=drift.detail
+                spec_path=drift.spec_path,
+                drift_type=drift.drift_type,
+                detail=drift.detail,
+                cycle=cycle_num,
             )
             self._has_drift = True
+            drift_count += 1
+
+        return drift_count
 
     def _run_convergence_check(self, tasks: dict[str, Task], cycle_num: int) -> None:
         """Check for specs needing alignment audit and run auditors concurrently."""
@@ -411,8 +444,10 @@ class Orchestrator:
             return
 
         self._probe.auditors_started(count=len(needs_audit), cycle=cycle_num)
+        audits_run = 0
 
         def _run_one(spec_ref: str) -> tuple[str, bool]:
+            self._probe.audit_started(spec_ref=spec_ref, cycle=cycle_num)
             prompt = self._compose_auditor_prompt(spec_ref)
             success = self._runtime.run_serial("auditor", prompt)
             return spec_ref, success
@@ -432,6 +467,7 @@ class Orchestrator:
                     success = False
                 duration_s = time.monotonic() - start_times[spec_ref]
                 spec_path = spec_ref.split("@")[0] if "@" in spec_ref else spec_ref
+                audits_run += 1
 
                 if success:
                     self._converged_specs.add(spec_ref)
@@ -460,6 +496,8 @@ class Orchestrator:
                         detail=f"Alignment audit failed for {spec_ref}",
                     )
                     self._has_drift = True
+
+        self._last_audits_run = audits_run
 
     def _compose_auditor_prompt(self, spec_ref: str) -> str:
         """Compose the auditor prompt for a spec_ref."""
@@ -526,12 +564,15 @@ class Orchestrator:
                 cycle=cycle_num,
             )
 
-    def _run_gc(self, cycle_num: int) -> None:
-        """Run garbage collection if on the configured interval."""
+    def _run_gc(self, cycle_num: int) -> int:
+        """Run garbage collection if on the configured interval.
+
+        Returns the number of tasks pruned.
+        """
         if self._gc_run_every_cycles <= 0:
-            return
+            return 0
         if cycle_num % self._gc_run_every_cycles != 0:
-            return
+            return 0
 
         world = self._state.get_world()
         gc_actions = plan_gc(
@@ -549,6 +590,7 @@ class Orchestrator:
                 cycle=cycle_num,
             )
         self._gc_last_cycle = cycle_num
+        return len(gc_actions)
 
     def _load_summaries(self) -> dict[str, Summary]:
         """Load all summaries from the state store and parse into Summary objects."""

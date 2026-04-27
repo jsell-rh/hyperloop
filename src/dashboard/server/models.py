@@ -216,6 +216,40 @@ class CyclePhases(BaseModel):
     spawn: SpawnPhase
 
 
+class AuditDetail(BaseModel):
+    """Detail for a single audit run within a reconcile phase."""
+
+    spec_ref: str
+    result: str
+    duration_s: float
+
+
+class ReconcileDetail(BaseModel):
+    """Detail for the reconcile phase within a cycle."""
+
+    drift_count: int
+    audits: list[AuditDetail]
+    gc_pruned: int
+    reconcile_duration_s: float | None
+
+
+class AuditEntry(BaseModel):
+    """A single auditor execution with timing for the Gantt chart."""
+
+    spec_ref: str
+    result: str
+    started_at: str
+    duration_s: float
+
+
+class AuditTimeline(BaseModel):
+    """Timeline of parallel auditor executions for a cycle."""
+
+    entries: list[AuditEntry]
+    total_duration_s: float
+    max_parallelism: int
+
+
 class CycleDetail(BaseModel):
     """Detail for a single reconciliation cycle."""
 
@@ -223,6 +257,8 @@ class CycleDetail(BaseModel):
     timestamp: str
     duration_s: float | None
     phases: CyclePhases
+    reconcile: ReconcileDetail | None = None
+    audit_timeline: AuditTimeline | None = None
 
 
 class WorkerHistoryEntry(BaseModel):

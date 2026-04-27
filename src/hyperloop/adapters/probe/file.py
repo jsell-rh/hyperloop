@@ -136,8 +136,17 @@ class FileProbe:
     # Audit and GC
     # ------------------------------------------------------------------
 
+    def reconcile_started(self, **kw: object) -> None:
+        self._write("reconcile_started", **kw)
+
+    def reconcile_completed(self, **kw: object) -> None:
+        self._write("reconcile_completed", **kw)
+
     def auditors_started(self, **kw: object) -> None:
         self._write("auditors_started", **kw)
+
+    def audit_started(self, **kw: object) -> None:
+        self._write("audit_started", **kw)
 
     def audit_ran(self, **kw: object) -> None:
         self._write("audit_ran", **kw)

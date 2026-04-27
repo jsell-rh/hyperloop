@@ -877,6 +877,231 @@ class TestActivity:
         assert ev["reaped_ids"] == []
 
 
+class TestAuditTimeline:
+    """Tests for the audit_timeline field on CycleDetail."""
+
+    def test_audit_timeline_with_parallel_auditors(self, tmp_path: Path) -> None:
+        """Cycle with audit events returns a populated audit_timeline."""
+        import json
+        from datetime import UTC, datetime, timedelta
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        events_dir = tmp_path / "cache"
+        events_dir.mkdir()
+        events_path = events_dir / "events.jsonl"
+
+        base = datetime.now(UTC)
+        events = [
+            {
+                "ts": base.isoformat(),
+                "event": "cycle_started",
+                "cycle": 1,
+            },
+            # Two auditors started in parallel
+            {
+                "ts": base.isoformat(),
+                "event": "audit_started",
+                "spec_ref": "specs/widget.md",
+                "cycle": 1,
+            },
+            {
+                "ts": (base + timedelta(seconds=0.1)).isoformat(),
+                "event": "audit_started",
+                "spec_ref": "specs/auth.md",
+                "cycle": 1,
+            },
+            # First auditor finishes
+            {
+                "ts": (base + timedelta(seconds=12.0)).isoformat(),
+                "event": "audit_ran",
+                "spec_ref": "specs/widget.md",
+                "result": "aligned",
+                "cycle": 1,
+                "duration_s": 12.0,
+            },
+            # Second auditor finishes
+            {
+                "ts": (base + timedelta(seconds=15.2)).isoformat(),
+                "event": "audit_ran",
+                "spec_ref": "specs/auth.md",
+                "result": "misaligned",
+                "cycle": 1,
+                "duration_s": 15.1,
+            },
+            {
+                "ts": (base + timedelta(seconds=16.0)).isoformat(),
+                "event": "cycle_completed",
+                "cycle": 1,
+                "duration_s": 16.0,
+            },
+        ]
+        with open(events_path, "w") as f:
+            for ev in events:
+                f.write(json.dumps(ev) + "\n")
+
+        pointer_dir = repo / ".hyperloop"
+        pointer_dir.mkdir(parents=True, exist_ok=True)
+        (pointer_dir / ".dashboard-events-path").write_text(str(events_path))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/activity")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        cycle = data["cycles"][0]
+        timeline = cycle["audit_timeline"]
+        assert timeline is not None
+        assert len(timeline["entries"]) == 2
+        assert timeline["total_duration_s"] == 15.1
+        assert timeline["max_parallelism"] == 2
+
+        # Verify individual entries
+        entries_by_spec = {e["spec_ref"]: e for e in timeline["entries"]}
+        assert entries_by_spec["specs/widget.md"]["result"] == "aligned"
+        assert entries_by_spec["specs/widget.md"]["duration_s"] == 12.0
+        assert entries_by_spec["specs/widget.md"]["started_at"] != ""
+        assert entries_by_spec["specs/auth.md"]["result"] == "misaligned"
+        assert entries_by_spec["specs/auth.md"]["duration_s"] == 15.1
+
+    def test_audit_timeline_none_when_no_audits(self, tmp_path: Path) -> None:
+        """Cycle without audit events has audit_timeline = null."""
+        import json
+        from datetime import UTC, datetime
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        events_dir = tmp_path / "cache"
+        events_dir.mkdir()
+        events_path = events_dir / "events.jsonl"
+
+        now = datetime.now(UTC).isoformat()
+        events = [
+            {"ts": now, "event": "cycle_started", "cycle": 1},
+            {"ts": now, "event": "cycle_completed", "cycle": 1, "duration_s": 1.0},
+        ]
+        with open(events_path, "w") as f:
+            for ev in events:
+                f.write(json.dumps(ev) + "\n")
+
+        pointer_dir = repo / ".hyperloop"
+        pointer_dir.mkdir(parents=True, exist_ok=True)
+        (pointer_dir / ".dashboard-events-path").write_text(str(events_path))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        data = client.get("/api/activity").json()
+
+        cycle = data["cycles"][0]
+        assert cycle["audit_timeline"] is None
+
+    def test_audit_timeline_single_auditor(self, tmp_path: Path) -> None:
+        """Cycle with a single auditor has max_parallelism = 1."""
+        import json
+        from datetime import UTC, datetime
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        events_dir = tmp_path / "cache"
+        events_dir.mkdir()
+        events_path = events_dir / "events.jsonl"
+
+        now = datetime.now(UTC)
+        events = [
+            {"ts": now.isoformat(), "event": "cycle_started", "cycle": 1},
+            {
+                "ts": now.isoformat(),
+                "event": "audit_started",
+                "spec_ref": "specs/only.md",
+                "cycle": 1,
+            },
+            {
+                "ts": now.isoformat(),
+                "event": "audit_ran",
+                "spec_ref": "specs/only.md",
+                "result": "aligned",
+                "cycle": 1,
+                "duration_s": 5.3,
+            },
+            {"ts": now.isoformat(), "event": "cycle_completed", "cycle": 1, "duration_s": 6.0},
+        ]
+        with open(events_path, "w") as f:
+            for ev in events:
+                f.write(json.dumps(ev) + "\n")
+
+        pointer_dir = repo / ".hyperloop"
+        pointer_dir.mkdir(parents=True, exist_ok=True)
+        (pointer_dir / ".dashboard-events-path").write_text(str(events_path))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        data = client.get("/api/activity").json()
+
+        timeline = data["cycles"][0]["audit_timeline"]
+        assert timeline is not None
+        assert len(timeline["entries"]) == 1
+        assert timeline["max_parallelism"] == 1
+        assert timeline["total_duration_s"] == 5.3
+        assert timeline["entries"][0]["result"] == "aligned"
+
+    def test_audit_timeline_fallback_without_audit_started(self, tmp_path: Path) -> None:
+        """Audit timeline works even without audit_started events (uses subtraction)."""
+        import json
+        from datetime import UTC, datetime, timedelta
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        events_dir = tmp_path / "cache"
+        events_dir.mkdir()
+        events_path = events_dir / "events.jsonl"
+
+        now = datetime.now(UTC)
+        events = [
+            {"ts": now.isoformat(), "event": "cycle_started", "cycle": 1},
+            # No audit_started events — only audit_ran
+            {
+                "ts": (now + timedelta(seconds=10)).isoformat(),
+                "event": "audit_ran",
+                "spec_ref": "specs/a.md",
+                "result": "aligned",
+                "cycle": 1,
+                "duration_s": 10.0,
+            },
+            {
+                "ts": (now + timedelta(seconds=11)).isoformat(),
+                "event": "cycle_completed",
+                "cycle": 1,
+                "duration_s": 11.0,
+            },
+        ]
+        with open(events_path, "w") as f:
+            for ev in events:
+                f.write(json.dumps(ev) + "\n")
+
+        pointer_dir = repo / ".hyperloop"
+        pointer_dir.mkdir(parents=True, exist_ok=True)
+        (pointer_dir / ".dashboard-events-path").write_text(str(events_path))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        data = client.get("/api/activity").json()
+
+        timeline = data["cycles"][0]["audit_timeline"]
+        assert timeline is not None
+        assert len(timeline["entries"]) == 1
+        # started_at should be approximated by subtracting duration from ts
+        assert timeline["entries"][0]["started_at"] != ""
+
+
 class TestProcess:
     def test_process_returns_pipeline_tree(self, tmp_path: Path) -> None:
         """Process endpoint preserves pipeline nesting."""

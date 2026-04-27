@@ -84,8 +84,17 @@ class RecordingProbe:
     def convergence_marked(self, **kw: object) -> None:
         self._record("convergence_marked", **kw)
 
+    def reconcile_started(self, **kw: object) -> None:
+        self._record("reconcile_started", **kw)
+
+    def reconcile_completed(self, **kw: object) -> None:
+        self._record("reconcile_completed", **kw)
+
     def auditors_started(self, **kw: object) -> None:
         self._record("auditors_started", **kw)
+
+    def audit_started(self, **kw: object) -> None:
+        self._record("audit_started", **kw)
 
     def audit_ran(self, **kw: object) -> None:
         self._record("audit_ran", **kw)

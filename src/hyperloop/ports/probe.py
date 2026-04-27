@@ -236,6 +236,7 @@ class OrchestratorProbe(Protocol):
         spec_path: str,
         drift_type: str,
         detail: str,
+        cycle: int,
     ) -> None:
         """Drift was detected between spec and reality."""
         ...
@@ -254,6 +255,26 @@ class OrchestratorProbe(Protocol):
     # Audit and GC
     # ------------------------------------------------------------------
 
+    def reconcile_started(
+        self,
+        *,
+        cycle: int,
+    ) -> None:
+        """Reconcile phase begun."""
+        ...
+
+    def reconcile_completed(
+        self,
+        *,
+        cycle: int,
+        duration_s: float,
+        drift_count: int,
+        audits_run: int,
+        gc_pruned: int,
+    ) -> None:
+        """Reconcile phase ended with summary stats."""
+        ...
+
     def auditors_started(
         self,
         *,
@@ -261,6 +282,15 @@ class OrchestratorProbe(Protocol):
         cycle: int,
     ) -> None:
         """A batch of parallel auditors was launched."""
+        ...
+
+    def audit_started(
+        self,
+        *,
+        spec_ref: str,
+        cycle: int,
+    ) -> None:
+        """An individual auditor started for a spec."""
         ...
 
     def audit_ran(

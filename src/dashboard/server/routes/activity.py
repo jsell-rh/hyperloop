@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,9 @@ from dashboard.server.models import (
     ActiveWorker,
     ActivityResponse,
     AdvancePhase,
+    AuditDetail,
+    AuditEntry,
+    AuditTimeline,
     CollectPhase,
     CycleDetail,
     CyclePhases,
@@ -24,6 +27,7 @@ from dashboard.server.models import (
     IntakePhase,
     PhaseTransition,
     ReapedWorker,
+    ReconcileDetail,
     SpawnedWorker,
     SpawnPhase,
     TaskInFlight,
@@ -161,6 +165,12 @@ def _build_cycle_detail(cycle_num: int, evts: list[dict[str, Any]]) -> CycleDeta
                 )
             )
 
+    # RECONCILE: build reconcile detail from probe events
+    reconcile = _build_reconcile_detail(evts)
+
+    # AUDIT TIMELINE: build Gantt chart data from audit_started / audit_ran
+    audit_timeline = _build_audit_timeline(evts)
+
     return CycleDetail(
         cycle=cycle_num,
         timestamp=timestamp,
@@ -171,7 +181,163 @@ def _build_cycle_detail(cycle_num: int, evts: list[dict[str, Any]]) -> CycleDeta
             advance=AdvancePhase(transitions=transitions),
             spawn=SpawnPhase(spawned=spawned),
         ),
+        reconcile=reconcile,
+        audit_timeline=audit_timeline,
     )
+
+
+def _build_reconcile_detail(evts: list[dict[str, Any]]) -> ReconcileDetail | None:
+    """Build reconcile detail from reconcile_*, audit_ran, drift_detected, gc_ran events.
+
+    Returns None if no reconcile events exist in this cycle.
+    """
+    # Reconcile duration from reconcile_completed
+    reconcile_duration_s: float | None = None
+    drift_count: int | None = None
+    gc_pruned_from_summary: int | None = None
+
+    for ev in evts:
+        if ev.get("event") == "reconcile_completed":
+            reconcile_duration_s = ev.get("duration_s")
+            raw_drift = ev.get("drift_count")
+            if raw_drift is not None:
+                drift_count = int(raw_drift)
+            raw_gc = ev.get("gc_pruned")
+            if raw_gc is not None:
+                gc_pruned_from_summary = int(raw_gc)
+
+    # Collect audit details from audit_ran events
+    audits: list[AuditDetail] = []
+    for ev in evts:
+        if ev.get("event") == "audit_ran":
+            audits.append(
+                AuditDetail(
+                    spec_ref=str(ev.get("spec_ref", "")),
+                    result=str(ev.get("result", "")),
+                    duration_s=float(ev.get("duration_s", 0.0)),
+                )
+            )
+
+    # Count drifts from drift_detected events if not available from summary
+    if drift_count is None:
+        drift_count = sum(1 for ev in evts if ev.get("event") == "drift_detected")
+
+    # Count gc_pruned from gc_ran events if not available from summary
+    if gc_pruned_from_summary is None:
+        for ev in evts:
+            if ev.get("event") == "gc_ran":
+                raw = ev.get("pruned_count")
+                if raw is not None:
+                    gc_pruned_from_summary = int(raw)
+
+    # Only return reconcile detail if there are any reconcile-related events
+    has_reconcile_events = (
+        reconcile_duration_s is not None
+        or audits
+        or drift_count > 0
+        or (gc_pruned_from_summary is not None and gc_pruned_from_summary > 0)
+    )
+    if not has_reconcile_events:
+        return None
+
+    return ReconcileDetail(
+        drift_count=drift_count,
+        audits=audits,
+        gc_pruned=gc_pruned_from_summary or 0,
+        reconcile_duration_s=reconcile_duration_s,
+    )
+
+
+def _build_audit_timeline(evts: list[dict[str, Any]]) -> AuditTimeline | None:
+    """Build an audit timeline from audit_started and audit_ran events.
+
+    Pairs audit_started with audit_ran by spec_ref to determine start time
+    and duration. Returns None if no audit events exist in this cycle.
+    """
+    # Collect start timestamps per spec_ref
+    started_ts: dict[str, str] = {}
+    for ev in evts:
+        if ev.get("event") == "audit_started":
+            spec_ref = str(ev.get("spec_ref", ""))
+            ts = str(ev.get("ts", ""))
+            if spec_ref and ts:
+                started_ts[spec_ref] = ts
+
+    # Collect completed audit results
+    entries: list[AuditEntry] = []
+    for ev in evts:
+        if ev.get("event") == "audit_ran":
+            spec_ref = str(ev.get("spec_ref", ""))
+            result = str(ev.get("result", ""))
+            duration_s = float(ev.get("duration_s", 0.0))
+            # Use audit_started timestamp if available, otherwise fall back to
+            # the audit_ran timestamp minus duration
+            ts_ran = str(ev.get("ts", ""))
+            ts_start = started_ts.get(spec_ref, "")
+            if not ts_start and ts_ran:
+                # Approximate start time by subtracting duration
+                try:
+                    ran_dt = datetime.fromisoformat(ts_ran)
+                    start_dt = ran_dt - timedelta(seconds=duration_s)
+                    ts_start = start_dt.isoformat()
+                except (ValueError, TypeError):
+                    ts_start = ts_ran
+
+            entries.append(
+                AuditEntry(
+                    spec_ref=spec_ref,
+                    result=result,
+                    started_at=ts_start or ts_ran,
+                    duration_s=duration_s,
+                )
+            )
+
+    if not entries:
+        return None
+
+    total_duration_s = max(e.duration_s for e in entries)
+
+    # Calculate max parallelism: count overlapping time intervals
+    max_parallelism = _compute_max_parallelism(entries)
+
+    return AuditTimeline(
+        entries=entries,
+        total_duration_s=round(total_duration_s, 1),
+        max_parallelism=max_parallelism,
+    )
+
+
+def _compute_max_parallelism(entries: list[AuditEntry]) -> int:
+    """Compute the maximum number of concurrently running auditors.
+
+    Uses a sweep-line algorithm over start/end time boundaries.
+    """
+    if not entries:
+        return 0
+
+    # Build a list of (time, delta) events: +1 at start, -1 at end
+    boundaries: list[tuple[str, int]] = []
+    for entry in entries:
+        start = entry.started_at
+        try:
+            end_dt = datetime.fromisoformat(start) + timedelta(seconds=entry.duration_s)
+            end = end_dt.isoformat()
+        except (ValueError, TypeError):
+            end = start
+        boundaries.append((start, 1))
+        boundaries.append((end, -1))
+
+    # Sort by time; ties broken so that starts (+1) come before ends (-1)
+    boundaries.sort(key=lambda b: (b[0], b[1]))
+
+    max_concurrent = 0
+    current = 0
+    for _, delta in boundaries:
+        current += delta
+        if current > max_concurrent:
+            max_concurrent = current
+
+    return max_concurrent
 
 
 def _derive_active_workers(events: list[dict[str, Any]]) -> list[ActiveWorker]:
