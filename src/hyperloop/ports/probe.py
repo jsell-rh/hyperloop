@@ -466,3 +466,7 @@ class OrchestratorProbe(Protocol):
     def state_synced(self) -> None:
         """State was synced with remote (pull + push)."""
         ...
+
+    def state_sync_failed(self, *, error: str) -> None:
+        """State sync with remote failed. State exists only locally until resolved."""
+        ...

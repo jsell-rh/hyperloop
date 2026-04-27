@@ -840,8 +840,8 @@ class GitStateStore:
         self._buffer.clear()
         self._deletions.clear()
 
-    def sync(self) -> None:
-        """Sync state branch with remote. Pull then push with conflict resolution.
+    def sync(self) -> str | None:
+        """Sync state branch with remote. Returns error detail on failure, None on success.
 
         When local and remote have diverged, performs a plumbing-level merge
         with deterministic conflict resolution per spec:
@@ -853,7 +853,7 @@ class GitStateStore:
         self._ensure_bootstrapped()
         remotes = self._git_try("remote")
         if not remotes:
-            return
+            return None
 
         try:
             subprocess.run(
@@ -862,23 +862,26 @@ class GitStateStore:
                 text=True,
                 timeout=30,
             )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            return
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            return f"fetch failed: {exc}"
 
         remote_ref = self._git_try("rev-parse", "--verify", f"refs/remotes/origin/{STATE_BRANCH}")
         if not remote_ref:
-            with contextlib.suppress(subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            try:
                 subprocess.run(
                     ["git", "-C", str(self._repo), "push", "-u", "origin", STATE_BRANCH],
                     capture_output=True,
                     text=True,
                     timeout=30,
+                    check=True,
                 )
-            return
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                return f"initial push failed: {exc}"
+            return None
 
         local_ref = self._git_try("rev-parse", STATE_BRANCH)
         if local_ref == remote_ref:
-            return
+            return None
 
         # Local ahead of remote -- push
         ancestor_check = subprocess.run(
@@ -895,14 +898,17 @@ class GitStateStore:
             text=True,
         )
         if ancestor_check.returncode == 0:
-            with contextlib.suppress(subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            try:
                 subprocess.run(
                     ["git", "-C", str(self._repo), "push", "origin", STATE_BRANCH],
                     capture_output=True,
                     text=True,
                     timeout=30,
+                    check=True,
                 )
-            return
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                return f"push failed: {exc}"
+            return None
 
         # Remote ahead of local -- fast-forward
         behind_check = subprocess.run(
@@ -920,18 +926,22 @@ class GitStateStore:
         )
         if behind_check.returncode == 0:
             self._git("update-ref", f"refs/heads/{STATE_BRANCH}", remote_ref)
-            return
+            return None
 
         # Diverged -- merge with conflict resolution
         self._merge_state_with_remote(local_ref or "", remote_ref)
 
-        with contextlib.suppress(subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        try:
             subprocess.run(
                 ["git", "-C", str(self._repo), "push", "origin", STATE_BRANCH],
                 capture_output=True,
                 text=True,
                 timeout=30,
+                check=True,
             )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            return f"push after merge failed: {exc}"
+        return None
 
     def _merge_state_with_remote(self, local_ref: str, remote_ref: str) -> None:
         """Merge diverged state branches via ``git merge-tree --write-tree``."""

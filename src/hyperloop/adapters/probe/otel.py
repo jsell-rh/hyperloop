@@ -574,3 +574,6 @@ class OtelProbe:
 
     def state_synced(self, **_kw: object) -> None:
         pass
+
+    def state_sync_failed(self, **_kw: object) -> None:
+        pass

@@ -124,6 +124,9 @@ class NullProbe:
     def state_synced(self, **_: object) -> None:
         pass
 
+    def state_sync_failed(self, **_: object) -> None:
+        pass
+
 
 class MultiProbe:
     """Fans out all probe calls to N child probes.
@@ -246,3 +249,6 @@ class MultiProbe:
 
     def state_synced(self, **kw: object) -> None:
         self._call("state_synced", **kw)
+
+    def state_sync_failed(self, **kw: object) -> None:
+        self._call("state_sync_failed", **kw)

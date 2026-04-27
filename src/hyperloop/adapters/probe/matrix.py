@@ -382,6 +382,11 @@ class MatrixProbe:
     def state_synced(self, **kw: object) -> None:
         pass
 
+    def state_sync_failed(self, **kw: object) -> None:
+        error = str(kw.get("error", ""))
+        body = f"⚠️ state sync failed — state exists only locally\n{error}"
+        self._send(body)
+
     def step_executed(self, **kw: object) -> None:
         pass
 

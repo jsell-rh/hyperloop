@@ -140,3 +140,6 @@ class RecordingProbe:
 
     def state_synced(self, **kw: object) -> None:
         self._record("state_synced", **kw)
+
+    def state_sync_failed(self, **kw: object) -> None:
+        self._record("state_sync_failed", **kw)

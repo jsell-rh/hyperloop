@@ -122,6 +122,6 @@ class StateStore(Protocol):
         """Return raw content of all review files for a task, sorted by round."""
         ...
 
-    def sync(self) -> None:
-        """Sync state with remote (pull then push). Called once per cycle boundary."""
+    def sync(self) -> str | None:
+        """Sync state with remote. Returns error detail on failure, None on success."""
         ...

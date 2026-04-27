@@ -216,3 +216,6 @@ class FileProbe:
 
     def state_synced(self, **kw: object) -> None:
         self._write("state_synced", **kw)
+
+    def state_sync_failed(self, **kw: object) -> None:
+        self._write("state_sync_failed", **kw)

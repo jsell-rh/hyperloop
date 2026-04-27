@@ -290,8 +290,11 @@ class Orchestrator:
             max_task_rounds=self._max_task_rounds,
         )
         self._state.persist("orchestrator: cycle update")
-        self._state.sync()
-        self._probe.state_synced()
+        sync_error = self._state.sync()
+        if sync_error is not None:
+            self._probe.state_sync_failed(error=sync_error)
+        else:
+            self._probe.state_synced()
         self._execute_spawns(spawn_result.plans, cycle_num)
         self._emit_cycle_completed(cycle_num, cycle_start, spawn_result.plans, collected.reaped)
         if spawn_result.halt_reason is not None:

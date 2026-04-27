@@ -218,3 +218,6 @@ class StructlogProbe:
 
     def state_synced(self, **kw: object) -> None:
         self._log.debug("state_synced", **kw)
+
+    def state_sync_failed(self, **kw: object) -> None:
+        self._log.warning("state_sync_failed", **kw)
