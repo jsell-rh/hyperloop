@@ -250,6 +250,11 @@ class ReconcileDetail(BaseModel):
     audits: list[AuditDetail]
     gc_pruned: int
     reconcile_duration_s: float | None
+    intake_ran: bool = False
+    intake_created_tasks: int | None = None
+    intake_duration_s: float | None = None
+    process_improver_ran: bool = False
+    process_improver_duration_s: float | None = None
 
 
 class AuditEntry(BaseModel):

@@ -198,12 +198,38 @@ def _build_reconcile_detail(evts: list[dict[str, Any]]) -> ReconcileDetail | Non
                 if raw is not None:
                     gc_pruned_from_summary = int(raw)
 
+    # Parse intake_ran events
+    intake_ran = False
+    intake_created_tasks: int | None = None
+    intake_duration_s: float | None = None
+    for ev in evts:
+        if ev.get("event") == "intake_ran":
+            intake_ran = True
+            raw_created = ev.get("created_tasks")
+            if raw_created is not None:
+                intake_created_tasks = int(raw_created)
+            raw_dur = ev.get("duration_s")
+            if raw_dur is not None:
+                intake_duration_s = float(raw_dur)
+
+    # Parse process_improver_ran events
+    pi_ran = False
+    pi_duration_s: float | None = None
+    for ev in evts:
+        if ev.get("event") == "process_improver_ran":
+            pi_ran = True
+            raw_dur = ev.get("duration_s")
+            if raw_dur is not None:
+                pi_duration_s = float(raw_dur)
+
     # Only return reconcile detail if there are any reconcile-related events
     has_reconcile_events = (
         reconcile_duration_s is not None
         or audits
         or drift_count > 0
         or (gc_pruned_from_summary is not None and gc_pruned_from_summary > 0)
+        or intake_ran
+        or pi_ran
     )
     if not has_reconcile_events:
         return None
@@ -213,6 +239,11 @@ def _build_reconcile_detail(evts: list[dict[str, Any]]) -> ReconcileDetail | Non
         audits=audits,
         gc_pruned=gc_pruned_from_summary or 0,
         reconcile_duration_s=reconcile_duration_s,
+        intake_ran=intake_ran,
+        intake_created_tasks=intake_created_tasks,
+        intake_duration_s=intake_duration_s,
+        process_improver_ran=pi_ran,
+        process_improver_duration_s=pi_duration_s,
     )
 
 

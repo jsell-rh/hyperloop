@@ -227,6 +227,11 @@ export interface ReconcileDetail {
   audits: AuditDetail[]
   gc_pruned: number
   reconcile_duration_s: number | null
+  intake_ran: boolean
+  intake_created_tasks: number | null
+  intake_duration_s: number | null
+  process_improver_ran: boolean
+  process_improver_duration_s: number | null
 }
 
 export interface AuditEntry {
