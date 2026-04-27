@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.41.0 (2026-04-27)
+
+### Features
+
+- Run convergence auditors in parallel via ThreadPoolExecutor
+  ([`d97bbf4`](https://github.com/jsell-rh/hyperloop/commit/d97bbf420eeb22e7d54827a7a8b868537f1833f0))
+
+
 ## v0.40.4 (2026-04-26)
 
 
