@@ -243,6 +243,290 @@ class TestSpecs:
         assert widget_spec["tasks_not_started"] == 1
         assert widget_spec["tasks_complete"] == 0
         assert widget_spec["tasks_failed"] == 0
+        # New sync metadata fields are present
+        assert "drift_type" in widget_spec
+        assert "stage" in widget_spec
+        assert "current_sha" in widget_spec
+        assert "pinned_sha" in widget_spec
+
+    def test_list_specs_includes_drift_and_stage(self, seeded_repo: Path) -> None:
+        """Spec listing includes drift_type and stage fields.
+
+        The seeded repo has tasks pinned to a fake SHA (abc123), so
+        the spec should show freshness drift since the current blob SHA
+        differs from the pinned SHA.
+        """
+        client = _make_client(seeded_repo)
+        resp = client.get("/api/specs")
+        data = resp.json()
+        widget_spec = next(s for s in data if s["spec_ref"] == "specs/widget.md")
+        # Pinned to abc123 but file has a real blob SHA -> freshness drift
+        assert widget_spec["drift_type"] == "freshness"
+        assert widget_spec["stage"] == "freshness-drift"
+        assert widget_spec["pinned_sha"] == "abc123"
+        assert widget_spec["current_sha"] is not None
+        assert widget_spec["current_sha"] != "abc123"
+
+    def test_spec_with_no_tasks_shows_written_and_coverage(self, tmp_path: Path) -> None:
+        """A spec with no tasks and no summary shows stage 'written' and drift_type 'coverage'."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        _write_spec_file(repo, "specs/orphan.md", "# Orphan Feature\n\nNo tasks here.\n")
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/specs")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        spec = data[0]
+        assert spec["spec_ref"] == "specs/orphan.md"
+        assert spec["stage"] == "written"
+        assert spec["drift_type"] == "coverage"
+        assert "no tasks" in spec["drift_detail"]
+        assert spec["tasks_total"] == 0
+
+    def test_spec_with_completed_tasks_pending_audit(self, tmp_path: Path) -> None:
+        """A spec where all tasks are completed but no audit shows 'pending-audit'."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        _write_spec_file(repo, "specs/done.md", "# Done Feature\n\nAll done.\n")
+        _commit_all(repo)
+
+        # Get the real blob SHA so pinned SHA matches (no freshness drift)
+        sha = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD:specs/done.md"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        _write_task_file(
+            repo,
+            "task-100",
+            {
+                "id": "task-100",
+                "title": "Complete task",
+                "spec_ref": f"specs/done.md@{sha}",
+                "status": "complete",
+                "phase": None,
+                "deps": [],
+                "round": 1,
+                "branch": None,
+                "pr": None,
+            },
+        )
+
+        client = _make_client(repo)
+        resp = client.get("/api/specs")
+        data = resp.json()
+        spec = next(s for s in data if s["spec_ref"] == "specs/done.md")
+        assert spec["stage"] == "pending-audit"
+        assert spec["drift_type"] is None
+
+    def test_spec_with_completed_tasks_converged(self, tmp_path: Path) -> None:
+        """A spec where all tasks completed and audit says 'aligned' shows 'converged'."""
+        import json
+        from datetime import UTC, datetime
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        _write_spec_file(repo, "specs/aligned.md", "# Aligned Spec\n\nDone.\n")
+        _commit_all(repo)
+
+        sha = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD:specs/aligned.md"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        _write_task_file(
+            repo,
+            "task-200",
+            {
+                "id": "task-200",
+                "title": "Aligned task",
+                "spec_ref": f"specs/aligned.md@{sha}",
+                "status": "complete",
+                "phase": None,
+                "deps": [],
+                "round": 1,
+                "branch": None,
+                "pr": None,
+            },
+        )
+
+        # Write audit event
+        events_dir = tmp_path / "cache"
+        events_dir.mkdir()
+        events_path = events_dir / "events.jsonl"
+        now = datetime.now(UTC).isoformat()
+        event = {
+            "ts": now,
+            "event": "audit_ran",
+            "spec_ref": "specs/aligned.md",
+            "result": "aligned",
+            "cycle": 1,
+            "duration_s": 5.0,
+        }
+        events_path.write_text(json.dumps(event) + "\n")
+
+        pointer_dir = repo / ".hyperloop"
+        pointer_dir.mkdir(parents=True, exist_ok=True)
+        (pointer_dir / ".dashboard-events-path").write_text(str(events_path))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/specs")
+        data = resp.json()
+        spec = next(s for s in data if s["spec_ref"] == "specs/aligned.md")
+        assert spec["stage"] == "converged"
+        assert spec["drift_type"] is None
+        assert spec["last_audit_result"] == "aligned"
+
+    def test_baselined_spec_shows_baselined_stage(self, tmp_path: Path) -> None:
+        """A spec with a summary but no tasks shows stage 'baselined'."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        _write_spec_file(repo, "specs/legacy.md", "# Legacy Spec\n\nPre-hyperloop.\n")
+        _commit_all(repo)
+
+        sha = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD:specs/legacy.md"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        # Write a summary for this spec
+        from hyperloop.adapters.git.state import GitStateStore
+
+        store = GitStateStore(repo)
+        summary_yaml = yaml.dump(
+            {
+                "spec_path": "specs/legacy.md",
+                "spec_ref": f"specs/legacy.md@{sha}",
+                "total_tasks": 3,
+                "completed": 3,
+                "failed": 0,
+                "last_audit": "2025-01-01T00:00:00Z",
+                "last_audit_result": "aligned",
+            }
+        )
+        store.store_summary("specs/legacy.md", summary_yaml)
+        store.persist("add summary")
+
+        client = _make_client(repo)
+        resp = client.get("/api/specs")
+        data = resp.json()
+        spec = next(s for s in data if s["spec_ref"] == "specs/legacy.md")
+        assert spec["stage"] == "baselined"
+        assert spec["drift_type"] is None
+        assert spec["last_audit_result"] == "aligned"
+
+    def test_spec_drift_detail_freshness(self, tmp_path: Path) -> None:
+        """Drift detail endpoint returns old/new content for freshness drift."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        _write_spec_file(repo, "specs/drifted.md", "# Drifted Spec\n\nOriginal content.\n")
+        _commit_all(repo)
+
+        old_sha = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD:specs/drifted.md"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        # Pin task to old SHA
+        _write_task_file(
+            repo,
+            "task-300",
+            {
+                "id": "task-300",
+                "title": "Drifted task",
+                "spec_ref": f"specs/drifted.md@{old_sha}",
+                "status": "complete",
+                "phase": None,
+                "deps": [],
+                "round": 1,
+                "branch": None,
+                "pr": None,
+            },
+        )
+
+        # Modify the spec to create freshness drift
+        _write_spec_file(repo, "specs/drifted.md", "# Drifted Spec\n\nUpdated content.\n")
+        _commit_all(repo, "modify spec")
+
+        client = _make_client(repo)
+        resp = client.get("/api/specs/specs/drifted.md/drift")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["spec_ref"] == "specs/drifted.md"
+        assert data["drift_type"] == "freshness"
+        assert data["old_sha"] == old_sha
+        assert data["new_sha"] is not None
+        assert data["new_sha"] != old_sha
+        assert data["old_content"] is not None
+        assert "Original content" in data["old_content"]
+        assert data["new_content"] is not None
+        assert "Updated content" in data["new_content"]
+
+    def test_spec_drift_detail_no_drift(self, tmp_path: Path) -> None:
+        """Drift detail endpoint returns no drift when SHAs match."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        _write_spec_file(repo, "specs/stable.md", "# Stable Spec\n\nNo changes.\n")
+        _commit_all(repo)
+
+        sha = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "HEAD:specs/stable.md"],
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        _write_task_file(
+            repo,
+            "task-400",
+            {
+                "id": "task-400",
+                "title": "Stable task",
+                "spec_ref": f"specs/stable.md@{sha}",
+                "status": "in-progress",
+                "phase": "implementer",
+                "deps": [],
+                "round": 0,
+                "branch": None,
+                "pr": None,
+            },
+        )
+
+        client = _make_client(repo)
+        resp = client.get("/api/specs/specs/stable.md/drift")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["drift_type"] is None
+        assert data["old_content"] is None
+        assert data["new_content"] is None
+
+    def test_spec_drift_detail_not_found(self, tmp_path: Path) -> None:
+        """Drift detail endpoint returns 404 for missing spec."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+        client = _make_client(repo)
+        resp = client.get("/api/specs/specs/missing.md/drift")
+        assert resp.status_code == 404
 
     def test_spec_detail(self, seeded_repo: Path) -> None:
         client = _make_client(seeded_repo)
@@ -1530,3 +1814,342 @@ class TestAgents:
         assert data[0]["name"] == "no-deletions.sh"
         assert data[0]["path"] == ".hyperloop/checks/no-deletions.sh"
         assert "running checks" in data[0]["content"]
+
+
+def _write_events_jsonl(repo: Path, tmp_path: Path, events: list[dict[str, object]]) -> None:
+    """Write events JSONL and pointer file for a test repo."""
+    import json
+
+    events_dir = tmp_path / "cache"
+    events_dir.mkdir(exist_ok=True)
+    events_path = events_dir / "events.jsonl"
+    with open(events_path, "w") as f:
+        for ev in events:
+            f.write(json.dumps(ev) + "\n")
+
+    pointer_dir = repo / ".hyperloop"
+    pointer_dir.mkdir(parents=True, exist_ok=True)
+    (pointer_dir / ".dashboard-events-path").write_text(str(events_path))
+
+
+class TestAgentRoster:
+    def test_roster_returns_metrics_for_roles_with_data(self, tmp_path: Path) -> None:
+        """Agent roster computes success rate, avg duration, and failure patterns."""
+        from datetime import UTC, datetime
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        now = datetime.now(UTC).isoformat()
+        events: list[dict[str, object]] = [
+            {
+                "ts": now,
+                "event": "worker_reaped",
+                "task_id": "task-001",
+                "role": "implementer",
+                "verdict": "pass",
+                "duration_s": 60.0,
+                "cycle": 1,
+            },
+            {
+                "ts": now,
+                "event": "worker_reaped",
+                "task_id": "task-002",
+                "role": "implementer",
+                "verdict": "pass",
+                "duration_s": 90.0,
+                "cycle": 1,
+            },
+            {
+                "ts": now,
+                "event": "worker_reaped",
+                "task_id": "task-003",
+                "role": "implementer",
+                "verdict": "fail",
+                "duration_s": 30.0,
+                "detail": "Tests fail: missing null check",
+                "cycle": 2,
+            },
+            {
+                "ts": now,
+                "event": "worker_reaped",
+                "task_id": "task-004",
+                "role": "verifier",
+                "verdict": "pass",
+                "duration_s": 20.0,
+                "cycle": 2,
+            },
+        ]
+        _write_events_jsonl(repo, tmp_path, events)
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/agents/roster")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+
+        impl = next(r for r in data if r["role"] == "implementer")
+        assert impl["total_executions"] == 3
+        # 2 pass out of 3 total = 0.667
+        assert impl["success_rate"] == pytest.approx(0.667, abs=0.001)
+        # avg of 60, 90, 30 = 60.0
+        assert impl["avg_duration_s"] == 60.0
+        assert len(impl["failure_patterns"]) == 1
+        assert "null check" in impl["failure_patterns"][0]
+
+        verifier = next(r for r in data if r["role"] == "verifier")
+        assert verifier["total_executions"] == 1
+        assert verifier["success_rate"] == 1.0
+        assert verifier["avg_duration_s"] == 20.0
+        assert verifier["failure_patterns"] == []
+
+    def test_roster_returns_empty_when_no_events(self, tmp_path: Path) -> None:
+        """Agent roster returns empty list when no events file exists."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/agents/roster")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_roster_returns_none_metrics_for_roles_with_no_worker_events(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Roster returns empty when events exist but no worker_reaped events."""
+        from datetime import UTC, datetime
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        now = datetime.now(UTC).isoformat()
+        events: list[dict[str, object]] = [
+            {"ts": now, "event": "cycle_started", "cycle": 1},
+            {"ts": now, "event": "cycle_completed", "cycle": 1, "duration_s": 1.0},
+        ]
+        _write_events_jsonl(repo, tmp_path, events)
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/agents/roster")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
+class TestTrendMetrics:
+    def test_trend_returns_per_cycle_data(self, tmp_path: Path) -> None:
+        """Trend metrics returns convergence and throughput per cycle."""
+        from datetime import UTC, datetime
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        now = datetime.now(UTC).isoformat()
+        events: list[dict[str, object]] = [
+            {"ts": now, "event": "cycle_started", "cycle": 1},
+            {
+                "ts": now,
+                "event": "worker_reaped",
+                "task_id": "task-001",
+                "role": "implementer",
+                "verdict": "pass",
+                "duration_s": 45.0,
+                "cycle": 1,
+            },
+            {
+                "ts": now,
+                "event": "task_completed",
+                "task_id": "task-001",
+                "cycle": 1,
+            },
+            {
+                "ts": now,
+                "event": "convergence_marked",
+                "spec_ref": "specs/widget.md",
+                "cycle": 1,
+            },
+            {"ts": now, "event": "cycle_completed", "cycle": 1, "duration_s": 5.0},
+            {"ts": now, "event": "cycle_started", "cycle": 2},
+            {
+                "ts": now,
+                "event": "worker_reaped",
+                "task_id": "task-002",
+                "role": "verifier",
+                "verdict": "fail",
+                "duration_s": 30.0,
+                "cycle": 2,
+            },
+            {
+                "ts": now,
+                "event": "task_failed",
+                "task_id": "task-002",
+                "cycle": 2,
+            },
+            {"ts": now, "event": "cycle_completed", "cycle": 2, "duration_s": 3.0},
+        ]
+        _write_events_jsonl(repo, tmp_path, events)
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/metrics/trend", params={"cycles": 10})
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["cycles_analyzed"] == 2
+        assert data["total_tasks_completed"] == 1
+        assert data["total_tasks_failed"] == 1
+        # avg duration: (45 + 30) / 2 = 37.5
+        assert data["avg_worker_duration_s"] == 37.5
+
+        # Convergence trend
+        conv = data["convergence_trend"]
+        assert len(conv) == 2
+        assert conv[0]["cycle"] == 1
+        assert conv[0]["converged_count"] == 1
+        # Convergence accumulates across cycles
+        assert conv[1]["cycle"] == 2
+        assert conv[1]["converged_count"] == 1
+
+        # Throughput
+        tp = data["task_throughput"]
+        assert len(tp) == 2
+        assert tp[0]["completed"] == 1
+        assert tp[0]["failed"] == 0
+        assert tp[1]["completed"] == 0
+        assert tp[1]["failed"] == 1
+
+    def test_trend_empty_when_no_events(self, tmp_path: Path) -> None:
+        """Trend metrics returns zeroed response when no events exist."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/metrics/trend")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["cycles_analyzed"] == 0
+        assert data["convergence_trend"] == []
+        assert data["task_throughput"] == []
+        assert data["avg_worker_duration_s"] is None
+        assert data["total_tasks_completed"] == 0
+        assert data["total_tasks_failed"] == 0
+
+    def test_trend_respects_cycles_param(self, tmp_path: Path) -> None:
+        """Trend metrics only returns data for the last N cycles."""
+        from datetime import UTC, datetime
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        now = datetime.now(UTC).isoformat()
+        events: list[dict[str, object]] = []
+        for c in range(1, 6):
+            events.append({"ts": now, "event": "cycle_started", "cycle": c})
+            events.append(
+                {
+                    "ts": now,
+                    "event": "cycle_completed",
+                    "cycle": c,
+                    "duration_s": 1.0,
+                }
+            )
+        _write_events_jsonl(repo, tmp_path, events)
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/metrics/trend", params={"cycles": 2})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["cycles_analyzed"] == 2
+        # Should only contain cycles 4 and 5
+        cycle_nums = [p["cycle"] for p in data["convergence_trend"]]
+        assert cycle_nums == [4, 5]
+
+
+class TestWorkerHeartbeatsStructured:
+    def test_heartbeats_return_structured_per_worker_data(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Worker heartbeats returns per-worker structured detail."""
+        import json
+        from datetime import UTC, datetime
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        now = datetime.now(UTC)
+        events_dir = tmp_path / "cache"
+        events_dir.mkdir()
+        events_path = events_dir / "events.jsonl"
+
+        events = [
+            {
+                "ts": now.isoformat(),
+                "event": "worker_message",
+                "task_id": "task-001",
+                "role": "implementer",
+                "message_type": "text",
+                "content": "thinking...",
+            },
+            {
+                "ts": now.isoformat(),
+                "event": "worker_message",
+                "task_id": "task-001",
+                "role": "implementer",
+                "message_type": "tool_use",
+                "content": "bash ls -la",
+            },
+            {
+                "ts": now.isoformat(),
+                "event": "worker_message",
+                "task_id": "task-002",
+                "role": "verifier",
+                "message_type": "text",
+                "content": "checking tests",
+            },
+        ]
+        with open(events_path, "w") as f:
+            for ev in events:
+                f.write(json.dumps(ev) + "\n")
+
+        pointer_dir = repo / ".hyperloop"
+        pointer_dir.mkdir(parents=True, exist_ok=True)
+        (pointer_dir / ".dashboard-events-path").write_text(str(events_path))
+        _commit_all(repo)
+
+        client = _make_client(repo)
+        resp = client.get("/api/activity/worker-heartbeats")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert "heartbeats" in data
+        assert "server_time" in data
+        heartbeats = data["heartbeats"]
+        assert len(heartbeats) == 2
+
+        hb_by_task = {h["task_id"]: h for h in heartbeats}
+
+        # task-001 had two messages, last was tool_use
+        hb1 = hb_by_task["task-001"]
+        assert hb1["role"] == "implementer"
+        assert hb1["last_message_type"] == "tool_use"
+        assert hb1["last_tool_name"] == "bash"
+        assert hb1["message_count_since"] == 2
+        assert hb1["seconds_since_last"] >= 0
+
+        # task-002 had one text message
+        hb2 = hb_by_task["task-002"]
+        assert hb2["role"] == "verifier"
+        assert hb2["last_message_type"] == "text"
+        assert hb2["last_tool_name"] is None
+        assert hb2["message_count_since"] == 1

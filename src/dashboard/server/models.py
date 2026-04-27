@@ -68,7 +68,7 @@ class ReconstructedPrompt(BaseModel):
 
 
 class SpecSummary(BaseModel):
-    """Spec with aggregated task progress counts."""
+    """Spec with aggregated task progress counts and sync metadata."""
 
     spec_ref: str
     title: str
@@ -77,6 +77,25 @@ class SpecSummary(BaseModel):
     tasks_in_progress: int
     tasks_failed: int
     tasks_not_started: int
+    drift_type: str | None = None
+    drift_detail: str = ""
+    stage: str = "written"
+    last_audit_result: str | None = None
+    last_audit: str | None = None
+    current_sha: str | None = None
+    pinned_sha: str | None = None
+
+
+class SpecDriftDetail(BaseModel):
+    """Detailed drift info for a single spec."""
+
+    spec_ref: str
+    drift_type: str | None
+    drift_detail: str
+    old_sha: str | None
+    new_sha: str | None
+    old_content: str | None
+    new_content: str | None
 
 
 class SpecDetail(BaseModel):
@@ -370,6 +389,16 @@ class ProcessResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class AgentRosterEntry(BaseModel):
+    """Per-role performance metrics computed from FileProbe events."""
+
+    role: str
+    success_rate: float | None
+    avg_duration_s: float | None
+    total_executions: int
+    failure_patterns: list[str]
+
+
 class AgentDefinition(BaseModel):
     """Per-role agent definition with layer breakdown."""
 
@@ -392,6 +421,37 @@ class CheckScript(BaseModel):
 # ---------------------------------------------------------------------------
 # Control operation request models
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Trend metrics models
+# ---------------------------------------------------------------------------
+
+
+class ConvergenceTrendPoint(BaseModel):
+    """Per-cycle convergence count."""
+
+    cycle: int
+    converged_count: int
+
+
+class ThroughputPoint(BaseModel):
+    """Tasks completed/failed per cycle."""
+
+    cycle: int
+    completed: int
+    failed: int
+
+
+class TrendMetrics(BaseModel):
+    """Aggregated metrics over the last N cycles."""
+
+    cycles_analyzed: int
+    convergence_trend: list[ConvergenceTrendPoint]
+    task_throughput: list[ThroughputPoint]
+    avg_worker_duration_s: float | None
+    total_tasks_completed: int
+    total_tasks_failed: int
 
 
 class RestartRequest(BaseModel):
