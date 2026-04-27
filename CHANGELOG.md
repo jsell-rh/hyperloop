@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.45.1 (2026-04-27)
+
+### Bug Fixes
+
+- Create summaries for specs the PM evaluates with no tasks needed
+  ([`aeb16c7`](https://github.com/jsell-rh/hyperloop/commit/aeb16c7f7244ba0d0143832a8f59abbce0315378))
+
+
 ## v0.45.0 (2026-04-27)
 
 
