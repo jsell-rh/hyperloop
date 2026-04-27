@@ -572,6 +572,7 @@ def run(
         composer=composer,
         poll_interval=cfg.poll_interval,
         probe=probe,
+        max_auditors=cfg.max_auditors,
     )
 
     # 6. Recover and run

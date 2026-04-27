@@ -92,6 +92,7 @@ class Config:
     gc_summarize: bool = True
     gc_run_every_cycles: int = 100
     pm_max_failures: int = 5
+    max_auditors: int = 3
     observability: ObservabilityConfig = field(
         default_factory=lambda: ObservabilityConfig(
             log_format="console", log_level="info", matrix=None
@@ -125,6 +126,7 @@ def _defaults() -> dict[str, object]:
         "gc_summarize": True,
         "gc_run_every_cycles": 100,
         "pm_max_failures": 5,
+        "max_auditors": 3,
     }
 
 
@@ -148,6 +150,7 @@ def _flatten_yaml(raw: dict[str, object]) -> dict[str, object]:
         "max_workers",
         "runtime",
         "pm_max_failures",
+        "max_auditors",
     ):
         if key in raw and not isinstance(raw[key], dict):
             flat[key] = raw[key]
@@ -341,6 +344,7 @@ def load_config(
         gc_summarize=bool(values["gc_summarize"]),
         gc_run_every_cycles=int(values["gc_run_every_cycles"]),  # type: ignore[arg-type]
         pm_max_failures=int(values["pm_max_failures"]),  # type: ignore[arg-type]
+        max_auditors=int(values["max_auditors"]),  # type: ignore[arg-type]
         observability=obs_cfg,
         dashboard=dashboard_cfg,
     )

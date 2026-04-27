@@ -143,6 +143,7 @@ def wire_orchestrator(
         composer=resolved_composer,
         poll_interval=cfg.poll_interval,
         probe=resolved_probe,
+        max_auditors=cfg.max_auditors,
     )
 
 
