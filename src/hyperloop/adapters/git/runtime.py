@@ -12,7 +12,6 @@ Verdict is read from ``.hyperloop/worker-result.yaml`` in the worktree
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import os
 import threading
 from typing import TYPE_CHECKING, cast
@@ -30,6 +29,8 @@ from hyperloop.adapters.git._worktree import (
 from hyperloop.domain.model import Verdict, WorkerHandle, WorkerPollStatus, WorkerResult
 
 if TYPE_CHECKING:
+    import concurrent.futures
+
     from hyperloop.ports.probe import OrchestratorProbe
 
 log: structlog.stdlib.BoundLogger = structlog.get_logger()
@@ -238,22 +239,29 @@ class AgentSdkRuntime:
         log.info("sdk_serial_started", role=role)
 
         def _do_serial() -> bool:
-            future = asyncio.run_coroutine_threadsafe(
-                self._run_agent(prompt, self._repo_path, task_id=f"serial-{role}", role=role),
-                self._loop,
-            )
-
+            loop = asyncio.new_event_loop()
             try:
-                future.result(timeout=self._serial_timeout)
+                loop.run_until_complete(
+                    asyncio.wait_for(
+                        self._run_agent(
+                            prompt,
+                            self._repo_path,
+                            task_id=f"serial-{role}",
+                            role=role,
+                        ),
+                        timeout=self._serial_timeout,
+                    )
+                )
                 log.info("sdk_serial_completed", role=role)
                 return True
-            except concurrent.futures.TimeoutError:
+            except TimeoutError:
                 log.warning("sdk_serial_timeout", role=role)
-                future.cancel()
-                raise  # Timeout is not retried
+                raise
             except Exception:
                 log.exception("sdk_serial_failed", role=role)
-                raise  # Let retry_with_backoff handle it
+                raise
+            finally:
+                loop.close()
 
         try:
             return retry_with_backoff(
@@ -263,7 +271,7 @@ class AgentSdkRuntime:
                 probe=self._probe,
                 max_attempts=3,
             )
-        except concurrent.futures.TimeoutError:
+        except TimeoutError:
             return False
         except Exception:
             return False
