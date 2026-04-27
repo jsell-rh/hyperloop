@@ -215,8 +215,10 @@ def list_specs() -> list[SpecSummary]:
     summaries = _load_summaries_from_state()
     audit_events = _load_audit_events(repo_path)
 
-    # Find all spec files
-    spec_files = state.list_files("specs/*.md")
+    # Find all spec files (including subdirectories)
+    spec_files_a = state.list_files("specs/**/*.spec.md")
+    spec_files_b = state.list_files("specs/**/*.md")
+    spec_files = sorted(set(spec_files_a) | set(spec_files_b))
 
     results: list[SpecSummary] = []
     seen_specs: set[str] = set()
@@ -290,7 +292,10 @@ def list_specs() -> list[SpecSummary]:
 
         current_sha = spec_source.file_version(spec_ref) or None
         pinned_shas = spec_pinned_shas.get(spec_ref)
-        pinned_sha = sorted(pinned_shas)[0] if pinned_shas else None
+        pinned_sha = None
+        if pinned_shas:
+            raw_sha = sorted(pinned_shas)[0]
+            pinned_sha = spec_source.file_version_at(spec_ref, raw_sha)
 
         audit_info = audit_events.get(spec_ref)
         audit_result = audit_info["result"] if audit_info else None
