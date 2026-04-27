@@ -7,34 +7,55 @@ const props = defineProps<{
   heartbeat?: WorkerHeartbeat | null
 }>()
 
-// Determine step statuses based on pipeline position and task phase
-const stepStatuses = computed(() => {
-  const steps = props.pipelineSteps
-  if (steps.length === 0) return []
+// --- Phase flow strip props ---
+const phaseNames = computed<string[]>(() => {
+  return props.pipelineSteps.map((s) => s.name)
+})
 
+const completedPhases = computed<string[]>(() => {
+  const steps = props.pipelineSteps
   const currentPhase = props.task.phase
   const history = props.task.worker_history
 
-  let foundCurrent = false
-  return steps.map((step) => {
-    if (foundCurrent) {
-      return { name: step.name, type: step.type, status: 'pending' as const }
+  const completed: string[] = []
+  for (const step of steps) {
+    if (step.name === currentPhase) break
+    const entries = history.filter((h) => h.role === step.name)
+    const lastEntry = entries.length > 0 ? entries[entries.length - 1] : null
+    if (lastEntry && lastEntry.verdict !== 'fail') {
+      completed.push(step.name)
     }
-    if (step.name === currentPhase) {
-      foundCurrent = true
-      return { name: step.name, type: step.type, status: 'active' as const }
-    }
-    // Before the current phase — it's done.
-    const lastEntry = [...history].reverse().find((h) => h.role === step.name)
-    const verdict = lastEntry?.verdict ?? 'pass'
-    return {
-      name: step.name,
-      type: step.type,
-      status: 'done' as const,
-      verdict: verdict as 'pass' | 'fail',
-    }
-  })
+  }
+  return completed
 })
+
+const failedPhases = computed<string[]>(() => {
+  const history = props.task.worker_history
+  const failed: string[] = []
+  for (const step of props.pipelineSteps) {
+    if (step.name === props.task.phase) continue
+    const entries = history.filter((h) => h.role === step.name)
+    const lastEntry = entries.length > 0 ? entries[entries.length - 1] : null
+    if (lastEntry && lastEntry.verdict === 'fail') {
+      failed.push(step.name)
+    }
+  }
+  return failed
+})
+
+// --- Per-phase duration mapping ---
+interface StepDuration {
+  durationText: string | null
+  verdict: string | null
+  isActive: boolean
+}
+
+function formatDurationShort(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}s`
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.round(seconds % 60)
+  return `${mins}m ${secs.toString().padStart(2, '0')}s`
+}
 
 // Live-ticking timer for the current worker
 const elapsedSeconds = ref(0)
@@ -64,76 +85,6 @@ function formatDuration(seconds: number): string {
   if (seconds < 60) return `${seconds}s`
   const mins = Math.floor(seconds / 60)
   const secs = seconds % 60
-  return `${mins}m ${secs.toString().padStart(2, '0')}s`
-}
-
-const roundBadgeColor = computed(() => {
-  if (props.task.round >= 3) return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
-  if (props.task.round >= 2) return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
-  return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
-})
-
-// --- Heartbeat animation class ---
-const heartbeatAnimClass = computed(() => {
-  if (!props.heartbeat) return ''
-  const s = props.heartbeat.seconds_since_last
-  if (s < 10) return 'animate-worker-active'
-  if (s < 60) return 'animate-worker-thinking'
-  return ''
-})
-
-// --- Heartbeat amber tint ---
-const heartbeatAmberTint = computed(() => {
-  if (!props.heartbeat) return false
-  return props.heartbeat.seconds_since_last >= 60
-})
-
-// --- Pulse dot color ---
-const pulseDotColor = computed(() => {
-  if (!props.heartbeat) return 'bg-blue-500'
-  const s = props.heartbeat.seconds_since_last
-  if (s < 10) return 'bg-blue-500'
-  if (s < 60) return 'bg-blue-400'
-  if (s < 120) return 'bg-amber-500'
-  return 'bg-red-500'
-})
-
-const pulseDotPingColor = computed(() => {
-  if (!props.heartbeat) return 'bg-blue-400'
-  const s = props.heartbeat.seconds_since_last
-  if (s < 10) return 'bg-blue-400'
-  if (s < 60) return 'bg-blue-300'
-  if (s < 120) return 'bg-amber-400'
-  return 'bg-red-400'
-})
-
-const showPulsePing = computed(() => {
-  if (!props.heartbeat) return true
-  return props.heartbeat.seconds_since_last < 10
-})
-
-// --- Heartbeat tool indicator ---
-const heartbeatDetail = computed(() => {
-  if (!props.heartbeat) return null
-  const hb = props.heartbeat
-  const toolPart = hb.last_tool_name || hb.last_message_type || 'active'
-  const msgCount = hb.message_count_since
-  const secAgo = Math.round(hb.seconds_since_last)
-  const agoText = secAgo < 60 ? `${secAgo}s ago` : `${Math.floor(secAgo / 60)}m ago`
-  return { toolPart, msgCount, agoText }
-})
-
-// --- Per-phase duration mapping ---
-interface StepDuration {
-  durationText: string | null
-  verdict: string | null
-  isActive: boolean
-}
-
-function formatDurationShort(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`
-  const mins = Math.floor(seconds / 60)
-  const secs = Math.round(seconds % 60)
   return `${mins}m ${secs.toString().padStart(2, '0')}s`
 }
 
@@ -173,6 +124,47 @@ const stepDurations = computed<StepDuration[]>(() => {
     }
   })
 })
+
+const roundBadgeColor = computed(() => {
+  if (props.task.round >= 3) return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+  if (props.task.round >= 2) return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+  return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+})
+
+// --- Pulse dot color ---
+const pulseDotColor = computed(() => {
+  if (!props.heartbeat) return 'bg-blue-500'
+  const s = props.heartbeat.seconds_since_last
+  if (s < 10) return 'bg-blue-500'
+  if (s < 60) return 'bg-blue-400'
+  if (s < 120) return 'bg-amber-500'
+  return 'bg-red-500'
+})
+
+const pulseDotPingColor = computed(() => {
+  if (!props.heartbeat) return 'bg-blue-400'
+  const s = props.heartbeat.seconds_since_last
+  if (s < 10) return 'bg-blue-400'
+  if (s < 60) return 'bg-blue-300'
+  if (s < 120) return 'bg-amber-400'
+  return 'bg-red-400'
+})
+
+const showPulsePing = computed(() => {
+  if (!props.heartbeat) return true
+  return props.heartbeat.seconds_since_last < 10
+})
+
+// --- Heartbeat tool indicator ---
+const heartbeatDetail = computed(() => {
+  if (!props.heartbeat) return null
+  const hb = props.heartbeat
+  const toolPart = hb.last_tool_name || hb.last_message_type || 'active'
+  const msgCount = hb.message_count_since
+  const secAgo = Math.round(hb.seconds_since_last)
+  const agoText = secAgo < 60 ? `${secAgo}s ago` : `${Math.floor(secAgo / 60)}m ago`
+  return { toolPart, msgCount, agoText }
+})
 </script>
 
 <template>
@@ -197,53 +189,18 @@ const stepDurations = computed<StepDuration[]>(() => {
       </span>
     </div>
 
-    <!-- Pipeline progress bar (flat, no loop grouping) -->
-    <div v-if="stepStatuses.length > 0" class="flex items-center gap-1 mb-1">
-      <div
-        v-for="(step, idx) in stepStatuses"
-        :key="`bar-${idx}`"
-        class="flex-1 h-2 rounded-full relative group"
-        :class="[
-          {
-            'bg-green-400 dark:bg-green-500': step.status === 'done' && (step as any).verdict !== 'fail',
-            'bg-red-400 dark:bg-red-500': step.status === 'done' && (step as any).verdict === 'fail',
-            'bg-blue-400 dark:bg-blue-500 animate-badge-pulse': step.status === 'active',
-            'bg-gray-200 dark:bg-gray-700': step.status === 'pending',
-          },
-          step.status === 'active' ? heartbeatAnimClass : '',
-          step.status === 'active' && heartbeatAmberTint ? 'bg-amber-400 dark:bg-amber-500' : '',
-        ]"
-      >
-        <!-- Tooltip -->
-        <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-[10px] rounded bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
-          {{ step.name }} ({{ step.status }})
-        </div>
-      </div>
-    </div>
-
-    <!-- Step labels -->
-    <div v-if="stepStatuses.length > 0" class="flex items-center gap-1 mb-0.5">
-      <div
-        v-for="(step, idx) in stepStatuses"
-        :key="`label-${idx}`"
-        class="flex-1 text-center"
-      >
-        <span
-          class="text-[9px] uppercase tracking-wide"
-          :class="{
-            'text-green-600 dark:text-green-400 font-medium': step.status === 'done' && (step as any).verdict !== 'fail',
-            'text-red-600 dark:text-red-400 font-medium': step.status === 'done' && (step as any).verdict === 'fail',
-            'text-blue-600 dark:text-blue-400 font-semibold': step.status === 'active',
-            'text-gray-400 dark:text-gray-500': step.status === 'pending',
-          }"
-        >
-          {{ step.name }}
-        </span>
-      </div>
+    <!-- Phase flow strip -->
+    <div v-if="phaseNames.length > 0" class="mb-2">
+      <PhaseFlowStrip
+        :phases="phaseNames"
+        :current-phase="task.phase"
+        :failed-phases="failedPhases"
+        :completed-phases="completedPhases"
+      />
     </div>
 
     <!-- Per-phase durations -->
-    <div v-if="stepDurations.length > 0" class="flex items-center gap-1 mb-3">
+    <div v-if="stepDurations.length > 0" class="flex items-center gap-0.5 mb-3">
       <div
         v-for="(sd, idx) in stepDurations"
         :key="`dur-${idx}`"
@@ -260,34 +217,32 @@ const stepDurations = computed<StepDuration[]>(() => {
         >
           {{ sd.durationText }}
         </span>
-        <span
-          v-if="sd.verdict === 'fail'"
-          class="block text-[8px] text-red-500 dark:text-red-400"
-        >
-          (fail)
-        </span>
       </div>
     </div>
 
-    <!-- Current worker -->
+    <!-- Current worker with heartbeat -->
     <div v-if="task.current_worker" class="space-y-1">
       <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-        <span class="font-medium text-blue-600 dark:text-blue-400">{{ task.current_worker.role }}</span>
-        <span>running</span>
-        <span class="font-mono text-blue-700 dark:text-blue-300">{{ formatDuration(elapsedSeconds) }}</span>
-        <span class="flex-1" />
-        <span class="worker-pulse-dot relative flex h-2 w-2">
-          <span v-if="showPulsePing" class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" :class="pulseDotPingColor"></span>
-          <span class="relative inline-flex rounded-full h-2 w-2" :class="pulseDotColor"></span>
+        <!-- Pulse dot -->
+        <span class="relative flex h-2 w-2 flex-shrink-0">
+          <span
+            v-if="showPulsePing"
+            class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+            :class="pulseDotPingColor"
+          />
+          <span
+            class="relative inline-flex rounded-full h-2 w-2"
+            :class="pulseDotColor"
+          />
         </span>
-      </div>
-      <!-- Tool call indicator -->
-      <div v-if="heartbeatDetail" class="flex items-center gap-1.5 text-[10px] text-gray-400 dark:text-gray-500">
-        <span class="font-mono bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-gray-600 dark:text-gray-300">{{ heartbeatDetail.toolPart }}</span>
-        <span>&middot;</span>
-        <span>{{ heartbeatDetail.msgCount }} messages</span>
-        <span>&middot;</span>
-        <span>last {{ heartbeatDetail.agoText }}</span>
+        <span class="font-medium text-blue-600 dark:text-blue-400">{{ task.current_worker.role }}</span>
+        <span class="font-mono text-blue-700 dark:text-blue-300">{{ formatDuration(elapsedSeconds) }}</span>
+        <!-- Tool call indicator -->
+        <template v-if="heartbeatDetail">
+          <span>&middot;</span>
+          <span class="font-mono bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-[10px] text-gray-600 dark:text-gray-300">{{ heartbeatDetail.toolPart }}</span>
+          <span class="text-[10px] text-gray-400 dark:text-gray-500">{{ heartbeatDetail.agoText }}</span>
+        </template>
       </div>
     </div>
   </NuxtLink>

@@ -24,6 +24,14 @@ function formatDuration(d: number): string {
   if (d < 60) return `${d.toFixed(1)}s`
   return `${Math.floor(d / 60)}m ${Math.round(d % 60)}s`
 }
+
+// Phase breakdown summary counts
+const collectCount = computed(() => props.cycle.phases.collect.reaped.length)
+const advanceCount = computed(() => props.cycle.phases.advance.transitions.length)
+const spawnCount = computed(() => props.cycle.phases.spawn.spawned.length)
+
+// Reconcile detail
+const reconcile = computed(() => props.cycle.reconcile)
 </script>
 
 <template>
@@ -47,7 +55,41 @@ function formatDuration(d: number): string {
       </span>
     </div>
 
-    <!-- Phases -->
+    <!-- Phase breakdown summary pills -->
+    <div class="flex flex-wrap items-center gap-2 mb-3">
+      <span
+        v-if="collectCount > 0"
+        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+      >
+        Collect: reaped {{ collectCount }}
+      </span>
+      <span
+        v-if="reconcile"
+        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
+      >
+        Reconcile<template v-if="reconcile.reconcile_duration_s != null">: {{ formatDuration(reconcile.reconcile_duration_s) }}</template>
+      </span>
+      <span
+        v-if="advanceCount > 0"
+        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+      >
+        Advance: {{ advanceCount }} transitions
+      </span>
+      <span
+        v-if="spawnCount > 0"
+        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+      >
+        Spawn: {{ spawnCount }} workers
+      </span>
+      <span
+        v-if="cycle.phases.intake.ran"
+        class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400"
+      >
+        Intake{{ cycle.phases.intake.created_tasks != null ? `: ${cycle.phases.intake.created_tasks} tasks` : '' }}
+      </span>
+    </div>
+
+    <!-- Phases detail grid -->
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
       <!-- COLLECT -->
       <div>
@@ -107,6 +149,51 @@ function formatDuration(d: number): string {
           </li>
         </ul>
       </div>
+    </div>
+
+    <!-- Reconcile detail section -->
+    <div
+      v-if="reconcile"
+      class="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800"
+    >
+      <div class="font-medium text-gray-500 dark:text-gray-400 mb-2 uppercase tracking-wide text-[10px]">
+        Reconcile Detail
+      </div>
+      <div class="grid grid-cols-3 gap-3 text-xs">
+        <div>
+          <span class="text-gray-400 dark:text-gray-500">Drift:</span>
+          <span class="ml-1 text-gray-700 dark:text-gray-300 font-medium">{{ reconcile.drift_count }}</span>
+        </div>
+        <div>
+          <span class="text-gray-400 dark:text-gray-500">Audits:</span>
+          <span class="ml-1 text-gray-700 dark:text-gray-300 font-medium">{{ reconcile.audits.length }}</span>
+        </div>
+        <div>
+          <span class="text-gray-400 dark:text-gray-500">GC pruned:</span>
+          <span class="ml-1 text-gray-700 dark:text-gray-300 font-medium">{{ reconcile.gc_pruned }}</span>
+        </div>
+      </div>
+      <!-- Per-audit results -->
+      <ul v-if="reconcile.audits.length > 0" class="mt-2 space-y-0.5">
+        <li
+          v-for="(audit, aidx) in reconcile.audits"
+          :key="`audit-${aidx}`"
+          class="flex items-center gap-2 text-xs"
+        >
+          <span class="font-mono text-gray-500 dark:text-gray-400 truncate max-w-[160px]" :title="audit.spec_ref">
+            {{ audit.spec_ref.split('/').pop()?.replace(/\.md$/, '') }}
+          </span>
+          <span
+            class="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded"
+            :class="audit.result === 'aligned' || audit.result === 'pass'
+              ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+              : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'"
+          >
+            {{ audit.result }}
+          </span>
+          <span class="text-gray-400 dark:text-gray-500">{{ formatDuration(audit.duration_s) }}</span>
+        </li>
+      </ul>
     </div>
 
     <!-- Auditor Timeline (Gantt chart) -->
