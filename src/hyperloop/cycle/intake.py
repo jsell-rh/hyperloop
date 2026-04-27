@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from hyperloop.compose import PromptComposer
+    from hyperloop.ports.probe import OrchestratorProbe
     from hyperloop.ports.runtime import Runtime
     from hyperloop.ports.spec_source import SpecSource
     from hyperloop.ports.state import StateStore
@@ -77,6 +78,8 @@ def run_intake(
     composer: PromptComposer | None,
     has_failures: bool,
     spec_source: SpecSource | None = None,
+    probe: OrchestratorProbe | None = None,
+    cycle: int = 0,
 ) -> IntakeResult:
     """Run PM intake if there are unprocessed specs or task failures.
 
@@ -137,6 +140,15 @@ def run_intake(
     )
     composed = composer.compose(role="pm", context=context)
     prompt = composed.text
+    if probe is not None:
+        probe.prompt_composed(
+            task_id="pm-intake",
+            role="pm",
+            prompt_text=prompt,
+            sections=composed.sections,
+            round=0,
+            cycle=cycle,
+        )
 
     world_before = state.get_world()
     tasks_before = set(world_before.tasks.keys())

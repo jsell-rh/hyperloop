@@ -190,6 +190,8 @@ class Orchestrator:
                     self._composer,
                     self._has_failures_since_intake,
                     spec_source=self._spec_source,
+                    probe=self._probe,
+                    cycle=cycle_num,
                 )
             )
             world = build_world(self._workers, self._state, self._runtime)
@@ -516,6 +518,14 @@ class Orchestrator:
             role="auditor",
             context=context,
             epilogue=self._runtime.worker_epilogue(),
+        )
+        self._probe.prompt_composed(
+            task_id=f"auditor-{spec_ref}",
+            role="auditor",
+            prompt_text=composed.text,
+            sections=composed.sections,
+            round=0,
+            cycle=self._current_cycle,
         )
         return composed.text
 
