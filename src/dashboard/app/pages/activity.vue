@@ -246,8 +246,71 @@ const warnings = computed<Warning[]>(() => {
 })
 
 // --- In-Flight Tasks ---
+type SortOption = 'most-stuck' | 'longest-running' | 'recent' | 'by-phase'
+
+const sortBy = ref<SortOption>('most-stuck')
+
+const sortOptions: { value: SortOption; label: string }[] = [
+  { value: 'most-stuck', label: 'Most Stuck' },
+  { value: 'longest-running', label: 'Longest Running' },
+  { value: 'recent', label: 'Recent' },
+  { value: 'by-phase', label: 'By Phase' },
+]
+
+function taskHealthLevel(task: TaskInFlight): 'green' | 'amber' | 'red' {
+  const hb = heartbeatForTask(task.task_id)
+  const staleSeconds = hb?.seconds_since_last ?? 0
+  if (staleSeconds > 120 || task.round >= 3) return 'red'
+  if (staleSeconds > 60 || task.round >= 2) return 'amber'
+  return 'green'
+}
+
+const taskHealthCounts = computed(() => {
+  const tasks = data.value?.tasks_in_flight ?? []
+  let healthy = 0
+  let retrying = 0
+  let stuck = 0
+  for (const t of tasks) {
+    const level = taskHealthLevel(t)
+    if (level === 'green') healthy++
+    else if (level === 'amber') retrying++
+    else stuck++
+  }
+  return { healthy, retrying, stuck }
+})
+
 const tasksInFlight = computed<TaskInFlight[]>(() => {
-  return data.value?.tasks_in_flight ?? []
+  const tasks = [...(data.value?.tasks_in_flight ?? [])]
+  switch (sortBy.value) {
+    case 'most-stuck':
+      return tasks.sort((a, b) => {
+        if (b.round !== a.round) return b.round - a.round
+        const hbA = heartbeatForTask(a.task_id)
+        const hbB = heartbeatForTask(b.task_id)
+        return (hbB?.seconds_since_last ?? 0) - (hbA?.seconds_since_last ?? 0)
+      })
+    case 'longest-running':
+      return tasks.sort((a, b) => {
+        const durA = a.current_worker?.duration_s ?? 0
+        const durB = b.current_worker?.duration_s ?? 0
+        return durB - durA
+      })
+    case 'recent':
+      return tasks.sort((a, b) => {
+        const startA = a.current_worker?.started_at ?? ''
+        const startB = b.current_worker?.started_at ?? ''
+        return startB.localeCompare(startA)
+      })
+    case 'by-phase':
+      return tasks.sort((a, b) => {
+        const phaseOrder = pipelineSteps.value.map(s => s.name)
+        const idxA = phaseOrder.indexOf(a.phase)
+        const idxB = phaseOrder.indexOf(b.phase)
+        return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB)
+      })
+    default:
+      return tasks
+  }
 })
 
 // --- Flattened Events ---
@@ -321,6 +384,22 @@ const compressedCycles = computed<CompressedCycleGroup[]>(() => {
   return result
 })
 
+// --- Warning attention pulse ---
+const warningAttentionKeys = ref<Set<string>>(new Set())
+const seenWarningKeys = ref<Set<string>>(new Set())
+
+watch(warnings, (newWarnings) => {
+  for (const w of newWarnings) {
+    if (w.level === 'red' && !seenWarningKeys.value.has(w.key)) {
+      seenWarningKeys.value.add(w.key)
+      warningAttentionKeys.value.add(w.key)
+      setTimeout(() => {
+        warningAttentionKeys.value.delete(w.key)
+      }, 5000)
+    }
+  }
+})
+
 function formatCycleDuration(d: number): string {
   if (d < 1) return `${Math.round(d * 1000)}ms`
   if (d < 60) return `${d.toFixed(1)}s`
@@ -355,90 +434,158 @@ function formatCycleDuration(d: number): string {
 
     <!-- Active state -->
     <template v-if="data && data.enabled">
-      <!-- 1. Status Banner -->
-      <div class="rounded-lg bg-white dark:bg-gray-900 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none p-4 mb-4">
-        <div class="flex items-center gap-4 flex-wrap">
-          <!-- Status dot + label -->
-          <div class="flex items-center gap-2">
-            <span class="relative flex h-2.5 w-2.5">
-              <span
-                v-if="statusDotPingColor"
-                class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-                :class="statusDotPingColor"
-              />
-              <span class="relative inline-flex rounded-full h-2.5 w-2.5" :class="statusDotColor" />
+      <!-- 1. Sticky header: stale banner + status banner + loop visualizer -->
+      <div class="sticky top-0 z-10 -mx-6 md:-mx-8 px-6 md:px-8 pb-2 pt-1 bg-gray-50 dark:bg-gray-950 border-b border-gray-200/80 dark:border-gray-700/50 shadow-sm">
+        <!-- Stale data banner -->
+        <div
+          v-if="data.orchestrator_status === 'stale'"
+          class="mb-2 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 px-4 py-2.5 flex items-center gap-2"
+        >
+          <svg class="h-4 w-4 text-amber-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+          </svg>
+          <span class="text-sm text-amber-700 dark:text-amber-300">Data may be stale — no events in 2+ minutes</span>
+        </div>
+
+        <!-- Status Banner -->
+        <div class="rounded-lg bg-white dark:bg-gray-900 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none p-4 mb-2">
+          <div class="flex items-center gap-4 flex-wrap">
+            <!-- Status dot + label -->
+            <div class="flex items-center gap-2">
+              <span class="relative flex h-2.5 w-2.5">
+                <span
+                  v-if="statusDotPingColor"
+                  class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                  :class="statusDotPingColor"
+                />
+                <span class="relative inline-flex rounded-full h-2.5 w-2.5" :class="statusDotColor" />
+              </span>
+              <span class="text-sm font-medium text-gray-900 dark:text-gray-100">
+                {{ statusLabel }}
+              </span>
+            </div>
+
+            <span class="text-gray-300 dark:text-gray-600">|</span>
+
+            <!-- Cycle number -->
+            <span class="text-sm text-gray-600 dark:text-gray-400">
+              Cycle #{{ data.current_cycle }}
             </span>
-            <span class="text-sm font-medium text-gray-900 dark:text-gray-100">
-              {{ statusLabel }}
+
+            <span class="text-gray-300 dark:text-gray-600">|</span>
+
+            <!-- Worker count -->
+            <span class="text-sm text-gray-600 dark:text-gray-400">
+              {{ workerCountLabel }}
+            </span>
+
+            <span class="text-gray-300 dark:text-gray-600">|</span>
+
+            <!-- Last event -->
+            <span class="text-sm text-gray-500 dark:text-gray-500">
+              Updated {{ lastEventTimestamp ? relativeTime(lastEventTimestamp) : 'never' }}
             </span>
           </div>
-
-          <span class="text-gray-300 dark:text-gray-600">|</span>
-
-          <!-- Cycle number -->
-          <span class="text-sm text-gray-600 dark:text-gray-400">
-            Cycle #{{ data.current_cycle }}
-          </span>
-
-          <span class="text-gray-300 dark:text-gray-600">|</span>
-
-          <!-- Worker count -->
-          <span class="text-sm text-gray-600 dark:text-gray-400">
-            {{ workerCountLabel }}
-          </span>
-
-          <span class="text-gray-300 dark:text-gray-600">|</span>
-
-          <!-- Last event -->
-          <span class="text-sm text-gray-500 dark:text-gray-500">
-            Updated {{ lastEventTimestamp ? relativeTime(lastEventTimestamp) : 'never' }}
-          </span>
         </div>
+
+        <!-- Loop visualizer (inside sticky header) -->
+        <ReconcilerLoopBar
+          v-if="latestPhaseTiming || currentPhase"
+          :phase-timing="latestPhaseTiming"
+          :current-phase="currentPhase"
+        />
       </div>
 
-      <!-- 2. Loop visualizer -->
-      <ReconcilerLoopBar
-        v-if="latestPhaseTiming || currentPhase"
-        :phase-timing="latestPhaseTiming"
-        :current-phase="currentPhase"
-      />
-
-      <!-- 3. Warning cards -->
-      <div v-if="warnings.length > 0" class="space-y-2 mb-6">
-        <div
-          v-for="w in warnings"
-          :key="w.key"
-          class="rounded-lg px-4 py-3 border-l-4"
-          :class="w.level === 'red'
-            ? 'bg-red-50 dark:bg-red-950/20 border-l-red-500'
-            : 'bg-amber-50 dark:bg-amber-950/20 border-l-amber-500'"
-        >
-          <p
-            class="text-sm font-medium"
-            :class="w.level === 'red'
-              ? 'text-red-800 dark:text-red-200'
-              : 'text-amber-800 dark:text-amber-200'"
+      <!-- Content area (dims when stale) -->
+      <div
+        class="transition-opacity duration-300 mt-4"
+        :class="{ 'opacity-60': data.orchestrator_status === 'stale' }"
+      >
+        <!-- 2. Warning cards -->
+        <div v-if="warnings.length > 0" class="space-y-2 mb-6">
+          <div
+            v-for="w in warnings"
+            :key="w.key"
+            class="rounded-lg px-4 py-3 border-l-4"
+            :class="[
+              w.level === 'red'
+                ? 'bg-red-50 dark:bg-red-950/20 border-l-red-500'
+                : 'bg-amber-50 dark:bg-amber-950/20 border-l-amber-500',
+              warningAttentionKeys.has(w.key) ? 'animate-warning-attention' : '',
+            ]"
           >
-            {{ w.title }}
-          </p>
-          <p
-            class="text-xs mt-1"
-            :class="w.level === 'red'
-              ? 'text-red-600 dark:text-red-400'
-              : 'text-amber-600 dark:text-amber-400'"
-          >
-            {{ w.detail }}
-          </p>
+            <p
+              class="text-sm font-medium"
+              :class="w.level === 'red'
+                ? 'text-red-800 dark:text-red-200'
+                : 'text-amber-800 dark:text-amber-200'"
+            >
+              {{ w.title }}
+            </p>
+            <p
+              class="text-xs mt-1"
+              :class="w.level === 'red'
+                ? 'text-red-600 dark:text-red-400'
+                : 'text-amber-600 dark:text-amber-400'"
+            >
+              {{ w.detail }}
+            </p>
+          </div>
         </div>
-      </div>
 
-      <!-- 4. Split layout: lg+ side-by-side, mobile stacked -->
-      <div class="flex flex-col-reverse lg:flex-row gap-6">
-        <!-- Left panel: Cycle timeline (70%) -->
-        <div class="lg:w-[70%] min-w-0 space-y-6">
+        <!-- 3. Active Work section (full-width tasks) -->
+        <div class="mb-8">
+          <!-- Section header with counts + sort -->
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h2 class="text-xs font-medium text-gray-400 uppercase tracking-wider">Active Work</h2>
+              <p v-if="tasksInFlight.length > 0" class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                In Flight &mdash; {{ tasksInFlight.length }} {{ tasksInFlight.length === 1 ? 'task' : 'tasks' }}
+                <span class="text-gray-400 dark:text-gray-500">
+                  ({{ taskHealthCounts.healthy }} healthy, {{ taskHealthCounts.retrying }} retrying, {{ taskHealthCounts.stuck }} stuck)
+                </span>
+              </p>
+            </div>
+            <div v-if="tasksInFlight.length > 0">
+              <select
+                v-model="sortBy"
+                class="text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md px-2 py-1 text-gray-600 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              >
+                <option v-for="opt in sortOptions" :key="opt.value" :value="opt.value">
+                  {{ opt.label }}
+                </option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Task cards grid -->
+          <TransitionGroup
+            v-if="tasksInFlight.length > 0"
+            tag="div"
+            class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
+            enter-active-class="animate-card-enter"
+            leave-active-class="transition-opacity duration-200"
+            leave-to-class="opacity-0"
+          >
+            <TaskActivityCard
+              v-for="t in tasksInFlight"
+              :key="t.task_id"
+              :task="t"
+              :pipeline-steps="pipelineSteps"
+              :heartbeat="heartbeatForTask(t.task_id)"
+            />
+          </TransitionGroup>
+
+          <div v-else class="rounded-lg bg-white dark:bg-gray-900 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none p-6 text-center">
+            <p class="text-sm text-gray-400 dark:text-gray-500">No tasks in flight.</p>
+          </div>
+        </div>
+
+        <!-- 4. Event Timeline section (full-width) -->
+        <div class="space-y-6">
           <!-- Recent Events -->
           <div>
-            <h2 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Recent Events</h2>
+            <h2 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">Event Timeline</h2>
             <EventStream :events="flattenedEvents" :active-heartbeats="heartbeats" />
           </div>
 
@@ -485,37 +632,32 @@ function formatCycleDuration(d: number): string {
             </Transition>
           </div>
         </div>
-
-        <!-- Right panel: In-flight tasks (30%, sticky on lg) -->
-        <div class="lg:w-[30%] flex-shrink-0">
-          <div class="lg:sticky lg:top-6">
-            <h2 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-3">In Flight</h2>
-
-            <div v-if="tasksInFlight.length > 0" class="space-y-3">
-              <TaskActivityCard
-                v-for="t in tasksInFlight"
-                :key="t.task_id"
-                :task="t"
-                :pipeline-steps="pipelineSteps"
-                :heartbeat="heartbeatForTask(t.task_id)"
-              />
-            </div>
-
-            <div v-else class="rounded-lg bg-white dark:bg-gray-900 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none p-6 text-center">
-              <p class="text-sm text-gray-400 dark:text-gray-500">No tasks in flight.</p>
-            </div>
-          </div>
-        </div>
       </div>
     </template>
 
-    <!-- Loading spinner -->
-    <div v-if="!data && !loadError" class="py-16 flex flex-col items-center gap-3">
-      <svg class="animate-spin h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24">
-        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-      </svg>
-      <span class="text-sm text-gray-400 dark:text-gray-500">Loading activity...</span>
+    <!-- Skeleton loading state -->
+    <div v-if="!data && !loadError" class="space-y-4">
+      <!-- Status banner skeleton -->
+      <div class="skeleton h-10 w-full" />
+
+      <!-- Loop bar skeleton -->
+      <div class="skeleton h-6 w-full" />
+
+      <!-- Task cards skeleton (grid) -->
+      <div class="skeleton h-4 w-32 mb-2" />
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div class="skeleton h-28 w-full" />
+        <div class="skeleton h-28 w-full" />
+        <div class="skeleton h-28 w-full" />
+      </div>
+
+      <!-- Event timeline skeleton -->
+      <div class="skeleton h-4 w-32 mb-2 mt-6" />
+      <div class="space-y-3">
+        <div class="skeleton h-8 w-full" />
+        <div class="skeleton h-8 w-full" />
+        <div class="skeleton h-8 w-[90%]" />
+      </div>
     </div>
   </div>
 </template>
