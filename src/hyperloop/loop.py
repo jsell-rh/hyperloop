@@ -30,6 +30,7 @@ from hyperloop.domain.model import (
     TaskStatus,
     Verdict,
     WorkerHandle,
+    WorkerResult,
 )
 from hyperloop.domain.reconciler import (
     Summary,
@@ -46,7 +47,7 @@ if TYPE_CHECKING:
     from hyperloop.compose import PromptComposer
     from hyperloop.cycle.intake import IntakeResult
     from hyperloop.cycle.spawn import SpawnPlan
-    from hyperloop.domain.model import Process, WorkerResult
+    from hyperloop.domain.model import Process
     from hyperloop.ports.channel import ChannelPort
     from hyperloop.ports.hook import CycleHook
     from hyperloop.ports.pr import PRPort
@@ -494,15 +495,15 @@ class Orchestrator:
         self._probe.auditors_started(count=len(needs_audit), cycle=cycle_num)
         audits_run = 0
 
-        def _run_one(spec_ref: str) -> tuple[str, bool]:
+        def _run_one(spec_ref: str) -> tuple[str, WorkerResult]:
             self._probe.audit_started(spec_ref=spec_ref, cycle=cycle_num)
             prompt = self._compose_auditor_prompt(spec_ref)
-            success = self._runtime.run_serial("auditor", prompt)
-            return spec_ref, success
+            result = self._runtime.run_auditor(spec_ref, prompt)
+            return spec_ref, result
 
         start_times: dict[str, float] = {}
         with ThreadPoolExecutor(max_workers=self._max_auditors) as executor:
-            futures: dict[Future[tuple[str, bool]], str] = {}
+            futures: dict[Future[tuple[str, WorkerResult]], str] = {}
             for spec_ref in needs_audit:
                 start_times[spec_ref] = time.monotonic()
                 futures[executor.submit(_run_one, spec_ref)] = spec_ref
@@ -510,14 +511,17 @@ class Orchestrator:
             for future in as_completed(futures):
                 spec_ref = futures[future]
                 try:
-                    _, success = future.result()
+                    _, result = future.result()
                 except Exception:
-                    success = False
+                    result = WorkerResult(
+                        verdict=Verdict.FAIL,
+                        detail=f"Auditor raised exception for {spec_ref}",
+                    )
                 duration_s = time.monotonic() - start_times[spec_ref]
                 spec_path = spec_ref.split("@")[0] if "@" in spec_ref else spec_ref
                 audits_run += 1
 
-                if success:
+                if result.verdict == Verdict.PASS:
                     self._converged_specs.add(spec_ref)
                     self._probe.convergence_marked(
                         spec_path=spec_path, spec_ref=spec_ref, cycle=cycle_num
@@ -535,13 +539,13 @@ class Orchestrator:
                         cycle=cycle_num,
                         duration_s=duration_s,
                     )
-                    # Store audit finding so it is available to process-improver and PM
+                    # Store audit finding with the agent's actual detail
                     self._state.store_review(
                         task_id=f"audit-{spec_ref}",
                         round=0,
                         role="auditor",
                         verdict="fail",
-                        detail=f"Alignment audit failed for {spec_ref}",
+                        detail=result.detail,
                     )
                     self._has_drift = True
 
@@ -745,6 +749,38 @@ class Orchestrator:
                     v = self._spec_source.file_version(spec_path)
                     if v:
                         self._state.set_spec_ref(task.id, f"{spec_path}@{v}")
+        # Create summaries for specs the PM evaluated but created no tasks for.
+        # Without this, detect_coverage_gaps fires again next cycle and the PM
+        # re-evaluates the same specs indefinitely.
+        if result.success and self._spec_source is not None:
+            import yaml
+
+            world = self._state.get_world()
+            new_task_specs = {
+                t.spec_ref.split("@")[0]
+                for t in world.tasks.values()
+                if t.id not in result.tasks_before
+            }
+            for spec_path in result.unprocessed_specs:
+                if spec_path not in new_task_specs:
+                    v = self._spec_source.file_version(spec_path)
+                    if v:
+                        summary_yaml = yaml.dump(
+                            {
+                                "spec_path": spec_path,
+                                "spec_ref": f"{spec_path}@{v}",
+                                "total_tasks": 0,
+                                "completed": 0,
+                                "failed": 0,
+                                "failure_themes": [],
+                                "last_audit": None,
+                                "last_audit_result": None,
+                            },
+                            default_flow_style=False,
+                            sort_keys=False,
+                        )
+                        self._state.store_summary(spec_path, summary_yaml)
+
         self._probe.intake_ran(
             unprocessed_specs=result.unprocessed_count,
             created_tasks=result.created_count,
