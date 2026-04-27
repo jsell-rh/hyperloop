@@ -27,6 +27,8 @@ const { data: process, error } = useAsyncData<ProcessData>(
   },
 )
 
+useHead({ title: 'Process - Hyperloop' })
+
 const showRawYaml = ref(false)
 
 const gateEntries = computed(() =>

@@ -2,6 +2,7 @@
 import type { TaskDetail, PipelineStepInfo, ReconstructedPrompt } from '~/types'
 
 const route = useRoute()
+const router = useRouter()
 const { fetchTask, fetchPipeline, fetchTaskPrompt, restartTask, retireTask, forceClearTask } = useApi()
 const { markFetched } = useLiveness()
 
@@ -27,7 +28,27 @@ const { data: pipelineSteps } = useAsyncData<PipelineStepInfo[]>(
   { server: false, default: () => [] },
 )
 
-const activeTab = ref<'overview' | 'reviews' | 'prompt'>('overview')
+// ---------------------------------------------------------------------------
+// Deep-linkable tab state
+// ---------------------------------------------------------------------------
+const validTabs = ['overview', 'reviews', 'prompt'] as const
+type TabName = typeof validTabs[number]
+
+function isValidTab(value: unknown): value is TabName {
+  return typeof value === 'string' && (validTabs as readonly string[]).includes(value)
+}
+
+const activeTab = computed<TabName>({
+  get() {
+    const queryTab = route.query.tab
+    if (isValidTab(queryTab)) return queryTab
+    return 'overview'
+  },
+  set(tab: TabName) {
+    const query = tab === 'overview' ? {} : { tab }
+    router.replace({ query })
+  },
+})
 
 // Sorted reviews: most recent round first
 const sortedReviews = computed(() => {
@@ -69,21 +90,36 @@ function getVerdictClasses(verdict: string): string {
 const promptData = ref<ReconstructedPrompt[]>([])
 const promptLoaded = ref(false)
 
+async function loadPromptData(): Promise<void> {
+  if (promptLoaded.value) return
+  try {
+    promptData.value = await fetchTaskPrompt(taskId.value)
+    markFetched()
+  } catch {
+    promptData.value = []
+  }
+  promptLoaded.value = true
+}
+
 watch(activeTab, async (tab) => {
-  if (tab === 'prompt' && !promptLoaded.value) {
-    try {
-      promptData.value = await fetchTaskPrompt(taskId.value)
-      markFetched()
-    } catch {
-      promptData.value = []
-    }
-    promptLoaded.value = true
+  if (tab === 'prompt') {
+    await loadPromptData()
   }
 })
 
+// Also load prompt data if we land directly on the prompt tab
+onMounted(async () => {
+  if (activeTab.value === 'prompt') {
+    await loadPromptData()
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Dynamic page title
+// ---------------------------------------------------------------------------
 useHead({ title: computed(() => {
   if (!task.value) return 'Task - Hyperloop'
-  return `${task.value.id} - ${task.value.title} - Hyperloop`
+  return `${task.value.id} - Hyperloop`
 }) })
 
 const breadcrumbItems = computed(() => {
@@ -175,6 +211,22 @@ const showForceClear = computed(() => {
   return task.value?.status === 'in-progress' && task.value?.phase != null
 })
 
+// ---------------------------------------------------------------------------
+// Keyboard navigation: tab switching (1, 2, 3)
+// ---------------------------------------------------------------------------
+useKeyboard({
+  keys: {
+    '1': () => { activeTab.value = 'overview' },
+    '2': () => { activeTab.value = 'reviews' },
+    '3': () => { activeTab.value = 'prompt' },
+  },
+})
+
+// Task not found detection
+const taskNotFound = computed(() => {
+  return error.value != null && !task.value
+})
+
 // Poll every 10 seconds
 let refreshInterval: ReturnType<typeof setInterval> | undefined
 
@@ -194,8 +246,25 @@ onUnmounted(() => {
     <!-- Breadcrumb -->
     <Breadcrumb :items="breadcrumbItems" />
 
-    <!-- Error banner -->
-    <div v-if="error" class="mb-4 rounded-lg bg-white dark:bg-gray-900 shadow-card p-4 flex items-center gap-3 border-l-2 border-l-red-400">
+    <!-- Task not found -->
+    <div
+      v-if="taskNotFound"
+      class="py-16 flex flex-col items-center gap-3"
+    >
+      <svg class="h-10 w-10 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+      </svg>
+      <h3 class="text-base font-semibold text-gray-600 dark:text-gray-400">Task not found</h3>
+      <p class="text-sm text-gray-400 dark:text-gray-500 text-center max-w-sm">
+        This task may have been retired or garbage collected.
+      </p>
+      <NuxtLink to="/" class="mt-2 text-sm text-blue-600 dark:text-blue-400 hover:underline">
+        Back to overview
+      </NuxtLink>
+    </div>
+
+    <!-- Error banner (API unreachable, but not 404) -->
+    <div v-if="error && !taskNotFound" class="mb-4 rounded-lg bg-white dark:bg-gray-900 shadow-card p-4 flex items-center gap-3 border-l-2 border-l-red-400">
       <svg class="h-4 w-4 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd" />
       </svg>
@@ -233,6 +302,7 @@ onUnmounted(() => {
             ? 'border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
             : 'border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/30'"
           :disabled="controlLoading"
+          aria-label="Restart this task"
           @click="handleRestart"
         >
           <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -246,6 +316,7 @@ onUnmounted(() => {
             ? 'border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
             : 'border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30'"
           :disabled="controlLoading"
+          aria-label="Retire this task"
           @click="handleRetire"
         >
           <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -260,6 +331,7 @@ onUnmounted(() => {
             ? 'border-gray-200 dark:border-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
             : 'border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30'"
           :disabled="controlLoading"
+          aria-label="Force clear the current gate"
           @click="handleForceClear"
         >
           <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -272,7 +344,7 @@ onUnmounted(() => {
       <!-- Tab navigation -->
       <div class="flex gap-0 border-b border-gray-200 dark:border-gray-800 mb-6">
         <button
-          v-for="tab in (['overview', 'reviews', 'prompt'] as const)"
+          v-for="(tab, idx) in validTabs"
           :key="tab"
           class="px-4 py-2 text-sm font-medium border-b-2 transition-colors capitalize"
           :class="activeTab === tab
@@ -281,6 +353,7 @@ onUnmounted(() => {
           @click="activeTab = tab"
         >
           {{ tab }}
+          <span class="ml-1 text-[10px] text-gray-400 dark:text-gray-500 font-mono">{{ idx + 1 }}</span>
         </button>
       </div>
 
@@ -347,6 +420,12 @@ onUnmounted(() => {
                 </div>
               </dl>
             </div>
+
+            <!-- Live worker activity indicator -->
+            <WorkerActivityIndicator
+              :task-id="task.id"
+              :task-status="task.status"
+            />
 
             <!-- PR description -->
             <div
@@ -415,6 +494,8 @@ onUnmounted(() => {
             <ReviewTimeline
               v-if="sortedReviews.length > 0"
               :reviews="sortedReviews"
+              :current-round="task.round"
+              :current-phase="task.phase"
             />
             <div
               v-else
@@ -424,7 +505,9 @@ onUnmounted(() => {
                 <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.087.16 2.185.283 3.293.369V21l4.076-4.076a1.526 1.526 0 011.037-.443 48.282 48.282 0 005.68-.494c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
               </svg>
               <h3 class="text-base font-semibold text-gray-600 dark:text-gray-400">No reviews yet</h3>
-              <p class="text-sm text-gray-400 dark:text-gray-500">Reviews will appear here as the task progresses through the pipeline.</p>
+              <p class="text-sm text-gray-400 dark:text-gray-500 text-center max-w-sm">
+                This task hasn't been verified yet. Reviews will appear here as the task progresses through the pipeline.
+              </p>
             </div>
           </div>
 

@@ -8,6 +8,23 @@ useHead({
     { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap' },
   ],
 })
+
+// ---------------------------------------------------------------------------
+// Global keyboard navigation
+// ---------------------------------------------------------------------------
+const router = useRouter()
+const showKeyboardHelp = ref(false)
+
+useKeyboard({
+  goTo: {
+    H: () => router.push('/'),
+    A: () => router.push('/activity'),
+    P: () => router.push('/process'),
+  },
+  keys: {
+    '?': () => { showKeyboardHelp.value = !showKeyboardHelp.value },
+  },
+})
 </script>
 
 <template>
@@ -18,5 +35,6 @@ useHead({
         <component :is="Component" :key="$route.path" />
       </Transition>
     </NuxtPage>
+    <KeyboardHelpModal :open="showKeyboardHelp" @close="showKeyboardHelp = false" />
   </div>
 </template>
