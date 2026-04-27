@@ -1893,7 +1893,7 @@ class TestAgentRoster:
         impl = next(r for r in data if r["role"] == "implementer")
         assert impl["total_executions"] == 3
         # 2 pass out of 3 total = 0.667
-        assert impl["success_rate"] == pytest.approx(0.667, abs=0.001)
+        assert impl["success_rate"] == pytest.approx(0.667, abs=0.001)  # type: ignore[reportUnknownMemberType]
         # avg of 60, 90, 30 = 60.0
         assert impl["avg_duration_s"] == 60.0
         assert len(impl["failure_patterns"]) == 1
