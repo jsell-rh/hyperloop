@@ -1,7 +1,8 @@
-"""GET /api/agents — per-role agent definitions with layer breakdown."""
+"""GET /api/agents — per-role agent definitions with layer breakdown and roster."""
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from typing import TYPE_CHECKING, cast
 
 import yaml
@@ -9,7 +10,8 @@ from fastapi import APIRouter
 
 from dashboard.server.agents_loader import load_agent_templates
 from dashboard.server.deps import get_repo_path
-from dashboard.server.models import AgentDefinition, CheckScript
+from dashboard.server.models import AgentDefinition, AgentRosterEntry, CheckScript
+from dashboard.server.routes._events import find_events_path, parse_events
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -75,6 +77,67 @@ def list_agents() -> list[AgentDefinition]:
             )
         )
     return results
+
+
+def _compute_roster(repo_path: Path) -> list[AgentRosterEntry]:
+    """Compute per-role performance metrics from worker_reaped events."""
+    events_path = find_events_path(repo_path)
+    if events_path is None or not events_path.exists():
+        return []
+
+    events = parse_events(events_path)
+
+    # Group worker_reaped events by role
+    per_role: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for ev in events:
+        if ev.get("event") != "worker_reaped":
+            continue
+        role = str(ev.get("role", ""))
+        if role:
+            per_role[role].append(ev)
+
+    roster: list[AgentRosterEntry] = []
+    for role in sorted(per_role):
+        reaped = per_role[role]
+        total = len(reaped)
+        pass_count = sum(1 for e in reaped if str(e.get("verdict", "")) == "pass")
+        success_rate = pass_count / total if total > 0 else None
+
+        durations: list[float] = []
+        for e in reaped:
+            dur = e.get("duration_s")
+            if dur is not None:
+                durations.append(float(str(dur)))
+        avg_duration = sum(durations) / len(durations) if durations else None
+
+        # Top 3 failure detail strings
+        fail_details: Counter[str] = Counter()
+        for e in reaped:
+            if str(e.get("verdict", "")) != "pass":
+                detail = str(e.get("detail", ""))
+                if detail:
+                    # Truncate long detail strings
+                    truncated = detail[:120] + "..." if len(detail) > 120 else detail
+                    fail_details[truncated] += 1
+        failure_patterns = [pattern for pattern, _ in fail_details.most_common(3)]
+
+        roster.append(
+            AgentRosterEntry(
+                role=role,
+                success_rate=round(success_rate, 3) if success_rate is not None else None,
+                avg_duration_s=round(avg_duration, 1) if avg_duration is not None else None,
+                total_executions=total,
+                failure_patterns=failure_patterns,
+            )
+        )
+
+    return roster
+
+
+@router.get("/api/agents/roster")
+def get_agent_roster() -> list[AgentRosterEntry]:
+    """Return per-role performance metrics computed from FileProbe events."""
+    return _compute_roster(get_repo_path())
 
 
 @router.get("/api/agents/checks")

@@ -6,7 +6,6 @@ import contextlib
 import json
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
@@ -34,47 +33,11 @@ from dashboard.server.models import (
     WorkerHeartbeat,
     WorkerHistoryEntry,
 )
+from dashboard.server.routes._events import find_events_path, parse_events
 
 router = APIRouter()
 
 _STALE_THRESHOLD_S = 120.0
-
-
-def _find_events_path(repo_path: Path) -> Path | None:
-    """Find the JSONL events file in the cache directory."""
-    import hashlib
-
-    repo_hash = hashlib.md5(str(repo_path).encode()).hexdigest()[:8]
-    events_path = Path.home() / ".cache" / "hyperloop" / repo_hash / "events.jsonl"
-    if events_path.exists():
-        return events_path
-
-    # Legacy: check pointer file in repo (older versions wrote it there)
-    pointer = repo_path / ".hyperloop" / ".dashboard-events-path"
-    if pointer.exists():
-        text = pointer.read_text().strip()
-        if text:
-            return Path(text)
-
-    return None
-
-
-def _parse_events(events_path: Path) -> list[dict[str, Any]]:
-    """Read and parse JSONL events file, skipping malformed lines."""
-    events: list[dict[str, Any]] = []
-    try:
-        text = events_path.read_text()
-    except OSError:
-        return events
-    for line in text.strip().splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return events
 
 
 def _group_by_cycle(
@@ -573,7 +536,7 @@ def get_activity(
     limit: int = 20,
 ) -> ActivityResponse:
     """Return cycle-grouped activity from the FileProbe event log."""
-    events_path = _find_events_path(get_repo_path())
+    events_path = find_events_path(get_repo_path())
     if events_path is None or not events_path.exists():
         return ActivityResponse(
             current_cycle=0,
@@ -585,7 +548,7 @@ def get_activity(
             flattened_events=[],
         )
 
-    events = _parse_events(events_path)
+    events = parse_events(events_path)
     if not events:
         return ActivityResponse(
             current_cycle=0,
@@ -621,7 +584,7 @@ def get_worker_heartbeats(since: str | None = None) -> HeartbeatResponse:
 
     Reads only the tail of the events JSONL file for speed (sub-50ms target).
     """
-    events_path = _find_events_path(get_repo_path())
+    events_path = find_events_path(get_repo_path())
     if not events_path or not events_path.exists():
         return HeartbeatResponse(heartbeats=[], server_time=datetime.now(UTC).isoformat())
 

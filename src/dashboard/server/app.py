@@ -17,6 +17,7 @@ from dashboard.server.routes import (
     activity,
     agents,
     health,
+    metrics,
     pipeline,
     process,
     specs,
@@ -53,6 +54,7 @@ def create_app(repo_path: str = ".") -> FastAPI:
     app.include_router(activity.router)
     app.include_router(agents.router)
     app.include_router(health.router)
+    app.include_router(metrics.router)
     app.include_router(pipeline.router)
     app.include_router(process.router)
     app.include_router(specs.router)
