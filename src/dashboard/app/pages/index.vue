@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import type { SpecSummary, Summary, GraphData, PipelineStepInfo } from '~/types'
+import type { SpecSummary, Summary, GraphData, PipelineStepInfo, HealthData, ActivityResponse, SyncStatus } from '~/types'
 
-const { fetchSpecs, fetchSummary, fetchGraph, fetchPipeline } = useApi()
+const { fetchSpecs, fetchSummary, fetchGraph, fetchPipeline, fetchHealth, fetchActivity } = useApi()
 
 const { markFetched } = useLiveness()
 
@@ -23,6 +23,30 @@ const { data: summary, error: summaryError } = useAsyncData<Summary>(
     return result
   },
   { server: false, default: () => ({ total: 0, not_started: 0, in_progress: 0, complete: 0, failed: 0, specs_total: 0, specs_complete: 0 }) },
+)
+
+const { data: health } = useAsyncData<HealthData | null>(
+  'health',
+  async () => {
+    try {
+      return await fetchHealth()
+    } catch {
+      return null
+    }
+  },
+  { server: false, default: () => null },
+)
+
+const { data: activity } = useAsyncData<ActivityResponse | null>(
+  'activity',
+  async () => {
+    try {
+      return await fetchActivity({ limit: 1 })
+    } catch {
+      return null
+    }
+  },
+  { server: false, default: () => null },
 )
 
 // Spec-level metrics computed from specs data
@@ -50,6 +74,80 @@ const specMetrics = computed(() => {
   return { complete, inProgress, blocked, total }
 })
 
+// ---------------------------------------------------------------------------
+// Convergence metrics (from spec stages)
+// ---------------------------------------------------------------------------
+const convergenceMetrics = computed(() => {
+  const list = specs.value ?? []
+  const total = list.length
+  let aligned = 0
+
+  for (const s of list) {
+    const stage = s.stage ?? null
+    if (stage === 'converged' || stage === 'baselined') {
+      aligned++
+    } else if (stage === null) {
+      // Fallback for old API: consider specs where all tasks are complete as aligned
+      if (s.tasks_total > 0 && s.tasks_complete === s.tasks_total) {
+        aligned++
+      }
+    }
+  }
+
+  return { aligned, total }
+})
+
+const isFullyConverged = computed(() => {
+  const { aligned, total } = convergenceMetrics.value
+  return total > 0 && aligned === total
+})
+
+// ---------------------------------------------------------------------------
+// System status
+// ---------------------------------------------------------------------------
+const systemStatus = computed<{ label: string; color: 'green' | 'amber' | 'red' | 'default' }>(() => {
+  const healthStatus = health.value?.status ?? null
+  const orchStatus = activity.value?.orchestrator_status ?? null
+
+  if (orchStatus === 'halted') return { label: 'Halted', color: 'red' }
+  if (healthStatus === 'ok' || orchStatus === 'running') return { label: 'Running', color: 'green' }
+
+  // If we have activity data but no recent events, it might be stale
+  const events = activity.value?.flattened_events ?? []
+  if (events.length > 0) {
+    const lastEventTime = new Date(events[0].timestamp).getTime()
+    const elapsed = (Date.now() - lastEventTime) / 1000
+    if (elapsed > 600) return { label: 'Stale', color: 'amber' }
+    return { label: 'Running', color: 'green' }
+  }
+
+  if (healthStatus !== null) return { label: 'Running', color: 'green' }
+  return { label: 'Unknown', color: 'default' }
+})
+
+const lastEventRelative = computed(() => {
+  const events = activity.value?.flattened_events ?? []
+  if (events.length === 0) return '--'
+  const ts = events[0].timestamp
+  const elapsed = (Date.now() - new Date(ts).getTime()) / 1000
+  if (elapsed < 60) return `${Math.round(elapsed)}s ago`
+  if (elapsed < 3600) return `${Math.floor(elapsed / 60)}m ago`
+  return `${Math.floor(elapsed / 3600)}h ago`
+})
+
+// ---------------------------------------------------------------------------
+// Active workers
+// ---------------------------------------------------------------------------
+const activeWorkers = computed(() => activity.value?.active_workers ?? [])
+
+const workerRoles = computed(() => {
+  const roles = new Set<string>()
+  for (const w of activeWorkers.value) {
+    roles.add(w.role)
+  }
+  return [...roles]
+})
+
 const { data: graph, error: graphError } = useAsyncData<GraphData>(
   'graph',
   async () => {
@@ -68,16 +166,36 @@ const { data: pipelineSteps } = useAsyncData<PipelineStepInfo[]>(
 
 const error = computed(() => specsError.value || summaryError.value || graphError.value)
 
-// Sort specs: blocked first, then in-progress, then not-started, then complete
+// ---------------------------------------------------------------------------
+// Derive sync status for sorting
+// ---------------------------------------------------------------------------
+function deriveSyncStatus(spec: SpecSummary): SyncStatus {
+  const stage = spec.stage ?? null
+  const drift = spec.drift_type ?? null
+
+  if (stage === 'converged' || stage === 'baselined') return 'synced'
+  if (drift !== null) return 'drifted'
+  if (stage === 'in-progress' || stage === 'pending-audit') return 'syncing'
+
+  // Fallback from task counts
+  if (spec.tasks_in_progress > 0) return 'syncing'
+  if (spec.tasks_total > 0 && spec.tasks_complete === spec.tasks_total) return 'synced'
+  return 'drifted'
+}
+
+// Sort specs: drifted first (red/amber), then syncing (blue), then synced (green)
 const sortedSpecs = computed(() => {
   if (!specs.value) return []
   return [...specs.value].sort((a, b) => {
     const priority = (s: SpecSummary): number => {
+      // Failed/blocked specs are always first
       const isBlocked = s.tasks_failed > 0 && s.tasks_in_progress === 0
       if (isBlocked) return 0
-      if (s.tasks_in_progress > 0) return 1
-      if (s.tasks_not_started > 0) return 2
-      if (s.tasks_complete > 0 && s.tasks_failed === 0) return 3
+
+      const sync = deriveSyncStatus(s)
+      if (sync === 'drifted') return 1
+      if (sync === 'syncing') return 2
+      if (sync === 'synced') return 3
       return 4
     }
     return priority(a) - priority(b)
@@ -138,12 +256,11 @@ function scrollToGroup(dir: string): void {
   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-// Dynamic page title
+// Dynamic page title per spec requirements
 useHead({ title: computed(() => {
-  const ip = summary.value?.in_progress ?? 0
   const f = summary.value?.failed ?? 0
   if (f > 0) return `Hyperloop - ${f} failed`
-  if (ip > 0) return `Hyperloop - ${ip} in progress`
+  if (isFullyConverged.value) return 'Hyperloop - All aligned'
   return 'Hyperloop Dashboard'
 }) })
 
@@ -182,6 +299,8 @@ onMounted(() => {
       refreshNuxtData('summary'),
       refreshNuxtData('graph'),
       refreshNuxtData('pipeline-steps'),
+      refreshNuxtData('health'),
+      refreshNuxtData('activity'),
     ])
   }, 10_000)
 })
@@ -201,17 +320,78 @@ onUnmounted(() => {
       <span class="text-sm text-red-700 dark:text-red-400">Unable to reach the Hyperloop API. Retrying...</span>
     </div>
 
-    <!-- Summary bar: spec-level metrics -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-      <SummaryCard label="Complete" :count="specMetrics.complete" color="green" />
-      <SummaryCard label="In Progress" :count="specMetrics.inProgress" color="blue" />
-      <SummaryCard label="Blocked" :count="specMetrics.blocked" :color="specMetrics.blocked > 0 ? 'red' : undefined" />
-      <SummaryCard label="Total Specs" :count="specMetrics.total" />
+    <!-- 5 Summary cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-8">
+      <!-- 1. System Status -->
+      <SummaryCard label="System Status" :color="systemStatus.color">
+        <div class="flex items-center gap-2">
+          <span
+            class="h-2.5 w-2.5 rounded-full shrink-0"
+            :class="{
+              'bg-green-500 animate-status-pulse': systemStatus.color === 'green',
+              'bg-amber-500 animate-status-pulse': systemStatus.color === 'amber',
+              'bg-red-500': systemStatus.color === 'red',
+              'bg-gray-400': systemStatus.color === 'default',
+            }"
+          />
+          <span class="text-lg font-semibold text-gray-900 dark:text-gray-100">{{ systemStatus.label }}</span>
+        </div>
+        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">{{ lastEventRelative }}</p>
+      </SummaryCard>
+
+      <!-- 2. Convergence Progress -->
+      <SummaryCard label="Convergence" :color="isFullyConverged ? 'green' : 'default'">
+        <ConvergenceGauge :aligned="convergenceMetrics.aligned" :total="convergenceMetrics.total" />
+      </SummaryCard>
+
+      <!-- 3. Task Completion -->
+      <SummaryCard label="Task Completion" :color="(summary?.failed ?? 0) > 0 ? 'red' : 'default'">
+        <div class="flex items-baseline gap-3 flex-wrap">
+          <span class="text-lg font-semibold text-green-600 dark:text-green-400" style="font-variant-numeric: tabular-nums">{{ summary?.complete ?? 0 }}</span>
+          <span class="text-xs text-gray-400">complete</span>
+        </div>
+        <div class="flex items-baseline gap-2 mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+          <span>{{ summary?.in_progress ?? 0 }} in progress</span>
+          <span v-if="(summary?.failed ?? 0) > 0" class="text-red-500 dark:text-red-400 font-medium">{{ summary?.failed ?? 0 }} failed</span>
+        </div>
+      </SummaryCard>
+
+      <!-- 4. Active Work -->
+      <SummaryCard label="Active Work" :color="activeWorkers.length > 0 ? 'blue' : 'default'">
+        <p class="text-lg font-semibold text-gray-900 dark:text-gray-100" style="font-variant-numeric: tabular-nums">
+          {{ activeWorkers.length }} {{ activeWorkers.length === 1 ? 'worker' : 'workers' }}
+        </p>
+        <p v-if="workerRoles.length > 0" class="mt-0.5 text-xs text-gray-400 dark:text-gray-500 truncate">
+          {{ workerRoles.join(', ') }}
+        </p>
+        <p v-else class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">idle</p>
+      </SummaryCard>
+
+      <!-- 5. Health Checks -->
+      <SummaryCard label="Health" :color="health?.status === 'ok' ? 'green' : 'default'">
+        <div class="flex items-center gap-2">
+          <span
+            class="h-2 w-2 rounded-full shrink-0"
+            :class="health?.status === 'ok' ? 'bg-green-500' : 'bg-gray-400'"
+          />
+          <span class="text-sm text-gray-700 dark:text-gray-300">State sync</span>
+        </div>
+        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+          {{ health?.state_store ?? '--' }}
+        </p>
+      </SummaryCard>
     </div>
-    <!-- Task-level secondary line -->
-    <p class="text-sm text-gray-400 mb-8">
-      {{ summary?.total ?? 0 }} tasks total ({{ summary?.complete ?? 0 }} complete, {{ summary?.in_progress ?? 0 }} in progress, {{ summary?.failed ?? 0 }} failed)
-    </p>
+
+    <!-- Full convergence banner -->
+    <div
+      v-if="isFullyConverged && convergenceMetrics.total > 0"
+      class="mb-8 rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800/40 p-4 flex items-center gap-3"
+    >
+      <svg class="h-5 w-5 text-green-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <span class="text-sm font-medium text-green-700 dark:text-green-300">All specs fully converged</span>
+    </div>
 
     <!-- Sidebar + main content layout -->
     <div v-if="groupedSpecs.length > 0" class="flex gap-8">
