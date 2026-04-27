@@ -165,12 +165,41 @@ const heartbeatDetail = computed(() => {
   const agoText = secAgo < 60 ? `${secAgo}s ago` : `${Math.floor(secAgo / 60)}m ago`
   return { toolPart, msgCount, agoText }
 })
+
+// --- Health indicator border ---
+type HealthLevel = 'green' | 'amber' | 'red'
+
+const healthLevel = computed<HealthLevel>(() => {
+  const staleSeconds = props.heartbeat?.seconds_since_last ?? 0
+  if (staleSeconds > 120 || props.task.round >= 3) return 'red'
+  if (staleSeconds > 60 || props.task.round >= 2) return 'amber'
+  return 'green'
+})
+
+const healthBorderClass = computed(() => {
+  switch (healthLevel.value) {
+    case 'green': return 'border-l-4 border-l-green-500'
+    case 'amber': return 'border-l-4 border-l-amber-500'
+    case 'red': return 'border-l-4 border-l-red-500'
+  }
+})
+
+// --- Pulse dot tooltip ---
+const pulseDotTooltip = computed(() => {
+  if (!props.heartbeat) return 'Worker active'
+  const hb = props.heartbeat
+  const tool = hb.last_tool_name || hb.last_message_type || 'active'
+  const secAgo = Math.round(hb.seconds_since_last)
+  const agoText = secAgo < 60 ? `${secAgo}s ago` : `${Math.floor(secAgo / 60)}m ago`
+  return `${tool} tool, ${hb.message_count_since} messages, ${agoText}`
+})
 </script>
 
 <template>
   <NuxtLink
     :to="`/tasks/${task.task_id}`"
     class="block rounded-lg bg-white dark:bg-gray-900 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none p-4 hover:ring-2 hover:ring-blue-400/50 transition-all cursor-pointer"
+    :class="healthBorderClass"
   >
     <!-- Header: task ID, title, round badge -->
     <div class="flex items-start justify-between mb-3">
@@ -224,7 +253,7 @@ const heartbeatDetail = computed(() => {
     <div v-if="task.current_worker" class="space-y-1">
       <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
         <!-- Pulse dot -->
-        <span class="relative flex h-2 w-2 flex-shrink-0">
+        <span class="relative flex h-2 w-2 flex-shrink-0 cursor-default" :title="pulseDotTooltip">
           <span
             v-if="showPulsePing"
             class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
