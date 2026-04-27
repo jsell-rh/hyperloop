@@ -1,6 +1,6 @@
 """INTAKE phase -- detect spec gaps and create work via PM agent.
 
-Intake has a contained side effect (runs the PM agent via runtime.run_serial).
+Intake has a contained side effect (runs the PM agent via runtime.run_trunk_agent).
 Returns IntakeResult describing what happened so the Orchestrator can apply
 spec_ref pinning.
 """
@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from hyperloop.domain.model import IntakeContext, SpecChangeType, SpecIntakeEntry
+from hyperloop.domain.model import IntakeContext, SpecChangeType, SpecIntakeEntry, Verdict
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -55,6 +55,10 @@ def _detect_spec_entries(
         else:
             covered.add(task.spec_ref)
 
+    # Specs with summaries are also covered (baseline or PM-evaluated)
+    for spec_path in state.list_summaries():
+        covered.add(spec_path)
+
     result: list[SpecIntakeEntry] = []
     for spec in all_specs:
         if spec not in covered:
@@ -83,7 +87,7 @@ def run_intake(
 ) -> IntakeResult:
     """Run PM intake if there are unprocessed specs or task failures.
 
-    This function has a contained side effect: it calls ``runtime.run_serial``
+    This function has a contained side effect: it calls ``runtime.run_trunk_agent``
     to run the PM agent. It returns an IntakeResult so the Orchestrator can
     apply spec_ref pinning and emit probe events.
 
@@ -154,7 +158,8 @@ def run_intake(
     tasks_before = set(world_before.tasks.keys())
     task_count_before = len(world_before.tasks)
     intake_start = time.monotonic()
-    success = runtime.run_serial("pm", prompt)
+    pm_result = runtime.run_trunk_agent("pm", prompt)
+    success = pm_result.verdict == Verdict.PASS
 
     _ingest_working_tree_tasks(state)
 

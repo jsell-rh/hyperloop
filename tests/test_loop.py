@@ -1334,7 +1334,9 @@ class TestPMFailureBackoff:
         state.set_file("specs/task-001.md", "Existing spec")
         # Seed an additional uncovered spec so intake is triggered
         state.set_file("specs/new.spec.md", "New spec")
-        runtime.set_serial_default_success(False)
+        runtime.set_trunk_agent_default_result(
+            WorkerResult(verdict=Verdict.FAIL, detail="PM failed")
+        )
 
         orch = _make_orchestrator(state, runtime, composer=composer, probe=probe)
         orch.run_cycle()
@@ -1351,7 +1353,9 @@ class TestPMFailureBackoff:
         state.add_task(_task(id="task-001"))
         state.set_file("specs/task-001.md", "Existing spec")
         state.set_file("specs/new.spec.md", "New spec")
-        runtime.set_serial_default_success(False)
+        runtime.set_trunk_agent_default_result(
+            WorkerResult(verdict=Verdict.FAIL, detail="PM failed")
+        )
 
         orch = _make_orchestrator(state, runtime, composer=composer, probe=probe, pm_max_failures=3)
 
@@ -1364,6 +1368,88 @@ class TestPMFailureBackoff:
 
         assert halt_reason is not None
         assert "pm" in halt_reason.lower()
+
+
+class TestPMIntakeCreatesSummariesForSkippedSpecs:
+    """When PM evaluates specs and creates no tasks, summaries are created."""
+
+    def test_no_tasks_created_produces_summary(self) -> None:
+        """PM runs on uncovered spec, creates 0 tasks → summary prevents re-evaluation."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(_task(id="task-001"))
+        state.set_file("specs/task-001.md", "Existing spec")
+        state.set_file("specs/uncovered.spec.md", "Uncovered spec — PM will decide no tasks")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/uncovered.spec.md", "Uncovered spec")
+        spec_source.add_spec("specs/task-001.md", "Existing spec")
+        spec_source.set_version("abc123")
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+
+        # PM runs successfully but creates 0 tasks
+        orch.run_cycle(cycle_num=1)
+
+        # Summary should exist for the uncovered spec
+        summaries = state.list_summaries()
+        assert "specs/uncovered.spec.md" in summaries
+
+        # Second cycle should NOT invoke PM for that spec again
+        pm_runs_before = len(runtime.trunk_agent_runs)
+        orch.run_cycle(cycle_num=2)
+
+        # PM should not have run again (no new coverage gaps)
+        pm_intake_runs = [r for r in runtime.trunk_agent_runs[pm_runs_before:] if r.role == "pm"]
+        assert len(pm_intake_runs) == 0
+
+    def test_summary_not_created_when_tasks_are_created(self) -> None:
+        """When PM creates tasks for a spec, no summary is created (tasks cover it)."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(_task(id="task-001"))
+        state.set_file("specs/task-001.md", "Existing spec")
+        state.set_file("specs/new-feature.spec.md", "New feature spec")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/new-feature.spec.md", "New feature spec")
+        spec_source.add_spec("specs/task-001.md", "Existing spec")
+        spec_source.set_version("abc123")
+
+        def pm_creates_task(prompt: str) -> WorkerResult:
+            state.add_task(
+                Task(
+                    id="task-new",
+                    title="New task",
+                    spec_ref="specs/new-feature.spec.md",
+                    status=TaskStatus.NOT_STARTED,
+                    phase=None,
+                    deps=(),
+                    round=0,
+                    branch=None,
+                    pr=None,
+                )
+            )
+            return WorkerResult(verdict=Verdict.PASS, detail="Created 1 task")
+
+        runtime.set_trunk_agent_callback("pm", pm_creates_task)
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        orch.run_cycle(cycle_num=1)
+
+        # No summary for new-feature.spec.md — it has a task covering it
+        summaries = state.list_summaries()
+        assert "specs/new-feature.spec.md" not in summaries
 
 
 class TestGCPrunesTerminalTasks:
@@ -1645,14 +1731,12 @@ class TestConvergenceTracking:
         orch = _make_orchestrator(
             state, runtime, composer=composer, probe=probe, spec_source=spec_source
         )
-        # Auditor passes (run_serial returns True)
-        runtime.set_serial_default_success(True)
+        # Auditor passes (default is PASS)
 
         orch.run_cycle()
 
-        # Auditor should have been invoked via run_serial
-        auditor_runs = [r for r in runtime.serial_runs if r.role == "auditor"]
-        assert len(auditor_runs) >= 1
+        # Auditor should have been invoked via run_auditor
+        assert len(runtime.auditor_runs) >= 1
 
         # Spec should be marked converged
         convergence_calls = probe.of_method("convergence_marked")
@@ -1688,7 +1772,6 @@ class TestConvergenceTracking:
         orch = _make_orchestrator(
             state, runtime, composer=composer, probe=probe, spec_source=spec_source
         )
-        runtime.set_serial_default_success(True)
 
         # Pre-mark spec as converged
         orch._converged_specs.add("specs/auth.md@abc123")
@@ -1696,8 +1779,7 @@ class TestConvergenceTracking:
         orch.run_cycle()
 
         # No auditor should have run
-        auditor_runs = [r for r in runtime.serial_runs if r.role == "auditor"]
-        assert len(auditor_runs) == 0
+        assert len(runtime.auditor_runs) == 0
 
     def test_multiple_specs_audited_in_parallel(self) -> None:
         """When 3 specs need audit, auditors run concurrently, not serially."""
@@ -1734,11 +1816,11 @@ class TestConvergenceTracking:
         # If they ran serially, the barrier would never be satisfied and would timeout.
         barrier = threading.Barrier(3, timeout=10)
 
-        def auditor_callback(prompt: str) -> bool:
+        def auditor_callback(prompt: str) -> WorkerResult:
             barrier.wait()  # Block until all 3 threads arrive
-            return True
+            return WorkerResult(verdict=Verdict.PASS, detail="aligned")
 
-        runtime.set_serial_callback("auditor", auditor_callback)
+        runtime.set_auditor_callback(auditor_callback)
 
         orch = _make_orchestrator(
             state, runtime, composer=composer, probe=probe, spec_source=spec_source
@@ -1747,8 +1829,7 @@ class TestConvergenceTracking:
         orch.run_cycle()
 
         # All 3 auditors should have run
-        auditor_runs = [r for r in runtime.serial_runs if r.role == "auditor"]
-        assert len(auditor_runs) == 3
+        assert len(runtime.auditor_runs) == 3
 
         # All 3 specs should be converged
         assert len(orch._converged_specs) == 3
@@ -1786,10 +1867,12 @@ class TestConvergenceTracking:
             spec_source.add_spec(f"specs/spec-{i}.md", f"Spec {i} content")
         spec_source.set_version("abc123")
 
-        def auditor_callback(prompt: str) -> bool:
-            return "spec-2" not in prompt
+        def auditor_callback(prompt: str) -> WorkerResult:
+            if "spec-2" in prompt:
+                return WorkerResult(verdict=Verdict.FAIL, detail="misaligned")
+            return WorkerResult(verdict=Verdict.PASS, detail="aligned")
 
-        runtime.set_serial_callback("auditor", auditor_callback)
+        runtime.set_auditor_callback(auditor_callback)
 
         orch = _make_orchestrator(
             state, runtime, composer=composer, probe=probe, spec_source=spec_source
@@ -1807,7 +1890,7 @@ class TestConvergenceTracking:
         assert len(misaligned) == 1
 
     def test_auditor_exception_treated_as_failure(self) -> None:
-        """If run_serial raises, the auditor is treated as misaligned."""
+        """If run_auditor raises, the auditor is treated as misaligned."""
         state = InMemoryStateStore()
         runtime = InMemoryRuntime()
         probe = RecordingProbe()
@@ -1832,10 +1915,10 @@ class TestConvergenceTracking:
         spec_source.add_spec("specs/auth.md", "Auth spec content")
         spec_source.set_version("abc123")
 
-        def auditor_callback(prompt: str) -> bool:
+        def auditor_callback(prompt: str) -> WorkerResult:
             raise RuntimeError("agent crashed")
 
-        runtime.set_serial_callback("auditor", auditor_callback)
+        runtime.set_auditor_callback(auditor_callback)
 
         orch = _make_orchestrator(
             state, runtime, composer=composer, probe=probe, spec_source=spec_source
@@ -1878,7 +1961,9 @@ class TestConvergenceTracking:
             state, runtime, composer=composer, probe=probe, spec_source=spec_source
         )
         # Auditor fails (misaligned)
-        runtime.set_serial_default_success(False)
+        runtime.set_auditor_default_result(
+            WorkerResult(verdict=Verdict.FAIL, detail="timeout handling missing")
+        )
 
         orch.run_cycle()
 
@@ -1909,7 +1994,9 @@ class TestPMBackoffSkipsIntake:
         state.add_task(_task(id="task-001"))
         state.set_file("specs/task-001.md", "Existing spec")
         state.set_file("specs/uncovered.spec.md", "Uncovered spec")
-        runtime.set_serial_default_success(False)
+        runtime.set_trunk_agent_default_result(
+            WorkerResult(verdict=Verdict.FAIL, detail="PM failed")
+        )
 
         spec_source = FakeSpecSource()
         spec_source.add_spec("specs/uncovered.spec.md", "Uncovered spec")
@@ -1951,7 +2038,9 @@ class TestPMBackoffSkipsIntake:
         state.add_task(_task(id="task-001"))
         state.set_file("specs/task-001.md", "Existing spec")
         state.set_file("specs/uncovered.spec.md", "Uncovered spec")
-        runtime.set_serial_default_success(False)
+        runtime.set_trunk_agent_default_result(
+            WorkerResult(verdict=Verdict.FAIL, detail="PM failed")
+        )
 
         spec_source = FakeSpecSource()
         spec_source.add_spec("specs/uncovered.spec.md", "Uncovered spec")
@@ -2249,13 +2338,17 @@ class TestAuditMisalignmentStoresFinding:
             state, runtime, composer=composer, probe=probe, spec_source=spec_source
         )
         # Auditor fails (misaligned)
-        runtime.set_serial_default_success(False)
+        runtime.set_auditor_default_result(
+            WorkerResult(verdict=Verdict.FAIL, detail="timeout handling missing")
+        )
 
         orch.run_cycle()
 
         # A review should have been stored for the audit finding
         findings = state.get_findings("audit-specs/auth.md@abc123")
         assert findings != ""
+        # The stored detail should be the agent's actual finding, not a generic message
+        assert "timeout handling missing" in findings
 
     def test_audit_finding_passed_to_pm(self) -> None:
         """After audit failure, PM intake includes audit finding in prompt."""
@@ -2290,7 +2383,9 @@ class TestAuditMisalignmentStoresFinding:
             state, runtime, composer=composer, probe=probe, spec_source=spec_source
         )
         # Auditor fails (misaligned) -- this sets _has_drift = True
-        runtime.set_serial_default_success(False)
+        runtime.set_auditor_default_result(
+            WorkerResult(verdict=Verdict.FAIL, detail="timeout handling missing")
+        )
 
         orch.run_cycle()
 
