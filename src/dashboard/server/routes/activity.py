@@ -53,8 +53,13 @@ def _group_by_cycle(
         if cycle is not None and isinstance(cycle, int):
             cycle_events[cycle].append(ev)
 
-    # Filter by since_cycle
-    cycle_nums = sorted(cycle_events.keys(), reverse=True)
+    # Sort cycles by timestamp of first event (chronological, newest first)
+    # This handles orchestrator restarts where cycle counter resets to 1
+    def _cycle_first_ts(cycle_num: int) -> str:
+        evts = cycle_events[cycle_num]
+        return str(evts[0].get("ts", "")) if evts else ""
+
+    cycle_nums = sorted(cycle_events.keys(), key=_cycle_first_ts, reverse=True)
     if since_cycle is not None:
         cycle_nums = [c for c in cycle_nums if c > since_cycle]
 
@@ -635,6 +640,16 @@ def get_activity(
             tasks_in_flight=[],
             flattened_events=[],
         )
+
+    # Only use events from the latest orchestrator session.
+    # On restart, cycle numbers reset — mixing old and new sessions
+    # causes incorrect grouping.
+    last_start_idx = 0
+    for i, ev in enumerate(events):
+        if ev.get("event") == "orchestrator_started":
+            last_start_idx = i
+    if last_start_idx > 0:
+        events = events[last_start_idx:]
 
     cycles = _group_by_cycle(events, since_cycle, limit)
     active_workers = _derive_active_workers(events)
