@@ -171,7 +171,7 @@ The system SHALL define seven ports:
 
 | Port | Responsibility |
 |---|---|
-| Runtime | Spawn, poll, reap worker agents; run serial agents (PM, process-improver); run concurrent auditors |
+| Runtime | Spawn, poll, reap worker agents; run trunk agents (PM, process-improver); run isolated auditors with verdict capture |
 | StateStore | Persist and query tasks, reviews, epochs, summaries |
 | SpecSource | Detect spec changes, read specs at pinned versions |
 | StepExecutor | Execute mechanical steps with three outcomes |

@@ -45,20 +45,33 @@ The Runtime port SHALL manage worker agent lifecycle and serial agent execution.
 - THEN it returns a worker handle if an orphaned session exists for that task
 - AND returns null if no orphan is found
 
-#### Scenario: Run serial agent
+#### Scenario: Run trunk agent (PM, process-improver)
 
-- GIVEN a prompt for a serial agent (PM, process-improver)
-- WHEN run_serial is called with role and prompt
+- GIVEN a prompt for a mutating serial agent (PM, process-improver)
+- WHEN `run_trunk_agent` is called with role and prompt
 - THEN the agent runs on the trunk branch, blocking until complete
-- AND returns true on success, false on failure
+- AND returns a WorkerResult with verdict (PASS/FAIL) and detail text
+- AND if the agent committed to trunk, the runtime pushes trunk to origin
 
-#### Scenario: Run concurrent auditors
+#### Scenario: Run auditor (isolated, read-only)
 
-- GIVEN multiple specs need alignment auditing
-- WHEN the orchestrator invokes auditors
-- THEN it calls run_serial for each auditor from concurrent threads (up to `max_auditors`)
-- AND each auditor runs on trunk independently
-- AND results are collected after all complete
+- GIVEN a spec_ref needs alignment auditing
+- WHEN `run_auditor` is called with spec_ref and prompt
+- THEN the runtime creates an isolated environment for the auditor:
+  - SDK runtime: detached worktree from current HEAD
+  - Ambient runtime: isolated session
+- AND the auditor runs read-only against the codebase
+- AND the runtime reads the verdict from the agent's output (worker-result.yaml or SDK ResultMessage)
+- AND returns a WorkerResult with verdict (PASS = aligned, FAIL = misaligned) and detail text
+- AND the isolated environment is cleaned up after the verdict is read
+
+#### Scenario: Concurrent auditors are isolated
+
+- GIVEN 3 specs need auditing concurrently
+- WHEN `run_auditor` is called 3 times from separate threads
+- THEN each invocation has its own isolated environment
+- AND verdict files do not clobber each other
+- AND each returns an independent WorkerResult
 
 #### Scenario: Push branch
 

@@ -79,13 +79,16 @@ The PM agent SHALL be a mandatory, first-class component of the reconciler. It i
 
 ### Requirement: Alignment Audit
 
-The reconciler SHALL spawn auditor agents after all tasks for a spec reach "completed" status. Auditors run in parallel with a separate concurrency budget (`max_auditors`, default 3) that does not compete with the task worker pool. Each auditor compares a spec against the merged code to verify actual alignment.
+The reconciler SHALL run auditor agents after all tasks for a spec reach "completed" status. Auditors run in parallel with a separate concurrency budget (`max_auditors`, default 3) that does not compete with the task worker pool. Each auditor compares a spec against the merged code to verify actual alignment.
+
+Each auditor runs in an **isolated environment** (detached worktree for SDK runtime, separate session for ambient runtime) so that concurrent auditors do not interfere with each other. The auditor's verdict (aligned/misaligned with detail) is captured from the agent's WorkerResult, not inferred from success/failure of the agent process.
 
 #### Scenario: Auditor confirms alignment
 
 - GIVEN all tasks for "auth.md@abc123" are completed
-- WHEN the auditor reads the spec and the code
-- THEN the auditor reports "aligned"
+- WHEN the auditor reads the spec and the code in its isolated environment
+- THEN the auditor writes verdict "pass" with detail explaining alignment
+- AND the runtime returns WorkerResult(verdict=PASS, detail=...)
 - AND the reconciler marks the spec as converged at this SHA
 - AND no further work is created until the spec or code changes
 
@@ -93,8 +96,9 @@ The reconciler SHALL spawn auditor agents after all tasks for a spec reach "comp
 
 - GIVEN all tasks for "auth.md@abc123" are completed
 - WHEN the auditor finds the code doesn't handle timeout cases described in the spec
-- THEN the auditor reports "misaligned" with detail "timeout handling missing"
-- AND the reconciler stores the finding in the state store
+- THEN the auditor writes verdict "fail" with detail "timeout handling missing"
+- AND the runtime returns WorkerResult(verdict=FAIL, detail="timeout handling missing")
+- AND the reconciler stores the finding (from WorkerResult.detail) in the state store
 - AND the reconciler triggers PM intake with the audit finding as context
 - AND the finding is available to the process-improver for guideline updates
 
@@ -102,9 +106,18 @@ The reconciler SHALL spawn auditor agents after all tasks for a spec reach "comp
 
 - GIVEN specs "auth.md", "users.md", and "tenants.md" all have completed tasks
 - WHEN the reconciler evaluates convergence
-- THEN it spawns up to `max_auditors` auditor agents concurrently
-- AND collects all results before proceeding
-- AND marks each spec converged or misaligned independently
+- THEN it invokes `run_auditor` up to `max_auditors` times concurrently
+- AND each auditor runs in its own isolated environment
+- AND each returns an independent WorkerResult with verdict and detail
+- AND the reconciler marks each spec converged or misaligned based on the verdict
+
+#### Scenario: Auditor verdict is captured, not inferred
+
+- GIVEN an auditor agent completes without crashing
+- WHEN the runtime collects the result
+- THEN the verdict comes from the agent's actual output (worker-result.yaml or SDK ResultMessage)
+- AND NOT from whether the agent process succeeded or failed
+- AND an auditor that finds misalignment but completes successfully returns FAIL (misaligned), not PASS
 
 #### Scenario: Audit finding reaches process-improver
 
