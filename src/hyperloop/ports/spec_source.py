@@ -40,6 +40,10 @@ class SpecSource(Protocol):
         """Return the content-based version of a single spec file (e.g. blob SHA)."""
         ...
 
+    def file_version_at(self, spec_path: str, ref: str) -> str:
+        """Resolve a ref (commit or blob) to the blob SHA for a file at that ref."""
+        ...
+
     def has_changed(self, spec_path: str, since_version: str) -> bool:
         """Return True if the spec file has changed since the given version."""
         ...

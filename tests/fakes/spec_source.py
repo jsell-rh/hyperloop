@@ -59,6 +59,10 @@ class FakeSpecSource:
         """Return per-file version, falling back to the global version."""
         return self._file_versions.get(spec_path, self._version)
 
+    def file_version_at(self, spec_path: str, ref: str) -> str:
+        """In-memory fake: return the ref unchanged (no commit→blob resolution)."""
+        return ref
+
     def has_changed(self, spec_path: str, since_version: str) -> bool:
         """Return whether the spec has been marked as changed."""
         return spec_path in self._changed_since

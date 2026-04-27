@@ -79,6 +79,25 @@ class GitSpecSource:
             return ""
         return result.stdout.strip()
 
+    def file_version_at(self, spec_path: str, ref: str) -> str:
+        """Resolve a ref (commit or blob SHA) to the blob SHA for a file.
+
+        If ref is already a blob SHA, returns it unchanged. If ref is a commit,
+        returns the blob SHA of spec_path at that commit.
+        """
+        obj_type = self._git("cat-file", "-t", ref)
+        if obj_type.returncode != 0:
+            return ref
+        kind = obj_type.stdout.strip()
+        if kind == "blob":
+            return ref
+        if kind == "commit":
+            result = self._git("rev-parse", f"{ref}:{spec_path}")
+            if result.returncode != 0:
+                return ref
+            return result.stdout.strip()
+        return ref
+
     def has_changed(self, spec_path: str, since_version: str) -> bool:
         result = self._git("diff", "--quiet", since_version, "HEAD", "--", spec_path)
         return result.returncode != 0

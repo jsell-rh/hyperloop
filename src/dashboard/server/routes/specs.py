@@ -230,9 +230,12 @@ def list_specs() -> list[SpecSummary]:
         # Get current file SHA
         current_sha: str | None = spec_source.file_version(spec_path) or None
 
-        # Get pinned SHA (use first if multiple)
+        # Get pinned SHA (use first if multiple), normalize commit→blob
         pinned_shas = spec_pinned_shas.get(spec_path)
-        pinned_sha: str | None = sorted(pinned_shas)[0] if pinned_shas else None
+        pinned_sha: str | None = None
+        if pinned_shas:
+            raw_sha = sorted(pinned_shas)[0]
+            pinned_sha = spec_source.file_version_at(spec_path, raw_sha)
 
         # Get audit info
         audit_info = audit_events.get(spec_path)

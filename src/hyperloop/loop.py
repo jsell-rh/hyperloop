@@ -25,6 +25,7 @@ from hyperloop.domain.deps import detect_cycles
 from hyperloop.domain.model import (
     Phase,
     PMFailureResponse,
+    Task,
     TaskContext,
     TaskStatus,
     Verdict,
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
     from hyperloop.compose import PromptComposer
     from hyperloop.cycle.intake import IntakeResult
     from hyperloop.cycle.spawn import SpawnPlan
-    from hyperloop.domain.model import Process, Task, WorkerResult
+    from hyperloop.domain.model import Process, WorkerResult
     from hyperloop.ports.channel import ChannelPort
     from hyperloop.ports.hook import CycleHook
     from hyperloop.ports.pr import PRPort
@@ -423,7 +424,28 @@ class Orchestrator:
             if v:
                 spec_versions[spec_path] = v
 
-        freshness_drifts = detect_freshness_drift(tasks, spec_versions, summaries)
+        # Normalize pinned SHAs: tasks pinned before the blob-SHA fix may have
+        # commit SHAs. Resolve them to blob SHAs so the comparison is apples-to-apples.
+        normalized_tasks = dict(tasks)
+        for task in normalized_tasks.values():
+            if "@" in task.spec_ref:
+                spec_path = task.spec_ref.split("@")[0]
+                pinned = task.spec_ref.split("@")[1]
+                blob = self._spec_source.file_version_at(spec_path, pinned)
+                if blob != pinned:
+                    normalized_tasks[task.id] = Task(
+                        id=task.id,
+                        title=task.title,
+                        spec_ref=f"{spec_path}@{blob}",
+                        status=task.status,
+                        phase=task.phase,
+                        deps=task.deps,
+                        round=task.round,
+                        branch=task.branch,
+                        pr=task.pr,
+                    )
+
+        freshness_drifts = detect_freshness_drift(normalized_tasks, spec_versions, summaries)
         for drift in freshness_drifts:
             self._probe.drift_detected(
                 spec_path=drift.spec_path,
