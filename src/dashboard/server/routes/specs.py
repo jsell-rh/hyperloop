@@ -404,12 +404,12 @@ def get_spec_drift(spec_ref: str) -> SpecDriftDetail:
         pinned_sha=pinned_sha,
     )
 
-    # For freshness drift, try to read old content using blob SHA
+    # For freshness drift, try to read old content at the pinned version
     old_content: str | None = None
     if drift_type == "freshness" and pinned_sha is not None:
-        # Read old content via git show <blob_sha> (blob SHA, not commit:path)
+        blob_sha = spec_source.file_version_at(spec_ref, pinned_sha)
         result = subprocess.run(
-            ["git", "-C", str(repo_path), "show", pinned_sha],
+            ["git", "-C", str(repo_path), "show", blob_sha],
             capture_output=True,
             text=True,
         )
