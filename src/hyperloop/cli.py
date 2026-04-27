@@ -496,7 +496,11 @@ def run(
     else:
         from hyperloop.adapters.git.runtime import AgentSdkRuntime
 
-        runtime = AgentSdkRuntime(repo_path=str(repo_path), probe=probe)
+        runtime = AgentSdkRuntime(
+            repo_path=str(repo_path),
+            probe=probe,
+            base_branch=cfg.base_branch,
+        )
 
     pr_manager = None
     if cfg.repo is not None:

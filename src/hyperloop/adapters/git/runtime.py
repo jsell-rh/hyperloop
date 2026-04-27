@@ -50,12 +50,14 @@ class AgentSdkRuntime:
         model: str | None = None,
         probe: OrchestratorProbe | None = None,
         serial_timeout: float = 3600.0,
+        base_branch: str = "main",
     ) -> None:
         self._repo_path = repo_path
         self._worktree_base = worktree_base or f"{repo_path}/worktrees/workers"
         self._model = model
         self._probe = probe
         self._serial_timeout = serial_timeout
+        self._base_branch = base_branch
         self._worktrees: dict[str, str] = {}  # task_id -> worktree_path
         self._futures: dict[str, concurrent.futures.Future[WorkerResult]] = {}
 
@@ -253,6 +255,7 @@ class AgentSdkRuntime:
                     )
                 )
                 log.info("sdk_serial_completed", role=role)
+                self._push_trunk()
                 return True
             except TimeoutError:
                 log.warning("sdk_serial_timeout", role=role)
@@ -275,6 +278,23 @@ class AgentSdkRuntime:
             return False
         except Exception:
             return False
+
+    def _push_trunk(self) -> None:
+        """Push trunk (base branch) to origin after serial agent commits."""
+        import subprocess
+
+        try:
+            subprocess.run(
+                ["git", "-C", self._repo_path, "push", "origin", self._base_branch],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=clean_git_env(),
+                timeout=30,
+            )
+            log.info("sdk_trunk_pushed", branch=self._base_branch)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            log.warning("sdk_trunk_push_failed", branch=self._base_branch, error=str(exc))
 
     # -- Private helpers -------------------------------------------------------
 

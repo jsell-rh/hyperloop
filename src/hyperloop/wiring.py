@@ -166,4 +166,8 @@ def _build_runtime(cfg: Config, repo_path: Path, probe: OrchestratorProbe) -> Ru
 
     from hyperloop.adapters.git.runtime import AgentSdkRuntime
 
-    return AgentSdkRuntime(repo_path=str(repo_path), probe=probe)
+    return AgentSdkRuntime(
+        repo_path=str(repo_path),
+        probe=probe,
+        base_branch=cfg.base_branch,
+    )
