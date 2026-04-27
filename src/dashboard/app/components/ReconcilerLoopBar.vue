@@ -69,6 +69,15 @@ function formatDuration(d: number | null): string {
   if (d < 1) return `${(d * 1000).toFixed(0)}ms`
   return `${d.toFixed(1)}s`
 }
+
+function segmentTooltip(seg: PhaseSegment & { duration: number | null }): string {
+  const state = phaseState(seg.key)
+  if (state === 'active') return `${seg.label}: In progress`
+  if (state === 'future') return `${seg.label}: Pending`
+  return seg.duration != null
+    ? `${seg.label}: ${formatDuration(seg.duration)}`
+    : `${seg.label}: Completed`
+}
 </script>
 
 <template>
@@ -85,7 +94,7 @@ function formatDuration(d: number | null): string {
       <div
         v-for="seg in segments"
         :key="seg.key"
-        class="relative transition-all duration-300 rounded-sm"
+        class="relative transition-all duration-300 rounded-sm cursor-default"
         :style="{ width: segmentWidthPercent(seg) + '%' }"
         :class="[
           phaseState(seg.key) === 'active'
@@ -94,6 +103,7 @@ function formatDuration(d: number | null): string {
               ? seg.color
               : 'bg-gray-200 dark:bg-gray-700',
         ]"
+        :title="segmentTooltip(seg)"
       >
         <span
           class="absolute inset-0 flex items-center justify-center text-[10px] font-medium truncate px-1"
