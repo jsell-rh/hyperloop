@@ -425,7 +425,11 @@ class Orchestrator:
                 futures[executor.submit(_run_one, spec_ref)] = spec_ref
 
             for future in as_completed(futures):
-                spec_ref, success = future.result()
+                spec_ref = futures[future]
+                try:
+                    _, success = future.result()
+                except Exception:
+                    success = False
                 duration_s = time.monotonic() - start_times[spec_ref]
                 spec_path = spec_ref.split("@")[0] if "@" in spec_ref else spec_ref
 

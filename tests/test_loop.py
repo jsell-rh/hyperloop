@@ -119,6 +119,7 @@ def _make_orchestrator(
     gc_run_every_cycles: int = 10,
     pm_max_failures: int = 5,
     spec_source: FakeSpecSource | None = None,
+    max_auditors: int = 3,
 ) -> Orchestrator:
     return Orchestrator(
         state=state,
@@ -138,6 +139,7 @@ def _make_orchestrator(
         gc_retention_days=gc_retention_days,
         gc_run_every_cycles=gc_run_every_cycles,
         pm_max_failures=pm_max_failures,
+        max_auditors=max_auditors,
     )
 
 
@@ -1755,6 +1757,96 @@ class TestConvergenceTracking:
         started_calls = probe.of_method("auditors_started")
         assert len(started_calls) >= 1
         assert started_calls[0]["count"] == 3
+
+    def test_mixed_audit_results(self) -> None:
+        """When some auditors pass and some fail, only passing specs are converged."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        for i in range(1, 4):
+            state.add_task(
+                Task(
+                    id=f"task-{i:03d}",
+                    title=f"Task {i}",
+                    spec_ref=f"specs/spec-{i}.md@abc123",
+                    status=TaskStatus.COMPLETED,
+                    phase=None,
+                    deps=(),
+                    round=1,
+                    branch=f"hyperloop/task-{i:03d}",
+                    pr=None,
+                )
+            )
+            state.set_file(f"specs/spec-{i}.md", f"Spec {i} content")
+
+        spec_source = FakeSpecSource()
+        for i in range(1, 4):
+            spec_source.add_spec(f"specs/spec-{i}.md", f"Spec {i} content")
+        spec_source.set_version("abc123")
+
+        def auditor_callback(prompt: str) -> bool:
+            return "spec-2" not in prompt
+
+        runtime.set_serial_callback("auditor", auditor_callback)
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        orch.run_cycle()
+
+        assert "specs/spec-1.md@abc123" in orch._converged_specs
+        assert "specs/spec-2.md@abc123" not in orch._converged_specs
+        assert "specs/spec-3.md@abc123" in orch._converged_specs
+
+        audit_calls = probe.of_method("audit_ran")
+        aligned = [c for c in audit_calls if c["result"] == "aligned"]
+        misaligned = [c for c in audit_calls if c["result"] == "misaligned"]
+        assert len(aligned) == 2
+        assert len(misaligned) == 1
+
+    def test_auditor_exception_treated_as_failure(self) -> None:
+        """If run_serial raises, the auditor is treated as misaligned."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(
+            Task(
+                id="task-001",
+                title="Task 001",
+                spec_ref="specs/auth.md@abc123",
+                status=TaskStatus.COMPLETED,
+                phase=None,
+                deps=(),
+                round=1,
+                branch="hyperloop/task-001",
+                pr=None,
+            )
+        )
+        state.set_file("specs/auth.md", "Auth spec content")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/auth.md", "Auth spec content")
+        spec_source.set_version("abc123")
+
+        def auditor_callback(prompt: str) -> bool:
+            raise RuntimeError("agent crashed")
+
+        runtime.set_serial_callback("auditor", auditor_callback)
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        orch.run_cycle()
+
+        assert "specs/auth.md@abc123" not in orch._converged_specs
+
+        audit_calls = probe.of_method("audit_ran")
+        assert len(audit_calls) >= 1
+        assert audit_calls[0]["result"] == "misaligned"
 
     def test_auditor_failure_does_not_mark_converged(self) -> None:
         """When auditor finds misalignment, spec is NOT marked converged."""
