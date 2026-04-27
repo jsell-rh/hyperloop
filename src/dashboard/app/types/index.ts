@@ -242,6 +242,13 @@ export interface AuditTimeline {
   max_parallelism: number
 }
 
+export interface CyclePhaseTiming {
+  collect_s: number | null
+  reconcile_s: number | null
+  advance_s: number | null
+  spawn_s: number | null
+}
+
 export interface CycleDetail {
   cycle: number
   timestamp: string
@@ -249,6 +256,7 @@ export interface CycleDetail {
   phases: CyclePhases
   reconcile: ReconcileDetail | null
   audit_timeline: AuditTimeline | null
+  phase_timing: CyclePhaseTiming | null
 }
 
 export interface WorkerHistoryEntry {

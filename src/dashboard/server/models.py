@@ -269,6 +269,15 @@ class AuditTimeline(BaseModel):
     max_parallelism: int
 
 
+class CyclePhaseTiming(BaseModel):
+    """Per-phase duration breakdown for a cycle."""
+
+    collect_s: float | None = None
+    reconcile_s: float | None = None
+    advance_s: float | None = None
+    spawn_s: float | None = None
+
+
 class CycleDetail(BaseModel):
     """Detail for a single reconciliation cycle."""
 
@@ -278,6 +287,7 @@ class CycleDetail(BaseModel):
     phases: CyclePhases
     reconcile: ReconcileDetail | None = None
     audit_timeline: AuditTimeline | None = None
+    phase_timing: CyclePhaseTiming | None = None
 
 
 class WorkerHistoryEntry(BaseModel):

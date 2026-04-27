@@ -21,6 +21,7 @@ from dashboard.server.models import (
     CollectPhase,
     CycleDetail,
     CyclePhases,
+    CyclePhaseTiming,
     FlatEvent,
     HeartbeatResponse,
     IntakePhase,
@@ -134,6 +135,9 @@ def _build_cycle_detail(cycle_num: int, evts: list[dict[str, Any]]) -> CycleDeta
     # AUDIT TIMELINE: build Gantt chart data from audit_started / audit_ran
     audit_timeline = _build_audit_timeline(evts)
 
+    # PHASE TIMING: extract per-phase durations from completed events
+    phase_timing = _build_phase_timing(evts)
+
     return CycleDetail(
         cycle=cycle_num,
         timestamp=timestamp,
@@ -146,6 +150,7 @@ def _build_cycle_detail(cycle_num: int, evts: list[dict[str, Any]]) -> CycleDeta
         ),
         reconcile=reconcile,
         audit_timeline=audit_timeline,
+        phase_timing=phase_timing,
     )
 
 
@@ -267,6 +272,46 @@ def _build_audit_timeline(evts: list[dict[str, Any]]) -> AuditTimeline | None:
         entries=entries,
         total_duration_s=round(total_duration_s, 1),
         max_parallelism=max_parallelism,
+    )
+
+
+def _build_phase_timing(evts: list[dict[str, Any]]) -> CyclePhaseTiming | None:
+    """Extract per-phase durations from collect/reconcile/advance/spawn completed events.
+
+    Returns None if no phase timing events exist in this cycle.
+    """
+    collect_s: float | None = None
+    reconcile_s: float | None = None
+    advance_s: float | None = None
+    spawn_s: float | None = None
+
+    for ev in evts:
+        event_name = ev.get("event")
+        if event_name == "collect_completed":
+            raw = ev.get("duration_s")
+            if raw is not None:
+                collect_s = float(raw)
+        elif event_name == "reconcile_completed":
+            raw = ev.get("duration_s")
+            if raw is not None:
+                reconcile_s = float(raw)
+        elif event_name == "advance_completed":
+            raw = ev.get("duration_s")
+            if raw is not None:
+                advance_s = float(raw)
+        elif event_name == "spawn_completed":
+            raw = ev.get("duration_s")
+            if raw is not None:
+                spawn_s = float(raw)
+
+    if collect_s is None and reconcile_s is None and advance_s is None and spawn_s is None:
+        return None
+
+    return CyclePhaseTiming(
+        collect_s=collect_s,
+        reconcile_s=reconcile_s,
+        advance_s=advance_s,
+        spawn_s=spawn_s,
     )
 
 

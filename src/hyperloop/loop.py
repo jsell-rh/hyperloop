@@ -209,6 +209,8 @@ class Orchestrator:
         )
 
         # COLLECT
+        self._probe.collect_started(cycle=cycle_num)
+        collect_start = time.monotonic()
         collected = collect(
             workers=self._workers,
             state=self._state,
@@ -243,6 +245,11 @@ class Orchestrator:
         if collected.reaped:
             for hook in self._hooks:
                 hook.after_reap(results=collected.reaped, cycle=cycle_num)
+        self._probe.collect_completed(
+            cycle=cycle_num,
+            duration_s=time.monotonic() - collect_start,
+            reaped_count=len(collected.reaped),
+        )
 
         # RECONCILE
         halt_reason = self._run_reconcile(cycle_num)
@@ -251,6 +258,8 @@ class Orchestrator:
             return halt_reason
 
         # ADVANCE
+        self._probe.advance_started(cycle=cycle_num)
+        advance_start = time.monotonic()
         advanced = advance(
             state=self._state,
             reaped=collected.reaped,
@@ -279,11 +288,18 @@ class Orchestrator:
                 )
             if t.pr_url is not None:
                 self._state.set_task_pr(t.task_id, t.pr_url)
+        self._probe.advance_completed(
+            cycle=cycle_num,
+            duration_s=time.monotonic() - advance_start,
+            transitions=len(advanced.transitions),
+        )
         if advanced.halt_reason:
             self._state.persist("orchestrator: halt")
             return advanced.halt_reason
 
         # SPAWN
+        self._probe.spawn_started(cycle=cycle_num)
+        spawn_start = time.monotonic()
         spawn_result = plan_spawns(
             state=self._state,
             workers=self._workers,
@@ -299,6 +315,11 @@ class Orchestrator:
         else:
             self._probe.state_synced()
         self._execute_spawns(spawn_result.plans, cycle_num)
+        self._probe.spawn_completed(
+            cycle=cycle_num,
+            duration_s=time.monotonic() - spawn_start,
+            spawned_count=len(spawn_result.plans),
+        )
         self._emit_cycle_completed(cycle_num, cycle_start, spawn_result.plans, collected.reaped)
         if spawn_result.halt_reason is not None:
             return spawn_result.halt_reason

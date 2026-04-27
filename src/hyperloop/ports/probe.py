@@ -252,6 +252,34 @@ class OrchestratorProbe(Protocol):
         ...
 
     # ------------------------------------------------------------------
+    # Phase timing
+    # ------------------------------------------------------------------
+
+    def collect_started(self, *, cycle: int) -> None:
+        """Collect phase begun (polling and reaping workers)."""
+        ...
+
+    def collect_completed(self, *, cycle: int, duration_s: float, reaped_count: int) -> None:
+        """Collect phase ended."""
+        ...
+
+    def advance_started(self, *, cycle: int) -> None:
+        """Advance phase begun (processing reaped results, phase transitions)."""
+        ...
+
+    def advance_completed(self, *, cycle: int, duration_s: float, transitions: int) -> None:
+        """Advance phase ended."""
+        ...
+
+    def spawn_started(self, *, cycle: int) -> None:
+        """Spawn phase begun (launching new workers)."""
+        ...
+
+    def spawn_completed(self, *, cycle: int, duration_s: float, spawned_count: int) -> None:
+        """Spawn phase ended."""
+        ...
+
+    # ------------------------------------------------------------------
     # Audit and GC
     # ------------------------------------------------------------------
 

@@ -388,6 +388,28 @@ class OtelProbe:
         pass
 
     # ------------------------------------------------------------------
+    # Phase timing
+    # ------------------------------------------------------------------
+
+    def collect_started(self, **_kw: object) -> None:
+        pass
+
+    def collect_completed(self, **_kw: object) -> None:
+        pass
+
+    def advance_started(self, **_kw: object) -> None:
+        pass
+
+    def advance_completed(self, **_kw: object) -> None:
+        pass
+
+    def spawn_started(self, **_kw: object) -> None:
+        pass
+
+    def spawn_completed(self, **_kw: object) -> None:
+        pass
+
+    # ------------------------------------------------------------------
     # Audit and GC
     # ------------------------------------------------------------------
 

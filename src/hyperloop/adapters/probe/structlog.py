@@ -111,6 +111,37 @@ class StructlogProbe:
         self._log.info("convergence_marked", **kw)
 
     # ------------------------------------------------------------------
+    # Phase timing
+    # ------------------------------------------------------------------
+
+    def collect_started(self, **kw: object) -> None:
+        self._log.debug("collect_started", **kw)
+
+    def collect_completed(self, **kw: object) -> None:
+        duration_s = kw.get("duration_s")
+        if isinstance(duration_s, float):
+            kw = {**kw, "duration_s": round(duration_s, 3)}
+        self._log.debug("collect_completed", **kw)
+
+    def advance_started(self, **kw: object) -> None:
+        self._log.debug("advance_started", **kw)
+
+    def advance_completed(self, **kw: object) -> None:
+        duration_s = kw.get("duration_s")
+        if isinstance(duration_s, float):
+            kw = {**kw, "duration_s": round(duration_s, 3)}
+        self._log.debug("advance_completed", **kw)
+
+    def spawn_started(self, **kw: object) -> None:
+        self._log.debug("spawn_started", **kw)
+
+    def spawn_completed(self, **kw: object) -> None:
+        duration_s = kw.get("duration_s")
+        if isinstance(duration_s, float):
+            kw = {**kw, "duration_s": round(duration_s, 3)}
+        self._log.debug("spawn_completed", **kw)
+
+    # ------------------------------------------------------------------
     # Audit and GC
     # ------------------------------------------------------------------
 

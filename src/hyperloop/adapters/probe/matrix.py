@@ -362,6 +362,24 @@ class MatrixProbe:
     # Never sent (too noisy)
     # ------------------------------------------------------------------
 
+    def collect_started(self, **kw: object) -> None:
+        pass
+
+    def collect_completed(self, **kw: object) -> None:
+        pass
+
+    def advance_started(self, **kw: object) -> None:
+        pass
+
+    def advance_completed(self, **kw: object) -> None:
+        pass
+
+    def spawn_started(self, **kw: object) -> None:
+        pass
+
+    def spawn_completed(self, **kw: object) -> None:
+        pass
+
     def cycle_started(self, **kw: object) -> None:
         pass
 

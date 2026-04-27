@@ -84,6 +84,24 @@ class RecordingProbe:
     def convergence_marked(self, **kw: object) -> None:
         self._record("convergence_marked", **kw)
 
+    def collect_started(self, **kw: object) -> None:
+        self._record("collect_started", **kw)
+
+    def collect_completed(self, **kw: object) -> None:
+        self._record("collect_completed", **kw)
+
+    def advance_started(self, **kw: object) -> None:
+        self._record("advance_started", **kw)
+
+    def advance_completed(self, **kw: object) -> None:
+        self._record("advance_completed", **kw)
+
+    def spawn_started(self, **kw: object) -> None:
+        self._record("spawn_started", **kw)
+
+    def spawn_completed(self, **kw: object) -> None:
+        self._record("spawn_completed", **kw)
+
     def reconcile_started(self, **kw: object) -> None:
         self._record("reconcile_started", **kw)
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ActivityResponse, FlatEvent, TaskInFlight, PipelineStepInfo, CycleDetail, WorkerHeartbeat } from '~/types'
+import type { ActivityResponse, FlatEvent, TaskInFlight, PipelineStepInfo, CycleDetail, CyclePhaseTiming, WorkerHeartbeat } from '~/types'
 
 const { fetchActivity, fetchPipeline, fetchWorkerHeartbeats } = useApi()
 const { markFetched, setWorkersActive } = useLiveness()
@@ -137,6 +137,32 @@ const workerCountLabel = computed(() => {
   if (count === 0) return 'No workers active'
   if (count === 1) return '1 worker active'
   return `${count} workers active`
+})
+
+// --- Loop Visualizer ---
+const latestCycle = computed<CycleDetail | null>(() => {
+  if (!data.value || data.value.cycles.length === 0) return null
+  return data.value.cycles[0]
+})
+
+const latestPhaseTiming = computed<CyclePhaseTiming | null>(() => {
+  return latestCycle.value?.phase_timing ?? null
+})
+
+const currentPhase = computed<string | null>(() => {
+  if (!data.value || data.value.orchestrator_status !== 'running') return null
+  const cycle = latestCycle.value
+  if (!cycle) return null
+  // If the cycle is fully complete, no current phase
+  if (cycle.duration_s != null) return null
+  const timing = cycle.phase_timing
+  if (!timing) return 'collect'
+  // Walk phase order: if phase has no completed event, it's current
+  if (timing.collect_s == null) return 'collect'
+  if (timing.reconcile_s == null) return 'reconcile'
+  if (timing.advance_s == null) return 'advance'
+  if (timing.spawn_s == null) return 'spawn'
+  return null
 })
 
 // --- Warnings ---
@@ -370,7 +396,14 @@ function formatCycleDuration(d: number): string {
         </div>
       </div>
 
-      <!-- 2. Warning cards -->
+      <!-- 2. Loop visualizer -->
+      <ReconcilerLoopBar
+        v-if="latestPhaseTiming || currentPhase"
+        :phase-timing="latestPhaseTiming"
+        :current-phase="currentPhase"
+      />
+
+      <!-- 3. Warning cards -->
       <div v-if="warnings.length > 0" class="space-y-2 mb-6">
         <div
           v-for="w in warnings"
@@ -399,7 +432,7 @@ function formatCycleDuration(d: number): string {
         </div>
       </div>
 
-      <!-- 3. Split layout: lg+ side-by-side, mobile stacked -->
+      <!-- 4. Split layout: lg+ side-by-side, mobile stacked -->
       <div class="flex flex-col-reverse lg:flex-row gap-6">
         <!-- Left panel: Cycle timeline (70%) -->
         <div class="lg:w-[70%] min-w-0 space-y-6">

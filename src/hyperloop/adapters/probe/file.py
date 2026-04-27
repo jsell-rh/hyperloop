@@ -133,6 +133,28 @@ class FileProbe:
         self._write("convergence_marked", **kw)
 
     # ------------------------------------------------------------------
+    # Phase timing
+    # ------------------------------------------------------------------
+
+    def collect_started(self, **kw: object) -> None:
+        self._write("collect_started", **kw)
+
+    def collect_completed(self, **kw: object) -> None:
+        self._write("collect_completed", **kw)
+
+    def advance_started(self, **kw: object) -> None:
+        self._write("advance_started", **kw)
+
+    def advance_completed(self, **kw: object) -> None:
+        self._write("advance_completed", **kw)
+
+    def spawn_started(self, **kw: object) -> None:
+        self._write("spawn_started", **kw)
+
+    def spawn_completed(self, **kw: object) -> None:
+        self._write("spawn_completed", **kw)
+
+    # ------------------------------------------------------------------
     # Audit and GC
     # ------------------------------------------------------------------
 

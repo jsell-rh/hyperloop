@@ -67,6 +67,24 @@ class NullProbe:
     def convergence_marked(self, **_: object) -> None:
         pass
 
+    def collect_started(self, **_: object) -> None:
+        pass
+
+    def collect_completed(self, **_: object) -> None:
+        pass
+
+    def advance_started(self, **_: object) -> None:
+        pass
+
+    def advance_completed(self, **_: object) -> None:
+        pass
+
+    def spawn_started(self, **_: object) -> None:
+        pass
+
+    def spawn_completed(self, **_: object) -> None:
+        pass
+
     def reconcile_started(self, **_: object) -> None:
         pass
 
@@ -192,6 +210,24 @@ class MultiProbe:
 
     def convergence_marked(self, **kw: object) -> None:
         self._call("convergence_marked", **kw)
+
+    def collect_started(self, **kw: object) -> None:
+        self._call("collect_started", **kw)
+
+    def collect_completed(self, **kw: object) -> None:
+        self._call("collect_completed", **kw)
+
+    def advance_started(self, **kw: object) -> None:
+        self._call("advance_started", **kw)
+
+    def advance_completed(self, **kw: object) -> None:
+        self._call("advance_completed", **kw)
+
+    def spawn_started(self, **kw: object) -> None:
+        self._call("spawn_started", **kw)
+
+    def spawn_completed(self, **kw: object) -> None:
+        self._call("spawn_completed", **kw)
 
     def reconcile_started(self, **kw: object) -> None:
         self._call("reconcile_started", **kw)
