@@ -676,16 +676,13 @@ class GitStateStore:
     def store_summary(self, spec_path: str, summary_data: str) -> None:
         """Write a summary record for a spec (YAML content) to the state branch."""
         self._ensure_bootstrapped()
-        # Normalize spec_path to a safe filename: specs/auth.md -> specs-auth.md.yaml
-        safe_name = spec_path.replace("/", "-")
-        path = f"{STATE_PREFIX}/summaries/{safe_name}.yaml"
+        path = f"{STATE_PREFIX}/summaries/{spec_path}.yaml"
         self._buffer[path] = summary_data
 
     def get_summary(self, spec_path: str) -> str | None:
         """Read a summary record for a spec from the state branch or buffer."""
         self._ensure_bootstrapped()
-        safe_name = spec_path.replace("/", "-")
-        path = f"{STATE_PREFIX}/summaries/{safe_name}.yaml"
+        path = f"{STATE_PREFIX}/summaries/{spec_path}.yaml"
         if path in self._buffer:
             content = self._buffer[path]
             return content if content else None
@@ -702,11 +699,10 @@ class GitStateStore:
             prefix = f"{STATE_PREFIX}/summaries/"
             for line in tree_output.splitlines():
                 if line.startswith(prefix) and line.endswith(".yaml"):
-                    filename = line[len(prefix) :]
-                    if filename == ".gitkeep":
+                    relative = line[len(prefix) :]
+                    if relative == ".gitkeep":
                         continue
-                    # Reverse the safe_name: specs-auth.md.yaml -> specs/auth.md
-                    spec_path = filename.removesuffix(".yaml").replace("-", "/", 1)
+                    spec_path = relative.removesuffix(".yaml")
                     if line not in self._buffer:
                         content = self._git_show(line)
                         if content is not None:
@@ -716,10 +712,10 @@ class GitStateStore:
         prefix = f"{STATE_PREFIX}/summaries/"
         for path, content in self._buffer.items():
             if path.startswith(prefix) and path.endswith(".yaml"):
-                filename = path[len(prefix) :]
-                if filename == ".gitkeep":
+                relative = path[len(prefix) :]
+                if relative == ".gitkeep":
                     continue
-                spec_path = filename.removesuffix(".yaml").replace("-", "/", 1)
+                spec_path = relative.removesuffix(".yaml")
                 if content:
                     summaries[spec_path] = content
 

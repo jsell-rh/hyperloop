@@ -223,6 +223,83 @@ class TestSpecModifiedBetweenRuns:
         assert parsed["spec_ref"] == f"specs/feature.spec.md@{new_sha}"
 
 
+class TestNestedSpecPathRoundTrip:
+    """Nested spec paths round-trip correctly through store -> list -> get."""
+
+    def test_nested_spec_path_survives_store_list_roundtrip(self, tmp_path: Path) -> None:
+        repo = _make_repo_with_specs(tmp_path, ["placeholder.spec.md"])
+
+        from hyperloop.adapters.git.state import GitStateStore
+
+        state = GitStateStore(repo)
+        yaml_content = yaml.dump(
+            {
+                "spec_path": "specs/core/auth.spec.md",
+                "spec_ref": "specs/core/auth.spec.md@abc123",
+                "total_tasks": 0,
+                "completed": 0,
+                "failed": 0,
+                "failure_themes": [],
+                "last_audit": None,
+                "last_audit_result": None,
+            }
+        )
+        state.store_summary("specs/core/auth.spec.md", yaml_content)
+        state.persist("test")
+
+        summaries = state.list_summaries()
+        assert "specs/core/auth.spec.md" in summaries
+
+    def test_deeply_nested_spec_path_roundtrips(self, tmp_path: Path) -> None:
+        repo = _make_repo_with_specs(tmp_path, ["placeholder.spec.md"])
+
+        from hyperloop.adapters.git.state import GitStateStore
+
+        state = GitStateStore(repo)
+        yaml_content = yaml.dump(
+            {
+                "spec_path": "specs/a/b/c/deep.spec.md",
+                "spec_ref": "specs/a/b/c/deep.spec.md@sha1",
+                "total_tasks": 0,
+                "completed": 0,
+                "failed": 0,
+                "failure_themes": [],
+                "last_audit": None,
+                "last_audit_result": None,
+            }
+        )
+        state.store_summary("specs/a/b/c/deep.spec.md", yaml_content)
+        state.persist("test")
+
+        summaries = state.list_summaries()
+        assert "specs/a/b/c/deep.spec.md" in summaries
+
+        # Also verify get_summary works
+        retrieved = state.get_summary("specs/a/b/c/deep.spec.md")
+        assert retrieved is not None
+        parsed = yaml.safe_load(retrieved)
+        assert parsed["spec_ref"] == "specs/a/b/c/deep.spec.md@sha1"
+
+    def test_nested_baseline_roundtrips(self, tmp_path: Path) -> None:
+        """Baseline on nested specs creates summaries that list_summaries finds."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+
+        _write_spec(repo, "specs/core/system-purpose.spec.md", "# System Purpose\n")
+        _write_spec(repo, "specs/core/auth.spec.md", "# Auth\n")
+        _commit_all(repo)
+
+        baseline_specs(repo, spec_glob=None, dry_run=False)
+
+        from hyperloop.adapters.git.state import GitStateStore
+
+        state = GitStateStore(repo)
+        summaries = state.list_summaries()
+        assert "specs/core/system-purpose.spec.md" in summaries
+        assert "specs/core/auth.spec.md" in summaries
+
+
 class TestGlobFilter:
     """Glob filter only baselines matching specs."""
 
