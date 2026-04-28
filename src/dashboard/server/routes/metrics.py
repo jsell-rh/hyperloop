@@ -190,61 +190,92 @@ def _cycle_range(by_cycle: dict[int, list[dict[str, Any]]], n: int) -> list[int]
 
 
 def _compute_kpi(events: list[dict[str, Any]]) -> KpiResponse:
-    """Compute all 6 KPI cards from events."""
+    """Compute all 6 KPI cards from events.
+
+    Cards gracefully degrade: when ``task_completed`` events exist, show
+    task-level stats.  Otherwise fall back to round-level stats from
+    ``worker_reaped`` so the dashboard never shows "0" when useful
+    intermediate data is available.
+    """
     by_cycle = _group_events_by_cycle(events)
     last_20 = _cycle_range(by_cycle, 20)
 
-    # Per-cycle data
-    completions_per_cycle: list[int] = []
-    rounds_per_cycle: list[list[int]] = []
+    # Per-cycle accumulators
+    reaped_per_cycle: list[int] = []
+    verify_pass_per_cycle: list[int] = []
+    verify_total_per_cycle: list[int] = []
     drift_per_cycle: list[int] = []
-    active_workers_latest = 0
-    total_completed_last20 = 0
-    total_failed_last20 = 0
+    pass_per_cycle: list[int] = []
+    fail_per_cycle: list[int] = []
 
     for cycle_num in last_20:
         evts = by_cycle.get(cycle_num, [])
-        completed = 0
-        failed = 0
-        rounds_this_cycle: list[int] = []
+        reaped = 0
+        v_pass = 0
+        v_total = 0
         drift = 0
-        workers_this_cycle = 0
+        cycle_pass = 0
+        cycle_fail = 0
 
         for ev in evts:
             event_type = ev.get("event")
-            if event_type == "task_completed":
-                completed += 1
-                total_rounds = ev.get("total_rounds")
-                if isinstance(total_rounds, int):
-                    rounds_this_cycle.append(total_rounds)
-            elif event_type == "task_failed":
-                failed += 1
+            if event_type == "worker_reaped":
+                reaped += 1
+                verdict = ev.get("verdict")
+                role = str(ev.get("role", ""))
+                if verdict == "pass":
+                    cycle_pass += 1
+                elif verdict == "fail":
+                    cycle_fail += 1
+                # Verifier-specific pass rate
+                if role == "verifier":
+                    v_total += 1
+                    if verdict == "pass":
+                        v_pass += 1
             elif event_type == "reconcile_completed":
                 dc = ev.get("drift_count")
                 if isinstance(dc, int):
                     drift = dc
-            elif event_type == "worker_spawned":
-                workers_this_cycle += 1
 
-        completions_per_cycle.append(completed)
-        rounds_per_cycle.append(rounds_this_cycle)
+        reaped_per_cycle.append(reaped)
+        verify_pass_per_cycle.append(v_pass)
+        verify_total_per_cycle.append(v_total)
         drift_per_cycle.append(drift)
-        active_workers_latest = workers_this_cycle
-        total_completed_last20 += completed
-        total_failed_last20 += failed
+        pass_per_cycle.append(cycle_pass)
+        fail_per_cycle.append(cycle_fail)
 
-    # Count active workers from latest events (spawned without reaped)
-    latest_workers: dict[str, bool] = {}
-    for ev in events:
-        event_type = ev.get("event")
-        task_id = str(ev.get("task_id", ""))
-        if event_type == "worker_spawned" and task_id:
-            latest_workers[task_id] = True
-        elif event_type == "worker_reaped" and task_id:
-            latest_workers[task_id] = False
-    active_workers_latest = sum(1 for v in latest_workers.values() if v)
+    total_reaped = sum(reaped_per_cycle)
+    total_verify_pass = sum(verify_pass_per_cycle)
+    total_verify = sum(verify_total_per_cycle)
+    total_pass = sum(pass_per_cycle)
+    total_fail = sum(fail_per_cycle)
 
-    # Specs converged: from latest reconcile_completed
+    # ---- Card 1: Rounds Completed ----
+    # Count worker_reaped events (each represents a completed round of work).
+    reaped_sparkline = [
+        SparklinePoint(cycle=last_20[i], value=float(reaped_per_cycle[i]))
+        for i in range(len(last_20))
+    ]
+
+    # ---- Card 2: Verify Pass Rate ----
+    # Percentage of verifier worker_reaped events with verdict == "pass".
+    verify_pass_rate = 0.0
+    if total_verify > 0:
+        verify_pass_rate = round(total_verify_pass / total_verify * 100, 1)
+    verify_rate_per_cycle: list[float] = []
+    for i in range(len(last_20)):
+        if verify_total_per_cycle[i] > 0:
+            verify_rate_per_cycle.append(
+                round(verify_pass_per_cycle[i] / verify_total_per_cycle[i] * 100, 1)
+            )
+        else:
+            verify_rate_per_cycle.append(0.0)
+    verify_sparkline = [
+        SparklinePoint(cycle=last_20[i], value=verify_rate_per_cycle[i])
+        for i in range(len(last_20))
+    ]
+
+    # ---- Card 3: Specs Converged ----
     drift_remaining = 0
     total_specs = 0
     for ev in reversed(events):
@@ -257,7 +288,6 @@ def _compute_kpi(events: list[dict[str, Any]]) -> KpiResponse:
                 total_specs = ts
             break
 
-    # If total_specs not in event, count distinct spec_refs from audits
     if total_specs == 0:
         spec_refs: set[str] = set()
         for ev in events:
@@ -267,32 +297,54 @@ def _compute_kpi(events: list[dict[str, Any]]) -> KpiResponse:
                     spec_refs.add(sr)
         total_specs = len(spec_refs)
 
-    specs_converged = max(0, total_specs - drift_remaining)
+    # Also count convergence_marked events for a more accurate number
+    converged_specs: set[str] = set()
+    for ev in events:
+        if ev.get("event") == "convergence_marked":
+            sp = ev.get("spec_ref") or ev.get("spec_path")
+            if isinstance(sp, str) and sp:
+                converged_specs.add(sp)
+    if converged_specs:
+        specs_converged = len(converged_specs)
+    else:
+        specs_converged = max(0, total_specs - drift_remaining)
 
-    # All rounds from completed tasks in last 20 cycles
-    all_rounds: list[int] = []
-    for r_list in rounds_per_cycle:
-        all_rounds.extend(r_list)
-    avg_rounds = round(sum(all_rounds) / len(all_rounds), 1) if all_rounds else 0.0
+    # ---- Card 4: Active Workers ----
+    latest_workers: dict[str, bool] = {}
+    for ev in events:
+        event_type = ev.get("event")
+        task_id = str(ev.get("task_id", ""))
+        if event_type == "worker_spawned" and task_id:
+            latest_workers[task_id] = True
+        elif event_type == "worker_reaped" and task_id:
+            latest_workers[task_id] = False
+    active_workers_count = sum(1 for v in latest_workers.values() if v)
 
-    # Merge rate
+    # ---- Card 5: Merge Rate ----
+    # Pass/fail ratio of all worker_reaped events in last 20 cycles.
+    total_decided = total_pass + total_fail
     merge_rate = 0.0
-    if total_completed_last20 + total_failed_last20 > 0:
-        merge_rate = round(
-            total_completed_last20 / (total_completed_last20 + total_failed_last20) * 100, 1
-        )
-
-    # Sparklines
-    completion_sparkline = [
-        SparklinePoint(cycle=last_20[i], value=float(completions_per_cycle[i]))
+    if total_decided > 0:
+        merge_rate = round(total_pass / total_decided * 100, 1)
+    merge_sparkline_values: list[float] = []
+    for i in range(len(last_20)):
+        decided = pass_per_cycle[i] + fail_per_cycle[i]
+        if decided > 0:
+            merge_sparkline_values.append(round(pass_per_cycle[i] / decided * 100, 1))
+        else:
+            merge_sparkline_values.append(0.0)
+    merge_sparkline = [
+        SparklinePoint(cycle=last_20[i], value=merge_sparkline_values[i])
         for i in range(len(last_20))
     ]
+
+    # ---- Card 6: Drift Remaining ----
     drift_sparkline = [
         SparklinePoint(cycle=last_20[i], value=float(drift_per_cycle[i]))
         for i in range(len(last_20))
     ]
 
-    # Trends: compare last 10 vs previous 10
+    # ---- Trend helper ----
     def trend_direction(values: list[float], higher_is_better: bool) -> tuple[str, bool]:
         if len(values) < 4:
             return "flat", True
@@ -307,43 +359,30 @@ def _compute_kpi(events: list[dict[str, Any]]) -> KpiResponse:
             return "up", higher_is_better
         return "down", not higher_is_better
 
-    comp_trend, comp_good = trend_direction(
-        [float(c) for c in completions_per_cycle], higher_is_better=True
+    reaped_trend, reaped_good = trend_direction(
+        [float(r) for r in reaped_per_cycle], higher_is_better=True
     )
+    verify_trend, verify_good = trend_direction(verify_rate_per_cycle, higher_is_better=True)
     drift_vals = [float(d) for d in drift_per_cycle]
     drift_trend, drift_good = trend_direction(drift_vals, higher_is_better=False)
-
-    # Avg rounds trend from per-cycle averages
-    round_avgs: list[float] = []
-    for r_list in rounds_per_cycle:
-        if r_list:
-            round_avgs.append(sum(r_list) / len(r_list))
-    round_trend, round_good = trend_direction(round_avgs, higher_is_better=False)
+    merge_trend, merge_good = trend_direction(merge_sparkline_values, higher_is_better=True)
 
     cards: list[KpiCard] = [
         KpiCard(
-            label="Tasks Completed",
-            value=float(total_completed_last20),
-            unit="tasks",
-            sparkline=completion_sparkline,
-            trend=comp_trend,
-            trend_is_good=comp_good,
+            label="Rounds Completed",
+            value=float(total_reaped),
+            unit="rounds",
+            sparkline=reaped_sparkline,
+            trend=reaped_trend,
+            trend_is_good=reaped_good,
         ),
         KpiCard(
-            label="Avg Rounds",
-            value=avg_rounds,
-            unit="rounds",
-            sparkline=[
-                SparklinePoint(
-                    cycle=last_20[i],
-                    value=round(sum(rounds_per_cycle[i]) / len(rounds_per_cycle[i]), 1)
-                    if rounds_per_cycle[i]
-                    else 0.0,
-                )
-                for i in range(len(last_20))
-            ],
-            trend=round_trend,
-            trend_is_good=round_good,
+            label="Verify Pass Rate",
+            value=verify_pass_rate,
+            unit="%",
+            sparkline=verify_sparkline,
+            trend=verify_trend,
+            trend_is_good=verify_good,
         ),
         KpiCard(
             label="Specs Converged",
@@ -355,7 +394,7 @@ def _compute_kpi(events: list[dict[str, Any]]) -> KpiResponse:
         ),
         KpiCard(
             label="Active Workers",
-            value=float(active_workers_latest),
+            value=float(active_workers_count),
             unit="workers",
             sparkline=[],
             trend="flat",
@@ -365,9 +404,9 @@ def _compute_kpi(events: list[dict[str, Any]]) -> KpiResponse:
             label="Merge Rate",
             value=merge_rate,
             unit="%",
-            sparkline=[],
-            trend="flat",
-            trend_is_good=True,
+            sparkline=merge_sparkline,
+            trend=merge_trend,
+            trend_is_good=merge_good,
         ),
         KpiCard(
             label="Drift Remaining",
