@@ -25,7 +25,11 @@ from dashboard.server.models import (
     VelocityPoint,
     VelocityResponse,
 )
-from dashboard.server.routes._events import find_events_path, parse_events
+from dashboard.server.routes._events import (
+    find_events_path,
+    find_events_path_by_hash,
+    parse_events,
+)
 
 router = APIRouter()
 
@@ -126,9 +130,9 @@ def _compute_trend(events: list[dict[str, Any]], cycles: int) -> TrendMetrics:
 
 
 @router.get("/api/metrics/trend")
-def get_trend_metrics(cycles: int = 20) -> TrendMetrics:
+def get_trend_metrics(cycles: int = 20, repo: str | None = None) -> TrendMetrics:
     """Return aggregated metrics over the last N cycles."""
-    events_path = find_events_path(get_repo_path())
+    events_path = find_events_path_by_hash(repo) if repo else find_events_path(get_repo_path())
     if events_path is None or not events_path.exists():
         return TrendMetrics(
             cycles_analyzed=0,
@@ -148,9 +152,13 @@ def get_trend_metrics(cycles: int = 20) -> TrendMetrics:
 # ---------------------------------------------------------------------------
 
 
-def _load_session_events() -> list[dict[str, Any]]:
-    """Load events for the latest orchestrator session."""
-    events_path = find_events_path(get_repo_path())
+def _load_session_events(repo: str | None = None) -> list[dict[str, Any]]:
+    """Load events for the latest orchestrator session.
+
+    When *repo* is a hash string, resolve events directly from the cache
+    directory instead of using the default repo_path.
+    """
+    events_path = find_events_path_by_hash(repo) if repo else find_events_path(get_repo_path())
     if events_path is None or not events_path.exists():
         return []
     events = parse_events(events_path)
@@ -422,9 +430,9 @@ def _compute_kpi(events: list[dict[str, Any]]) -> KpiResponse:
 
 
 @router.get("/api/metrics/kpi")
-def get_kpi() -> KpiResponse:
+def get_kpi(repo: str | None = None) -> KpiResponse:
     """Return all 6 KPI card values with sparklines and trends."""
-    events = _load_session_events()
+    events = _load_session_events(repo)
     if not events:
         return KpiResponse(cards=[])
     return _compute_kpi(events)
@@ -481,9 +489,9 @@ def _compute_burndown(events: list[dict[str, Any]]) -> BurndownResponse:
 
 
 @router.get("/api/metrics/burndown")
-def get_burndown() -> BurndownResponse:
+def get_burndown(repo: str | None = None) -> BurndownResponse:
     """Return time series for burnup/burndown chart."""
-    events = _load_session_events()
+    events = _load_session_events(repo)
     if not events:
         return BurndownResponse(points=[])
     return _compute_burndown(events)
@@ -560,9 +568,9 @@ def _compute_velocity(events: list[dict[str, Any]]) -> VelocityResponse:
 
 
 @router.get("/api/metrics/velocity")
-def get_velocity() -> VelocityResponse:
+def get_velocity(repo: str | None = None) -> VelocityResponse:
     """Return velocity data points over time."""
-    events = _load_session_events()
+    events = _load_session_events(repo)
     if not events:
         return VelocityResponse(points=[])
     return _compute_velocity(events)
@@ -620,9 +628,9 @@ def _compute_round_efficiency(
 
 
 @router.get("/api/metrics/round-efficiency")
-def get_round_efficiency() -> RoundEfficiencyResponse:
+def get_round_efficiency(repo: str | None = None) -> RoundEfficiencyResponse:
     """Return round efficiency trend and distribution."""
-    events = _load_session_events()
+    events = _load_session_events(repo)
     if not events:
         return RoundEfficiencyResponse(trend=[], distribution=[])
     return _compute_round_efficiency(events)
@@ -697,9 +705,9 @@ def _compute_phase_funnel(events: list[dict[str, Any]]) -> PhaseFunnelResponse:
 
 
 @router.get("/api/metrics/phase-funnel")
-def get_phase_funnel() -> PhaseFunnelResponse:
+def get_phase_funnel(repo: str | None = None) -> PhaseFunnelResponse:
     """Return per-phase stats for funnel visualization."""
-    events = _load_session_events()
+    events = _load_session_events(repo)
     if not events:
         return PhaseFunnelResponse(phases=[])
     return _compute_phase_funnel(events)

@@ -452,3 +452,26 @@ export interface PhaseFunnelEntry {
 export interface PhaseFunnelResponse {
   phases: PhaseFunnelEntry[]
 }
+
+// ---------------------------------------------------------------------------
+// Fleet types
+// ---------------------------------------------------------------------------
+
+export interface InstanceSummary {
+  repo_hash: string
+  repo_name: string
+  repo_path: string
+  status: 'running' | 'idle' | 'stale' | 'empty'
+  last_event_at: string | null
+  current_cycle: number
+  active_workers: number
+  specs_converged: number
+  specs_total: number
+  drift_remaining: number
+  rounds_completed: number
+  verify_pass_rate: number
+}
+
+export interface FleetResponse {
+  instances: InstanceSummary[]
+}

@@ -1,8 +1,26 @@
 <script setup lang="ts">
-import type { ActivityResponse, FlatEvent, TaskInFlight, PipelineStepInfo, CycleDetail, CyclePhaseTiming, WorkerHeartbeat, KpiResponse, BurndownResponse, RoundEfficiencyResponse, PhaseFunnelResponse } from '~/types'
+import type { ActivityResponse, FlatEvent, TaskInFlight, PipelineStepInfo, CycleDetail, CyclePhaseTiming, WorkerHeartbeat, KpiResponse, BurndownResponse, RoundEfficiencyResponse, PhaseFunnelResponse, FleetResponse } from '~/types'
 
-const { fetchActivity, fetchPipeline, fetchWorkerHeartbeats, fetchKpi, fetchBurndown, fetchRoundEfficiency, fetchPhaseFunnel } = useApi()
+const { fetchActivity, fetchPipeline, fetchWorkerHeartbeats, fetchKpi, fetchBurndown, fetchRoundEfficiency, fetchPhaseFunnel, fetchFleet } = useApi()
 const { markFetched, setWorkersActive } = useLiveness()
+
+// --- Repo scoping from query parameter ---
+const route = useRoute()
+const repoHash = computed(() => (route.query.repo as string) || undefined)
+
+// Resolve repo name for breadcrumb
+const repoName = ref<string | null>(null)
+
+async function resolveRepoName(): Promise<void> {
+  if (!repoHash.value) return
+  try {
+    const resp = await fetchFleet()
+    const match = resp.instances.find(i => i.repo_hash === repoHash.value)
+    if (match) repoName.value = match.repo_name
+  } catch {
+    // Non-critical
+  }
+}
 
 const data = ref<ActivityResponse | null>(null)
 const loadError = ref<string | null>(null)
@@ -16,7 +34,7 @@ const phaseFunnelData = ref<PhaseFunnelResponse | null>(null)
 
 async function load(): Promise<void> {
   try {
-    data.value = await fetchActivity({ limit: 50 })
+    data.value = await fetchActivity({ limit: 50, repo: repoHash.value })
     loadError.value = null
     markFetched()
   } catch (e: unknown) {
@@ -34,11 +52,12 @@ async function loadPipeline(): Promise<void> {
 
 async function loadMetrics(): Promise<void> {
   try {
+    const repoParam = repoHash.value ? { repo: repoHash.value } : undefined
     const [kpi, bd, re, pf] = await Promise.all([
-      fetchKpi(),
-      fetchBurndown(),
-      fetchRoundEfficiency(),
-      fetchPhaseFunnel(),
+      fetchKpi(repoParam),
+      fetchBurndown(repoParam),
+      fetchRoundEfficiency(repoParam),
+      fetchPhaseFunnel(repoParam),
     ])
     kpiData.value = kpi
     burndownData.value = bd
@@ -61,7 +80,7 @@ async function loadHeartbeats(): Promise<void> {
     return
   }
   try {
-    const resp = await fetchWorkerHeartbeats({ since: lastHeartbeatFetch || undefined })
+    const resp = await fetchWorkerHeartbeats({ since: lastHeartbeatFetch || undefined, repo: repoHash.value })
     heartbeats.value = resp.heartbeats
     lastHeartbeatFetch = resp.server_time
     setWorkersActive(resp.heartbeats.length > 0)
@@ -78,6 +97,7 @@ onMounted(() => {
   load()
   loadPipeline()
   loadMetrics()
+  resolveRepoName()
   heartbeatTimer = setInterval(loadHeartbeats, 3000)
 })
 
@@ -436,6 +456,15 @@ function formatCycleDuration(d: number): string {
 
 <template>
   <div class="max-w-7xl mx-auto px-6 md:px-8 py-8">
+    <!-- Breadcrumb when scoped to a specific repo -->
+    <div v-if="repoHash" class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-2">
+      <NuxtLink to="/" class="hover:text-gray-700 dark:hover:text-gray-300 transition-colors">Fleet</NuxtLink>
+      <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+      </svg>
+      <span class="text-gray-700 dark:text-gray-300 font-medium">{{ repoName || repoHash }}</span>
+    </div>
+
     <h1 class="text-2xl font-semibold text-gray-900 dark:text-gray-100 mb-6">Activity</h1>
 
     <!-- Error banner -->

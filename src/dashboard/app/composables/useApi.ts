@@ -22,6 +22,7 @@ import type {
   VelocityResponse,
   RoundEfficiencyResponse,
   PhaseFunnelResponse,
+  FleetResponse,
 } from '~/types'
 
 const API_BASE = '/api'
@@ -69,10 +70,10 @@ export function useApi() {
   const fetchChecks = () =>
     $fetch<CheckScript[]>(`${API_BASE}/agents/checks`)
 
-  const fetchActivity = (params?: { since_cycle?: number; limit?: number }) =>
+  const fetchActivity = (params?: { since_cycle?: number; limit?: number; repo?: string }) =>
     $fetch<ActivityResponse>(`${API_BASE}/activity`, { params })
 
-  const fetchWorkerHeartbeats = (params?: { since?: string }) =>
+  const fetchWorkerHeartbeats = (params?: { since?: string; repo?: string }) =>
     $fetch<HeartbeatResponse>(`${API_BASE}/activity/worker-heartbeats`, { params })
 
   const restartTask = (taskId: string, body: ControlRequest) =>
@@ -93,20 +94,23 @@ export function useApi() {
       body,
     })
 
-  const fetchKpi = () =>
-    $fetch<KpiResponse>(`${API_BASE}/metrics/kpi`)
+  const fetchKpi = (params?: { repo?: string }) =>
+    $fetch<KpiResponse>(`${API_BASE}/metrics/kpi`, { params })
 
-  const fetchBurndown = () =>
-    $fetch<BurndownResponse>(`${API_BASE}/metrics/burndown`)
+  const fetchBurndown = (params?: { repo?: string }) =>
+    $fetch<BurndownResponse>(`${API_BASE}/metrics/burndown`, { params })
 
-  const fetchVelocity = () =>
-    $fetch<VelocityResponse>(`${API_BASE}/metrics/velocity`)
+  const fetchVelocity = (params?: { repo?: string }) =>
+    $fetch<VelocityResponse>(`${API_BASE}/metrics/velocity`, { params })
 
-  const fetchRoundEfficiency = () =>
-    $fetch<RoundEfficiencyResponse>(`${API_BASE}/metrics/round-efficiency`)
+  const fetchRoundEfficiency = (params?: { repo?: string }) =>
+    $fetch<RoundEfficiencyResponse>(`${API_BASE}/metrics/round-efficiency`, { params })
 
-  const fetchPhaseFunnel = () =>
-    $fetch<PhaseFunnelResponse>(`${API_BASE}/metrics/phase-funnel`)
+  const fetchPhaseFunnel = (params?: { repo?: string }) =>
+    $fetch<PhaseFunnelResponse>(`${API_BASE}/metrics/phase-funnel`, { params })
+
+  const fetchFleet = () =>
+    $fetch<FleetResponse>(`${API_BASE}/fleet`)
 
   return {
     fetchSpecs,
@@ -133,5 +137,6 @@ export function useApi() {
     fetchVelocity,
     fetchRoundEfficiency,
     fetchPhaseFunnel,
+    fetchFleet,
   }
 }

@@ -567,6 +567,29 @@ class PhaseFunnelResponse(BaseModel):
     phases: list[PhaseFunnelEntry]
 
 
+class InstanceSummary(BaseModel):
+    """Summary of a single hyperloop instance for the fleet overview."""
+
+    repo_hash: str
+    repo_name: str
+    repo_path: str
+    status: str  # "running", "idle", "stale", "empty"
+    last_event_at: str | None
+    current_cycle: int
+    active_workers: int
+    specs_converged: int
+    specs_total: int
+    drift_remaining: int
+    rounds_completed: int
+    verify_pass_rate: float
+
+
+class FleetResponse(BaseModel):
+    """All discovered hyperloop instances."""
+
+    instances: list[InstanceSummary]
+
+
 class RestartRequest(BaseModel):
     """Request body for restarting a task."""
 

@@ -34,7 +34,11 @@ from dashboard.server.models import (
     WorkerHeartbeat,
     WorkerHistoryEntry,
 )
-from dashboard.server.routes._events import find_events_path, parse_events
+from dashboard.server.routes._events import (
+    find_events_path,
+    find_events_path_by_hash,
+    parse_events,
+)
 
 router = APIRouter()
 
@@ -615,9 +619,10 @@ def _build_flattened_events(events: list[dict[str, Any]]) -> list[FlatEvent]:
 def get_activity(
     since_cycle: int | None = None,
     limit: int = 20,
+    repo: str | None = None,
 ) -> ActivityResponse:
     """Return cycle-grouped activity from the FileProbe event log."""
-    events_path = find_events_path(get_repo_path())
+    events_path = find_events_path_by_hash(repo) if repo else find_events_path(get_repo_path())
     if events_path is None or not events_path.exists():
         return ActivityResponse(
             current_cycle=0,
@@ -670,12 +675,15 @@ def get_activity(
 
 
 @router.get("/api/activity/worker-heartbeats")
-def get_worker_heartbeats(since: str | None = None) -> HeartbeatResponse:
+def get_worker_heartbeats(
+    since: str | None = None,
+    repo: str | None = None,
+) -> HeartbeatResponse:
     """Lightweight endpoint for worker liveness animations.
 
     Reads only the tail of the events JSONL file for speed (sub-50ms target).
     """
-    events_path = find_events_path(get_repo_path())
+    events_path = find_events_path_by_hash(repo) if repo else find_events_path(get_repo_path())
     if not events_path or not events_path.exists():
         return HeartbeatResponse(heartbeats=[], server_time=datetime.now(UTC).isoformat())
 

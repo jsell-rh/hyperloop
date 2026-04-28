@@ -16,6 +16,7 @@ from dashboard.server import deps
 from dashboard.server.routes import (
     activity,
     agents,
+    fleet,
     health,
     metrics,
     pipeline,
@@ -53,6 +54,7 @@ def create_app(repo_path: str = ".") -> FastAPI:
     )
     app.include_router(activity.router)
     app.include_router(agents.router)
+    app.include_router(fleet.router)
     app.include_router(health.router)
     app.include_router(metrics.router)
     app.include_router(pipeline.router)

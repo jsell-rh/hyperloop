@@ -3,7 +3,7 @@ const route = useRoute()
 const { markFetched, lastUpdatedText, status, workersActive } = useLiveness()
 
 const navLinks = [
-  { label: 'Overview', to: '/' },
+  { label: 'Fleet', to: '/' },
   { label: 'Activity', to: '/activity' },
   { label: 'Process', to: '/process' },
   { label: 'Agents', to: '/agents' },
