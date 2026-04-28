@@ -97,12 +97,20 @@ class PRMergeStep:
                 )
             new_pr_url = pr_url
 
-        # Wait for mergeable
+        # Wait for mergeable — attempt auto-rebase on conflict
         if not self._pr.wait_mergeable(pr_url):
-            return StepResult(
-                outcome=StepOutcome.RETRY,
-                detail="PR not mergeable -- may have conflicts with " + self._base_branch,
-            )
+            if not self._pr.rebase_branch(branch, self._base_branch):
+                return StepResult(
+                    outcome=StepOutcome.RETRY,
+                    detail="PR not mergeable -- rebase failed (code conflicts with "
+                    + self._base_branch
+                    + ")",
+                )
+            if not self._pr.wait_mergeable(pr_url):
+                return StepResult(
+                    outcome=StepOutcome.RETRY,
+                    detail="PR not mergeable after rebase -- " + self._base_branch,
+                )
 
         # Merge
         if not self._pr.merge(pr_url, task.id, task.spec_ref):

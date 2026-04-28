@@ -49,6 +49,7 @@ class FakePRManager:
         self._merge_fails: set[str] = set()
         self._merge_only_fails: set[str] = set()
         self._rebase_fails: set[str] = set()
+        self._merge_fails_until_rebase: dict[str, str] = {}  # pr_url -> branch
 
         # Recording for assertions
         self.marked_ready: list[str] = []
@@ -68,6 +69,11 @@ class FakePRManager:
     def set_rebase_fails(self, branch: str) -> None:
         """Pre-configure rebase_branch() to return False for this branch."""
         self._rebase_fails.add(branch)
+
+    def set_merge_fails_until_rebase(self, pr_url: str, branch: str) -> None:
+        """PR is not mergeable until rebase_branch(branch) succeeds."""
+        self._merge_fails.add(pr_url)
+        self._merge_fails_until_rebase[pr_url] = branch
 
     def add_label(self, pr_url: str, label: str) -> None:
         """Add a label to a PR (simulates external human action / port method)."""
@@ -177,7 +183,14 @@ class FakePRManager:
     def rebase_branch(self, branch: str, base_branch: str) -> bool:
         """Rebase a branch onto base. Returns True if clean, False if conflicts."""
         self.rebased.append((branch, base_branch))
-        return branch not in self._rebase_fails
+        if branch in self._rebase_fails:
+            return False
+        # Clear merge failure for PRs that were waiting on this rebase
+        resolved = [url for url, b in self._merge_fails_until_rebase.items() if b == branch]
+        for url in resolved:
+            self._merge_fails.discard(url)
+            del self._merge_fails_until_rebase[url]
+        return True
 
     def get_feedback(self, pr_url: str) -> str:
         """Return empty feedback in the fake."""

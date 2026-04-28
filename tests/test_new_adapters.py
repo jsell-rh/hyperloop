@@ -184,6 +184,46 @@ class TestPRMergeStep:
         assert result.outcome == StepOutcome.ADVANCE
         assert result.pr_url is not None
 
+    def test_merge_conflict_resolved_by_rebase(self) -> None:
+        pr = _pr_manager()
+        step = PRMergeStep(pr=pr, base_branch="main")
+        pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        pr.set_merge_fails_until_rebase(pr_url, "hyperloop/task-001")
+
+        task = _task(pr=pr_url)
+        result = step.execute(task, "merge-pr", {})
+
+        assert result.outcome == StepOutcome.ADVANCE
+        assert ("hyperloop/task-001", "main") in pr.rebased
+        assert pr_url in pr.merged
+
+    def test_merge_conflict_rebase_fails_returns_retry(self) -> None:
+        pr = _pr_manager()
+        step = PRMergeStep(pr=pr, base_branch="main")
+        pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        pr.set_merge_fails(pr_url)
+        pr.set_rebase_fails("hyperloop/task-001")
+
+        task = _task(pr=pr_url)
+        result = step.execute(task, "merge-pr", {})
+
+        assert result.outcome == StepOutcome.RETRY
+        assert "rebase failed" in result.detail.lower()
+
+    def test_merge_conflict_rebase_succeeds_but_still_not_mergeable(self) -> None:
+        pr = _pr_manager()
+        step = PRMergeStep(pr=pr, base_branch="main")
+        pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        # merge fails and rebase won't clear it (not using set_merge_fails_until_rebase)
+        pr.set_merge_fails(pr_url)
+
+        task = _task(pr=pr_url)
+        result = step.execute(task, "merge-pr", {})
+
+        assert result.outcome == StepOutcome.RETRY
+        assert ("hyperloop/task-001", "main") in pr.rebased
+        assert "after rebase" in result.detail.lower()
+
 
 # ---------------------------------------------------------------------------
 # MarkReadyStep tests
