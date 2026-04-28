@@ -379,3 +379,76 @@ export interface SpecSummaryRecord {
   last_audit_at: string | null
   baselined: boolean
 }
+
+// ---------------------------------------------------------------------------
+// KPI / Visualization types
+// ---------------------------------------------------------------------------
+
+export interface SparklinePoint {
+  cycle: number
+  value: number
+}
+
+export interface KpiCard {
+  label: string
+  value: number
+  unit: string
+  sparkline: SparklinePoint[]
+  trend: 'up' | 'down' | 'flat'
+  trend_is_good: boolean
+}
+
+export interface KpiResponse {
+  cards: KpiCard[]
+}
+
+export interface BurndownPoint {
+  cycle: number
+  timestamp: string
+  burnup: number
+  burndown: number
+  scope_change: boolean
+}
+
+export interface BurndownResponse {
+  points: BurndownPoint[]
+}
+
+export interface VelocityPoint {
+  cycle: number
+  timestamp: string
+  tasks_per_hour: number
+  completed_count: number
+}
+
+export interface VelocityResponse {
+  points: VelocityPoint[]
+}
+
+export interface RoundEfficiencyPoint {
+  window_start: number
+  window_end: number
+  avg_rounds: number
+  sample_count: number
+}
+
+export interface RoundDistributionBucket {
+  rounds: string
+  count: number
+}
+
+export interface RoundEfficiencyResponse {
+  trend: RoundEfficiencyPoint[]
+  distribution: RoundDistributionBucket[]
+}
+
+export interface PhaseFunnelEntry {
+  phase: string
+  avg_duration_s: number
+  total_executions: number
+  first_pass_success_rate: number
+}
+
+export interface PhaseFunnelResponse {
+  phases: PhaseFunnelEntry[]
+}

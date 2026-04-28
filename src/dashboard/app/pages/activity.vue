@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import type { ActivityResponse, FlatEvent, TaskInFlight, PipelineStepInfo, CycleDetail, CyclePhaseTiming, WorkerHeartbeat } from '~/types'
+import type { ActivityResponse, FlatEvent, TaskInFlight, PipelineStepInfo, CycleDetail, CyclePhaseTiming, WorkerHeartbeat, KpiResponse, BurndownResponse, RoundEfficiencyResponse, PhaseFunnelResponse } from '~/types'
 
-const { fetchActivity, fetchPipeline, fetchWorkerHeartbeats } = useApi()
+const { fetchActivity, fetchPipeline, fetchWorkerHeartbeats, fetchKpi, fetchBurndown, fetchRoundEfficiency, fetchPhaseFunnel } = useApi()
 const { markFetched, setWorkersActive } = useLiveness()
 
 const data = ref<ActivityResponse | null>(null)
 const loadError = ref<string | null>(null)
 const pipelineSteps = ref<PipelineStepInfo[]>([])
+
+// --- Metrics data ---
+const kpiData = ref<KpiResponse | null>(null)
+const burndownData = ref<BurndownResponse | null>(null)
+const roundEfficiencyData = ref<RoundEfficiencyResponse | null>(null)
+const phaseFunnelData = ref<PhaseFunnelResponse | null>(null)
 
 async function load(): Promise<void> {
   try {
@@ -23,6 +29,23 @@ async function loadPipeline(): Promise<void> {
     pipelineSteps.value = await fetchPipeline()
   } catch {
     // Pipeline is optional for this view
+  }
+}
+
+async function loadMetrics(): Promise<void> {
+  try {
+    const [kpi, bd, re, pf] = await Promise.all([
+      fetchKpi(),
+      fetchBurndown(),
+      fetchRoundEfficiency(),
+      fetchPhaseFunnel(),
+    ])
+    kpiData.value = kpi
+    burndownData.value = bd
+    roundEfficiencyData.value = re
+    phaseFunnelData.value = pf
+  } catch {
+    // Metrics are supplementary; don't block the page
   }
 }
 
@@ -54,17 +77,21 @@ function heartbeatForTask(taskId: string): WorkerHeartbeat | null {
 onMounted(() => {
   load()
   loadPipeline()
+  loadMetrics()
   heartbeatTimer = setInterval(loadHeartbeats, 3000)
 })
 
 // Poll every 10s
 let timer: ReturnType<typeof setInterval> | null = null
+let metricsTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   timer = setInterval(load, 10_000)
+  metricsTimer = setInterval(loadMetrics, 30_000)
 })
 onUnmounted(() => {
   if (timer) clearInterval(timer)
   if (heartbeatTimer) clearInterval(heartbeatTimer)
+  if (metricsTimer) clearInterval(metricsTimer)
 })
 
 // Dynamic page title
@@ -496,6 +523,13 @@ function formatCycleDuration(d: number): string {
         />
       </div>
 
+      <!-- KPI Strip -->
+      <KpiStrip
+        v-if="kpiData && kpiData.cards.length > 0"
+        :cards="kpiData.cards"
+        class="mt-4 mb-2"
+      />
+
       <!-- Content area (dims when stale) -->
       <div
         class="transition-opacity duration-300 mt-4"
@@ -630,6 +664,31 @@ function formatCycleDuration(d: number): string {
                 </div>
               </div>
             </Transition>
+          </div>
+
+          <!-- 5. Charts section -->
+          <div class="mt-8">
+            <h2 class="text-xs font-medium text-gray-400 uppercase tracking-wider mb-4">Metrics</h2>
+
+            <!-- Burndown / Burnup chart -->
+            <BurndownChart
+              v-if="burndownData && burndownData.points.length >= 2"
+              :points="burndownData.points"
+              class="mb-6"
+            />
+
+            <!-- Two-column layout for smaller charts -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <RoundEfficiencyChart
+                v-if="roundEfficiencyData"
+                :trend="roundEfficiencyData.trend"
+                :distribution="roundEfficiencyData.distribution"
+              />
+              <PhaseFunnel
+                v-if="phaseFunnelData && phaseFunnelData.phases.length > 0"
+                :phases="phaseFunnelData.phases"
+              />
+            </div>
           </div>
         </div>
       </div>

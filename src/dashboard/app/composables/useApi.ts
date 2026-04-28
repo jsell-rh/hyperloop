@@ -17,6 +17,11 @@ import type {
   HeartbeatResponse,
   ControlRequest,
   ControlResponse,
+  KpiResponse,
+  BurndownResponse,
+  VelocityResponse,
+  RoundEfficiencyResponse,
+  PhaseFunnelResponse,
 } from '~/types'
 
 const API_BASE = '/api'
@@ -88,6 +93,21 @@ export function useApi() {
       body,
     })
 
+  const fetchKpi = () =>
+    $fetch<KpiResponse>(`${API_BASE}/metrics/kpi`)
+
+  const fetchBurndown = () =>
+    $fetch<BurndownResponse>(`${API_BASE}/metrics/burndown`)
+
+  const fetchVelocity = () =>
+    $fetch<VelocityResponse>(`${API_BASE}/metrics/velocity`)
+
+  const fetchRoundEfficiency = () =>
+    $fetch<RoundEfficiencyResponse>(`${API_BASE}/metrics/round-efficiency`)
+
+  const fetchPhaseFunnel = () =>
+    $fetch<PhaseFunnelResponse>(`${API_BASE}/metrics/phase-funnel`)
+
   return {
     fetchSpecs,
     fetchSpec,
@@ -108,5 +128,10 @@ export function useApi() {
     restartTask,
     retireTask,
     forceClearTask,
+    fetchKpi,
+    fetchBurndown,
+    fetchVelocity,
+    fetchRoundEfficiency,
+    fetchPhaseFunnel,
   }
 }

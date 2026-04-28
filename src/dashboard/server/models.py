@@ -469,6 +469,104 @@ class TrendMetrics(BaseModel):
     total_tasks_failed: int
 
 
+# ---------------------------------------------------------------------------
+# KPI / Visualization models
+# ---------------------------------------------------------------------------
+
+
+class SparklinePoint(BaseModel):
+    """A single value in a sparkline series."""
+
+    cycle: int
+    value: float
+
+
+class KpiCard(BaseModel):
+    """A single KPI card with sparkline and trend."""
+
+    label: str
+    value: float
+    unit: str
+    sparkline: list[SparklinePoint]
+    trend: str  # "up", "down", "flat"
+    trend_is_good: bool
+
+
+class KpiResponse(BaseModel):
+    """All 6 KPI cards."""
+
+    cards: list[KpiCard]
+
+
+class BurndownPoint(BaseModel):
+    """A single point in the burndown/burnup chart."""
+
+    cycle: int
+    timestamp: str
+    burnup: int
+    burndown: int
+    scope_change: bool
+
+
+class BurndownResponse(BaseModel):
+    """Time series data for burndown/burnup chart."""
+
+    points: list[BurndownPoint]
+
+
+class VelocityPoint(BaseModel):
+    """A single velocity data point."""
+
+    cycle: int
+    timestamp: str
+    tasks_per_hour: float
+    completed_count: int
+
+
+class VelocityResponse(BaseModel):
+    """Velocity data points over time."""
+
+    points: list[VelocityPoint]
+
+
+class RoundEfficiencyPoint(BaseModel):
+    """Average rounds per time window."""
+
+    window_start: int
+    window_end: int
+    avg_rounds: float
+    sample_count: int
+
+
+class RoundDistributionBucket(BaseModel):
+    """Count of tasks completing in N rounds."""
+
+    rounds: str  # "1", "2", "3", "4", "5+"
+    count: int
+
+
+class RoundEfficiencyResponse(BaseModel):
+    """Round efficiency trend and distribution."""
+
+    trend: list[RoundEfficiencyPoint]
+    distribution: list[RoundDistributionBucket]
+
+
+class PhaseFunnelEntry(BaseModel):
+    """Per-phase stats for the funnel visualization."""
+
+    phase: str
+    avg_duration_s: float
+    total_executions: int
+    first_pass_success_rate: float
+
+
+class PhaseFunnelResponse(BaseModel):
+    """Phase funnel data."""
+
+    phases: list[PhaseFunnelEntry]
+
+
 class RestartRequest(BaseModel):
     """Request body for restarting a task."""
 
