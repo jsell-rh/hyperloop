@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import type { DepDetail } from '~/types'
 
-defineProps<{
+const props = defineProps<{
   deps: DepDetail[]
+  repoHash?: string
 }>()
 </script>
 
@@ -49,7 +50,7 @@ defineProps<{
       <!-- Content -->
       <div class="flex items-center gap-2 min-h-[20px]">
         <NuxtLink
-          :to="`/tasks/${dep.id}`"
+          :to="repoHash ? `/repo/${repoHash}/tasks/${dep.id}` : `/tasks/${dep.id}`"
           class="text-sm text-blue-600 dark:text-blue-400 hover:underline font-mono"
         >
           {{ dep.id }}

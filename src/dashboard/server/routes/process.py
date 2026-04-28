@@ -226,7 +226,7 @@ def _read_kustomization_refs(repo_path: Path) -> dict[str, str | None]:
 
 
 @router.get("/api/process")
-def get_process() -> ProcessResponse:
+def get_process(repo: str | None = None) -> ProcessResponse:
     """Return the full process definition with learning state."""
     repo_path = get_repo_path()
 

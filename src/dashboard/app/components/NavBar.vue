@@ -13,12 +13,12 @@ const navLinks = computed(() => {
     { label: 'Fleet', to: '/' },
   ]
   if (repoHash.value) {
-    links.push({ label: 'Activity', to: `/repo/${repoHash.value}/activity` })
+    links.push(
+      { label: 'Activity', to: `/repo/${repoHash.value}/activity` },
+      { label: 'Process', to: `/repo/${repoHash.value}/process` },
+      { label: 'Agents', to: `/repo/${repoHash.value}/agents` },
+    )
   }
-  links.push(
-    { label: 'Process', to: '/process' },
-    { label: 'Agents', to: '/agents' },
-  )
   return links
 })
 

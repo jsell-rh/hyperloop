@@ -57,7 +57,7 @@ def _read_process_overlays(repo_path: Path) -> dict[str, dict[str, str]]:
 
 
 @router.get("/api/agents")
-def list_agents() -> list[AgentDefinition]:
+def list_agents(repo: str | None = None) -> list[AgentDefinition]:
     """Return per-role agent definitions with layer breakdown."""
     repo_path = get_repo_path()
     templates = load_agent_templates(repo_path)
@@ -135,13 +135,13 @@ def _compute_roster(repo_path: Path) -> list[AgentRosterEntry]:
 
 
 @router.get("/api/agents/roster")
-def get_agent_roster() -> list[AgentRosterEntry]:
+def get_agent_roster(repo: str | None = None) -> list[AgentRosterEntry]:
     """Return per-role performance metrics computed from FileProbe events."""
     return _compute_roster(get_repo_path())
 
 
 @router.get("/api/agents/checks")
-def list_checks() -> list[CheckScript]:
+def list_checks(repo: str | None = None) -> list[CheckScript]:
     """Return check scripts from .hyperloop/checks/."""
     repo_path = get_repo_path()
     checks_dir = repo_path / ".hyperloop" / "checks"

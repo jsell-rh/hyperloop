@@ -5,6 +5,7 @@ const props = defineProps<{
   task: TaskInFlight
   pipelineSteps: PipelineStepInfo[]
   heartbeat?: WorkerHeartbeat | null
+  repoHash?: string
 }>()
 
 // --- Phase flow strip props ---
@@ -197,7 +198,7 @@ const pulseDotTooltip = computed(() => {
 
 <template>
   <NuxtLink
-    :to="`/tasks/${task.task_id}`"
+    :to="repoHash ? `/repo/${repoHash}/tasks/${task.task_id}` : `/tasks/${task.task_id}`"
     class="block rounded-lg bg-white dark:bg-gray-900 shadow-card dark:ring-1 dark:ring-white/[0.06] dark:shadow-none p-4 hover:ring-2 hover:ring-blue-400/50 transition-all cursor-pointer"
     :class="healthBorderClass"
   >

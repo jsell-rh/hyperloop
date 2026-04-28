@@ -16,7 +16,7 @@ def _status_str(status_enum: object) -> str:
 
 
 @router.get("/api/summary")
-def summary() -> SummaryResponse:
+def summary(repo: str | None = None) -> SummaryResponse:
     """Return aggregate progress counts across all tasks."""
     world = get_state().get_world()
     tasks = list(world.tasks.values())

@@ -97,6 +97,6 @@ def _load_pipeline_steps(repo_path: Path) -> list[PipelineStepInfo]:
 
 
 @router.get("/api/pipeline")
-def get_pipeline() -> list[PipelineStepInfo]:
+def get_pipeline(repo: str | None = None) -> list[PipelineStepInfo]:
     """Return the pipeline steps in order, flattened from the process definition."""
     return _load_pipeline_steps(get_repo_path())

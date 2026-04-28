@@ -186,7 +186,7 @@ def compute_spec_stage(
 
 
 @router.get("/api/specs")
-def list_specs() -> list[SpecSummary]:
+def list_specs(repo: str | None = None) -> list[SpecSummary]:
     """List all specs with task progress summary, drift info, and lifecycle stage.
 
     Finds spec files via StateStore.list_files, reads content via SpecSource
@@ -343,7 +343,7 @@ def list_specs() -> list[SpecSummary]:
 
 
 @router.get("/api/specs/{spec_ref:path}/drift")
-def get_spec_drift(spec_ref: str) -> SpecDriftDetail:
+def get_spec_drift(spec_ref: str, repo: str | None = None) -> SpecDriftDetail:
     """Return detailed drift info for a single spec, including old/new content."""
     # Strip trailing /drift if FastAPI captured it as part of spec_ref
     if spec_ref.endswith("/drift"):
@@ -433,7 +433,7 @@ def get_spec_drift(spec_ref: str) -> SpecDriftDetail:
 
 
 @router.get("/api/specs/{spec_ref:path}")
-def get_spec(spec_ref: str) -> SpecDetail:
+def get_spec(spec_ref: str, repo: str | None = None) -> SpecDetail:
     """Return spec content and associated tasks.
 
     The spec_ref in the URL is the unversioned spec path (e.g. specs/persistence.md).

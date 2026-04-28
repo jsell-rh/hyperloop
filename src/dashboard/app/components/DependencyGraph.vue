@@ -10,6 +10,7 @@ const props = defineProps<{
   graph: GraphData
   pipelineSteps?: PipelineStepInfo[]
   highlightSpecRef?: string | null
+  repoHash?: string
 }>()
 
 // ---------------------------------------------------------------------------
@@ -523,7 +524,7 @@ function updateTooltipPosition(event: MouseEvent): void {
 // ---------------------------------------------------------------------------
 const handleNodeClick = (nodeId: string): void => {
   if (didPan) return
-  navigateTo(`/tasks/${nodeId}`)
+  navigateTo(props.repoHash ? `/repo/${props.repoHash}/tasks/${nodeId}` : `/tasks/${nodeId}`)
 }
 
 function handleNodeKeydown(e: KeyboardEvent, nodeId: string): void {

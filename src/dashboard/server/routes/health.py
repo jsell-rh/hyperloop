@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 @router.get("/api/health")
-def health() -> HealthResponse:
+def health(repo: str | None = None) -> HealthResponse:
     """Return health status and configured adapter types."""
     return HealthResponse(
         status="ok",

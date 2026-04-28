@@ -26,7 +26,13 @@ useKeyboard({
         router.push(`/repo/${match[1]}/activity`)
       }
     },
-    P: () => router.push('/process'),
+    P: () => {
+      // Navigate to process only if in a repo context
+      const match = route.path.match(/^\/repo\/([^/]+)/)
+      if (match) {
+        router.push(`/repo/${match[1]}/process`)
+      }
+    },
   },
   keys: {
     '?': () => { showKeyboardHelp.value = !showKeyboardHelp.value },

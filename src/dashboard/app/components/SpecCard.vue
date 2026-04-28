@@ -3,6 +3,7 @@ import type { SpecSummary, SyncStatus, SpecStage } from '~/types'
 
 const props = defineProps<{
   spec: SpecSummary
+  repoHash?: string
 }>()
 
 const emit = defineEmits<{
@@ -40,6 +41,9 @@ const inProgressPercent = computed(() => {
 })
 
 const specPath = computed(() => {
+  if (props.repoHash) {
+    return `/repo/${props.repoHash}/specs/${props.spec.spec_ref}`
+  }
   return `/specs/${props.spec.spec_ref}`
 })
 

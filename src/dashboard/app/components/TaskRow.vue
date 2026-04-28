@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import type { TaskSummary } from '~/types'
 
-defineProps<{
+const props = defineProps<{
   task: TaskSummary
+  repoHash?: string
 }>()
 </script>
 
 <template>
   <NuxtLink
-    :to="`/tasks/${task.id}`"
+    :to="repoHash ? `/repo/${repoHash}/tasks/${task.id}` : `/tasks/${task.id}`"
     class="grid grid-cols-[auto_1fr_auto_auto_auto_auto] items-center gap-4 px-4 py-3 border-b border-gray-100 dark:border-gray-800 transition-colors hover:bg-gray-50 dark:hover:bg-gray-900/50"
   >
     <span class="text-xs font-mono text-gray-500 dark:text-gray-400">

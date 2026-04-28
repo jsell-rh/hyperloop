@@ -83,6 +83,7 @@ def _resolve_deps_detail(dep_ids: tuple[str, ...]) -> list[DepDetail]:
 def list_tasks(
     status: str | None = None,
     spec_ref: str | None = None,
+    repo: str | None = None,
 ) -> list[TaskSummary]:
     """List all tasks, optionally filtered by status or spec_ref prefix."""
     world = get_state().get_world()
@@ -157,7 +158,7 @@ def _compute_critical_path(tasks: Mapping[str, object]) -> list[str]:
 
 
 @router.get("/api/tasks/graph")
-def get_task_graph() -> GraphResponse:
+def get_task_graph(repo: str | None = None) -> GraphResponse:
     """Return the full dependency graph with critical path for visualization."""
     world = get_state().get_world()
     nodes: list[GraphNode] = []
@@ -182,7 +183,7 @@ def get_task_graph() -> GraphResponse:
 
 
 @router.get("/api/tasks/{task_id}")
-def get_task(task_id: str) -> TaskDetail:
+def get_task(task_id: str, repo: str | None = None) -> TaskDetail:
     """Return full task detail with review history and dependency info."""
     try:
         task = get_state().get_task(task_id)
@@ -227,7 +228,7 @@ def _load_phase_map(repo_path: Path) -> dict[str, dict[str, str]]:
 
 
 @router.post("/api/tasks/{task_id}/restart")
-def restart_task(task_id: str, body: RestartRequest) -> dict[str, str]:
+def restart_task(task_id: str, body: RestartRequest, repo: str | None = None) -> dict[str, str]:
     """Restart a task: reset to first phase, increment round."""
     from hyperloop.domain.model import Phase, TaskStatus
 
@@ -256,7 +257,7 @@ def restart_task(task_id: str, body: RestartRequest) -> dict[str, str]:
 
 
 @router.post("/api/tasks/{task_id}/retire")
-def retire_task(task_id: str, body: RetireRequest) -> dict[str, str]:
+def retire_task(task_id: str, body: RetireRequest, repo: str | None = None) -> dict[str, str]:
     """Retire a task: transition to FAILED."""
     from hyperloop.domain.model import TaskStatus
 
@@ -275,7 +276,11 @@ def retire_task(task_id: str, body: RetireRequest) -> dict[str, str]:
 
 
 @router.post("/api/tasks/{task_id}/force-clear")
-def force_clear_task(task_id: str, body: ForceClearRequest) -> dict[str, str]:
+def force_clear_task(
+    task_id: str,
+    body: ForceClearRequest,
+    repo: str | None = None,
+) -> dict[str, str]:
     """Force-clear a task past a signal step to the on_pass target."""
     from hyperloop.domain.model import Phase, TaskStatus
 
@@ -327,7 +332,7 @@ def _load_agent_templates(repo_path: Path) -> dict[str, dict[str, str]]:
 
 
 @router.get("/api/tasks/{task_id}/prompt")
-def get_task_prompt(task_id: str) -> list[ReconstructedPrompt]:
+def get_task_prompt(task_id: str, repo: str | None = None) -> list[ReconstructedPrompt]:
     """Reconstruct the prompt that would be composed for a task.
 
     This reads the agent templates + task context and assembles the

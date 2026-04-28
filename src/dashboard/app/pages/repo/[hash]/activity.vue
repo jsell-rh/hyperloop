@@ -44,7 +44,7 @@ async function load(): Promise<void> {
 
 async function loadPipeline(): Promise<void> {
   try {
-    pipelineSteps.value = await fetchPipeline()
+    pipelineSteps.value = await fetchPipeline({ repo: repoHash.value })
   } catch {
     // Pipeline is optional for this view
   }
@@ -646,6 +646,7 @@ function formatCycleDuration(d: number): string {
               :task="t"
               :pipeline-steps="pipelineSteps"
               :heartbeat="heartbeatForTask(t.task_id)"
+              :repo-hash="repoHash"
             />
           </TransitionGroup>
 

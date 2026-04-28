@@ -28,47 +28,47 @@ import type {
 const API_BASE = '/api'
 
 export function useApi() {
-  const fetchSpecs = () =>
-    $fetch<SpecSummary[]>(`${API_BASE}/specs`)
+  const fetchSpecs = (params?: { repo?: string }) =>
+    $fetch<SpecSummary[]>(`${API_BASE}/specs`, { params })
 
-  const fetchSpec = (specRef: string) =>
-    $fetch<SpecDetail>(`${API_BASE}/specs/${specRef}`)
+  const fetchSpec = (specRef: string, params?: { repo?: string }) =>
+    $fetch<SpecDetail>(`${API_BASE}/specs/${specRef}`, { params })
 
-  const fetchSpecDrift = (specRef: string) =>
-    $fetch<SpecDriftDetail>(`${API_BASE}/specs/${specRef}/drift`)
+  const fetchSpecDrift = (specRef: string, params?: { repo?: string }) =>
+    $fetch<SpecDriftDetail>(`${API_BASE}/specs/${specRef}/drift`, { params })
 
-  const fetchSpecSummaryRecord = (specRef: string) =>
-    $fetch<SpecSummaryRecord>(`${API_BASE}/specs/${specRef}/summary`)
+  const fetchSpecSummaryRecord = (specRef: string, params?: { repo?: string }) =>
+    $fetch<SpecSummaryRecord>(`${API_BASE}/specs/${specRef}/summary`, { params })
 
-  const fetchTasks = (params?: { status?: string; spec_ref?: string }) =>
+  const fetchTasks = (params?: { status?: string; spec_ref?: string; repo?: string }) =>
     $fetch<TaskSummary[]>(`${API_BASE}/tasks`, { params })
 
-  const fetchTask = (taskId: string) =>
-    $fetch<TaskDetail>(`${API_BASE}/tasks/${taskId}`)
+  const fetchTask = (taskId: string, params?: { repo?: string }) =>
+    $fetch<TaskDetail>(`${API_BASE}/tasks/${taskId}`, { params })
 
-  const fetchSummary = () =>
-    $fetch<Summary>(`${API_BASE}/summary`)
+  const fetchSummary = (params?: { repo?: string }) =>
+    $fetch<Summary>(`${API_BASE}/summary`, { params })
 
-  const fetchPipeline = () =>
-    $fetch<PipelineStepInfo[]>(`${API_BASE}/pipeline`)
+  const fetchPipeline = (params?: { repo?: string }) =>
+    $fetch<PipelineStepInfo[]>(`${API_BASE}/pipeline`, { params })
 
-  const fetchTaskPrompt = (taskId: string) =>
-    $fetch<ReconstructedPrompt[]>(`${API_BASE}/tasks/${taskId}/prompt`)
+  const fetchTaskPrompt = (taskId: string, params?: { repo?: string }) =>
+    $fetch<ReconstructedPrompt[]>(`${API_BASE}/tasks/${taskId}/prompt`, { params })
 
-  const fetchGraph = () =>
-    $fetch<GraphData>(`${API_BASE}/tasks/graph`)
+  const fetchGraph = (params?: { repo?: string }) =>
+    $fetch<GraphData>(`${API_BASE}/tasks/graph`, { params })
 
-  const fetchProcess = () =>
-    $fetch<ProcessData>(`${API_BASE}/process`)
+  const fetchProcess = (params?: { repo?: string }) =>
+    $fetch<ProcessData>(`${API_BASE}/process`, { params })
 
-  const fetchHealth = () =>
-    $fetch<HealthData>(`${API_BASE}/health`)
+  const fetchHealth = (params?: { repo?: string }) =>
+    $fetch<HealthData>(`${API_BASE}/health`, { params })
 
-  const fetchAgents = () =>
-    $fetch<AgentDefinition[]>(`${API_BASE}/agents`)
+  const fetchAgents = (params?: { repo?: string }) =>
+    $fetch<AgentDefinition[]>(`${API_BASE}/agents`, { params })
 
-  const fetchChecks = () =>
-    $fetch<CheckScript[]>(`${API_BASE}/agents/checks`)
+  const fetchChecks = (params?: { repo?: string }) =>
+    $fetch<CheckScript[]>(`${API_BASE}/agents/checks`, { params })
 
   const fetchActivity = (params?: { since_cycle?: number; limit?: number; repo?: string }) =>
     $fetch<ActivityResponse>(`${API_BASE}/activity`, { params })
@@ -76,22 +76,25 @@ export function useApi() {
   const fetchWorkerHeartbeats = (params?: { since?: string; repo?: string }) =>
     $fetch<HeartbeatResponse>(`${API_BASE}/activity/worker-heartbeats`, { params })
 
-  const restartTask = (taskId: string, body: ControlRequest) =>
+  const restartTask = (taskId: string, body: ControlRequest, params?: { repo?: string }) =>
     $fetch<ControlResponse>(`${API_BASE}/tasks/${taskId}/restart`, {
       method: 'POST',
       body,
+      params,
     })
 
-  const retireTask = (taskId: string, body: ControlRequest) =>
+  const retireTask = (taskId: string, body: ControlRequest, params?: { repo?: string }) =>
     $fetch<ControlResponse>(`${API_BASE}/tasks/${taskId}/retire`, {
       method: 'POST',
       body,
+      params,
     })
 
-  const forceClearTask = (taskId: string, body: ControlRequest) =>
+  const forceClearTask = (taskId: string, body: ControlRequest, params?: { repo?: string }) =>
     $fetch<ControlResponse>(`${API_BASE}/tasks/${taskId}/force-clear`, {
       method: 'POST',
       body,
+      params,
     })
 
   const fetchKpi = (params?: { repo?: string }) =>
