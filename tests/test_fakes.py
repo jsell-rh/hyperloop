@@ -364,6 +364,174 @@ class TestRuntimeFindOrphan:
 
 
 # ---------------------------------------------------------------------------
+# InMemoryRuntime trunk push contract tests
+# ---------------------------------------------------------------------------
+
+
+class TestRuntimeTrunkPushHappyPath:
+    def test_push_succeeds_by_default(self) -> None:
+        runtime = InMemoryRuntime()
+
+        result = runtime.run_trunk_agent("pm", "Update the roadmap")
+
+        assert result.verdict == Verdict.PASS
+        assert len(runtime.trunk_push_attempts) == 1
+        push = runtime.trunk_push_attempts[0]
+        assert push.role == "pm"
+        assert push.pull_attempted is True
+        assert push.pull_succeeded is True
+        assert push.push_attempted is True
+        assert push.push_succeeded is True
+
+    def test_push_records_role(self) -> None:
+        runtime = InMemoryRuntime()
+
+        runtime.run_trunk_agent("process-improver", "Improve guidelines")
+
+        push = runtime.trunk_push_attempts[0]
+        assert push.role == "process-improver"
+
+
+class TestRuntimeTrunkPushAfterRemoteAdvance:
+    """Trunk push after remote advance — the exact scenario that caused the bug."""
+
+    def test_push_succeeds_after_pull_rebase(self) -> None:
+        """set_trunk_push_fails_until_pull models remote-ahead: pull fixes push."""
+        runtime = InMemoryRuntime()
+        runtime.set_trunk_push_fails_until_pull()
+
+        result = runtime.run_trunk_agent("pm", "Update roadmap")
+
+        # Agent result is unaffected by push lifecycle
+        assert result.verdict == Verdict.PASS
+        # Push succeeded because pull --rebase reconciled
+        assert len(runtime.trunk_push_attempts) == 1
+        push = runtime.trunk_push_attempts[0]
+        assert push.pull_attempted is True
+        assert push.pull_succeeded is True
+        assert push.push_attempted is True
+        assert push.push_succeeded is True
+
+    def test_subsequent_push_succeeds_without_pull(self) -> None:
+        """After pull reconciles once, the next push should succeed cleanly."""
+        runtime = InMemoryRuntime()
+        runtime.set_trunk_push_fails_until_pull()
+
+        # First agent: push needs pull to succeed
+        runtime.run_trunk_agent("pm", "Update roadmap")
+        # Second agent: no remote divergence, push succeeds directly
+        runtime.run_trunk_agent("process-improver", "Improve guidelines")
+
+        assert len(runtime.trunk_push_attempts) == 2
+        assert runtime.trunk_push_attempts[0].push_succeeded is True
+        assert runtime.trunk_push_attempts[1].push_succeeded is True
+
+
+class TestRuntimeTrunkPushPermanentFailure:
+    """Permanent push failure — models irrecoverable remote divergence."""
+
+    def test_push_fails_but_agent_result_returned(self) -> None:
+        """Push failure is non-fatal — agent result is always returned."""
+        runtime = InMemoryRuntime()
+        runtime.set_trunk_push_fails()
+
+        result = runtime.run_trunk_agent("pm", "Update roadmap")
+
+        # Agent succeeded — push failure doesn't change the verdict
+        assert result.verdict == Verdict.PASS
+        assert result.detail == "fake"
+        # But push failed
+        push = runtime.trunk_push_attempts[0]
+        assert push.push_attempted is True
+        assert push.push_succeeded is False
+
+    def test_push_fails_every_time(self) -> None:
+        """Permanent failure stays permanent across multiple invocations."""
+        runtime = InMemoryRuntime()
+        runtime.set_trunk_push_fails()
+
+        runtime.run_trunk_agent("pm", "First attempt")
+        runtime.run_trunk_agent("pm", "Second attempt")
+
+        assert len(runtime.trunk_push_attempts) == 2
+        assert runtime.trunk_push_attempts[0].push_succeeded is False
+        assert runtime.trunk_push_attempts[1].push_succeeded is False
+
+    def test_push_failure_with_custom_agent_result(self) -> None:
+        """Push failure doesn't interfere with callback-configured agent results."""
+        runtime = InMemoryRuntime()
+        runtime.set_trunk_push_fails()
+        runtime.set_trunk_agent_default_result(
+            WorkerResult(verdict=Verdict.FAIL, detail="agent failed")
+        )
+
+        result = runtime.run_trunk_agent("pm", "Do something")
+
+        # Agent-level failure is preserved regardless of push outcome
+        assert result.verdict == Verdict.FAIL
+        assert result.detail == "agent failed"
+        # Push was still attempted
+        assert runtime.trunk_push_attempts[0].push_succeeded is False
+
+
+class TestRuntimeMultipleTrunkAgentsWithRemoteAdvance:
+    """Multiple trunk agents in sequence with remote advance between them."""
+
+    def test_pm_succeeds_then_remote_advances_then_improver_recovers(self) -> None:
+        """PM pushes, remote advances (PR merged), process-improver recovers via pull."""
+        runtime = InMemoryRuntime()
+
+        # PM runs first — no remote divergence, push succeeds
+        pm_result = runtime.run_trunk_agent("pm", "Update roadmap")
+        assert pm_result.verdict == Verdict.PASS
+        assert runtime.trunk_push_attempts[0].push_succeeded is True
+
+        # Remote advances (simulates a PR merge on GitHub)
+        runtime.advance_remote()
+
+        # Process-improver runs — push would fail without pull, but pull fixes it
+        pi_result = runtime.run_trunk_agent("process-improver", "Improve guidelines")
+        assert pi_result.verdict == Verdict.PASS
+        assert runtime.trunk_push_attempts[1].push_succeeded is True
+
+    def test_multiple_remote_advances(self) -> None:
+        """Each advance_remote creates a new divergence that the next push must handle."""
+        runtime = InMemoryRuntime()
+
+        runtime.run_trunk_agent("pm", "First pass")
+        assert runtime.trunk_push_attempts[0].push_succeeded is True
+
+        runtime.advance_remote()
+        runtime.run_trunk_agent("pm", "Second pass")
+        assert runtime.trunk_push_attempts[1].push_succeeded is True
+
+        runtime.advance_remote()
+        runtime.run_trunk_agent("pm", "Third pass")
+        assert runtime.trunk_push_attempts[2].push_succeeded is True
+
+    def test_both_agents_recorded(self) -> None:
+        """Both agent runs and push attempts are independently tracked."""
+        runtime = InMemoryRuntime()
+
+        runtime.run_trunk_agent("pm", "Update roadmap")
+        runtime.advance_remote()
+        runtime.run_trunk_agent("process-improver", "Improve guidelines")
+
+        # Agent runs recorded
+        assert len(runtime.trunk_agent_runs) == 2
+        assert runtime.trunk_agent_runs[0].role == "pm"
+        assert runtime.trunk_agent_runs[1].role == "process-improver"
+
+        # Push attempts recorded
+        assert len(runtime.trunk_push_attempts) == 2
+        assert runtime.trunk_push_attempts[0].role == "pm"
+        assert runtime.trunk_push_attempts[1].role == "process-improver"
+
+        # Serial runs also recorded (backward compat)
+        assert len(runtime.serial_runs) == 2
+
+
+# ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
 

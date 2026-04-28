@@ -39,6 +39,17 @@ class TrunkAgentRunRecord:
     prompt: str
 
 
+@dataclass(frozen=True)
+class TrunkPushRecord:
+    """Record of a trunk push attempt, modelling the pull-then-push lifecycle."""
+
+    role: str
+    pull_attempted: bool
+    pull_succeeded: bool
+    push_attempted: bool
+    push_succeeded: bool
+
+
 class InMemoryRuntime:
     """In-memory implementation of the Runtime protocol."""
 
@@ -52,6 +63,7 @@ class InMemoryRuntime:
         self.serial_runs: list[SerialRunRecord] = []
         self.auditor_runs: list[AuditorRunRecord] = []
         self.trunk_agent_runs: list[TrunkAgentRunRecord] = []
+        self.trunk_push_attempts: list[TrunkPushRecord] = []
         self._serial_callbacks: dict[str, Callable[[str], bool]] = {}
         self._auditor_callbacks: dict[str, Callable[[str], WorkerResult]] = {}
         self._trunk_agent_callbacks: dict[str, Callable[[str], WorkerResult]] = {}
@@ -63,6 +75,8 @@ class InMemoryRuntime:
             verdict=Verdict.PASS, detail="fake"
         )
         self._serial_lock = threading.Lock()
+        self._trunk_push_fails: bool = False
+        self._trunk_push_fails_until_pull: bool = False
 
     # -- Public accessors (for test assertions) -------------------------------
 
@@ -109,6 +123,27 @@ class InMemoryRuntime:
     def set_trunk_agent_default_result(self, result: WorkerResult) -> None:
         """Set the default WorkerResult for run_trunk_agent when no callback is registered."""
         self._trunk_agent_default_result = result
+
+    def set_trunk_push_fails(self) -> None:
+        """Simulate permanent remote divergence — push always fails after agent runs."""
+        self._trunk_push_fails = True
+
+    def set_trunk_push_fails_until_pull(self) -> None:
+        """Push fails until pull --rebase is called (simulates remote-ahead).
+
+        Models the exact production scenario: remote advances (e.g. PRs merged),
+        push fails with non-fast-forward, pull --rebase fixes it, push succeeds.
+        """
+        self._trunk_push_fails_until_pull = True
+
+    def advance_remote(self) -> None:
+        """Simulate remote advancing (e.g. a PR merged on GitHub).
+
+        After this call, the next trunk push will fail until pull --rebase
+        reconciles local with remote. Equivalent to set_trunk_push_fails_until_pull
+        but named to express intent in multi-agent test scenarios.
+        """
+        self._trunk_push_fails_until_pull = True
 
     # -- Runtime protocol ---------------------------------------------------
 
@@ -181,14 +216,64 @@ class InMemoryRuntime:
         return self._auditor_default_result
 
     def run_trunk_agent(self, role: str, prompt: str) -> WorkerResult:
-        """Record the invocation and optionally execute a callback.
+        """Record the invocation, model push lifecycle, and optionally execute a callback.
 
-        Returns WorkerResult with verdict and detail.
+        Models the real AgentSdkRuntime._push_trunk() flow:
+        1. Agent runs and commits to trunk.
+        2. Pull --rebase is attempted to reconcile with remote.
+        3. Push is attempted.
+
+        Push failures are non-fatal — the agent result is always returned.
+        The push lifecycle is recorded in trunk_push_attempts for test assertions.
         """
         with self._serial_lock:
             self.trunk_agent_runs.append(TrunkAgentRunRecord(role=role, prompt=prompt))
             # Also record in serial_runs for backward compat with existing tests
             self.serial_runs.append(SerialRunRecord(role=role, prompt=prompt))
+
+        # Determine agent result first (push is post-agent)
         if role in self._trunk_agent_callbacks:
-            return self._trunk_agent_callbacks[role](prompt)
-        return self._trunk_agent_default_result
+            agent_result = self._trunk_agent_callbacks[role](prompt)
+        else:
+            agent_result = self._trunk_agent_default_result
+
+        # Model the push lifecycle (mirrors AgentSdkRuntime._push_trunk)
+        push_record = self._simulate_trunk_push(role)
+        self.trunk_push_attempts.append(push_record)
+
+        return agent_result
+
+    def _simulate_trunk_push(self, role: str) -> TrunkPushRecord:
+        """Simulate the pull-then-push lifecycle of _push_trunk().
+
+        Returns a TrunkPushRecord capturing what happened at each stage.
+        """
+        if self._trunk_push_fails:
+            # Permanent failure: pull attempted, push attempted, both fail
+            return TrunkPushRecord(
+                role=role,
+                pull_attempted=True,
+                pull_succeeded=True,
+                push_attempted=True,
+                push_succeeded=False,
+            )
+
+        if self._trunk_push_fails_until_pull:
+            # Remote was ahead — pull --rebase reconciles, then push succeeds
+            self._trunk_push_fails_until_pull = False
+            return TrunkPushRecord(
+                role=role,
+                pull_attempted=True,
+                pull_succeeded=True,
+                push_attempted=True,
+                push_succeeded=True,
+            )
+
+        # Happy path: no divergence, pull and push both succeed
+        return TrunkPushRecord(
+            role=role,
+            pull_attempted=True,
+            pull_succeeded=True,
+            push_attempted=True,
+            push_succeeded=True,
+        )
