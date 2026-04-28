@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { FleetResponse, InstanceSummary } from '~/types'
+import type { FleetResponse } from '~/types'
 
 const { fetchFleet } = useApi()
 const router = useRouter()
@@ -17,7 +17,7 @@ async function load(): Promise<void> {
 }
 
 function navigateToInstance(repoHash: string): void {
-  router.push({ path: '/activity', query: { repo: repoHash } })
+  router.push(`/repo/${repoHash}/activity`)
 }
 
 // Tick for relative timestamps

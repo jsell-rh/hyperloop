@@ -13,12 +13,19 @@ useHead({
 // Global keyboard navigation
 // ---------------------------------------------------------------------------
 const router = useRouter()
+const route = useRoute()
 const showKeyboardHelp = ref(false)
 
 useKeyboard({
   goTo: {
     H: () => router.push('/'),
-    A: () => router.push('/activity'),
+    A: () => {
+      // Navigate to activity only if in a repo context
+      const match = route.path.match(/^\/repo\/([^/]+)/)
+      if (match) {
+        router.push(`/repo/${match[1]}/activity`)
+      }
+    },
     P: () => router.push('/process'),
   },
   keys: {

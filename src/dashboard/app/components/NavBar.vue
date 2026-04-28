@@ -2,12 +2,25 @@
 const route = useRoute()
 const { markFetched, lastUpdatedText, status, workersActive } = useLiveness()
 
-const navLinks = [
-  { label: 'Fleet', to: '/' },
-  { label: 'Activity', to: '/activity' },
-  { label: 'Process', to: '/process' },
-  { label: 'Agents', to: '/agents' },
-]
+// Detect repo context from route
+const repoHash = computed(() => {
+  const match = route.path.match(/^\/repo\/([^/]+)/)
+  return match ? match[1] : null
+})
+
+const navLinks = computed(() => {
+  const links = [
+    { label: 'Fleet', to: '/' },
+  ]
+  if (repoHash.value) {
+    links.push({ label: 'Activity', to: `/repo/${repoHash.value}/activity` })
+  }
+  links.push(
+    { label: 'Process', to: '/process' },
+    { label: 'Agents', to: '/agents' },
+  )
+  return links
+})
 
 const isActive = (to: string): boolean => {
   if (to === '/') return route.path === '/'
