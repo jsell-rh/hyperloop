@@ -405,6 +405,12 @@ class MatrixProbe:
         body = f"⚠️ state sync failed — state exists only locally\n{error}"
         self._send(body)
 
+    def trunk_push_failed(self, **kw: object) -> None:
+        branch = str(kw.get("branch", ""))
+        error = str(kw.get("error", ""))
+        body = f"⚠️ trunk push failed — {branch} diverged from remote\n{error}"
+        self._send(body)
+
     def step_executed(self, **kw: object) -> None:
         pass
 

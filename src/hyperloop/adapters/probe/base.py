@@ -145,6 +145,9 @@ class NullProbe:
     def state_sync_failed(self, **_: object) -> None:
         pass
 
+    def trunk_push_failed(self, **_: object) -> None:
+        pass
+
 
 class MultiProbe:
     """Fans out all probe calls to N child probes.
@@ -288,3 +291,6 @@ class MultiProbe:
 
     def state_sync_failed(self, **kw: object) -> None:
         self._call("state_sync_failed", **kw)
+
+    def trunk_push_failed(self, **kw: object) -> None:
+        self._call("trunk_push_failed", **kw)

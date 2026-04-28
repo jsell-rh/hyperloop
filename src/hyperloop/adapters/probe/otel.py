@@ -599,3 +599,6 @@ class OtelProbe:
 
     def state_sync_failed(self, **_kw: object) -> None:
         pass
+
+    def trunk_push_failed(self, **_kw: object) -> None:
+        pass

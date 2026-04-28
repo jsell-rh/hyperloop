@@ -161,3 +161,6 @@ class RecordingProbe:
 
     def state_sync_failed(self, **kw: object) -> None:
         self._record("state_sync_failed", **kw)
+
+    def trunk_push_failed(self, **kw: object) -> None:
+        self._record("trunk_push_failed", **kw)

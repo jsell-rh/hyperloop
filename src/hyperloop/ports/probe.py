@@ -498,3 +498,7 @@ class OrchestratorProbe(Protocol):
     def state_sync_failed(self, *, error: str) -> None:
         """State sync with remote failed. State exists only locally until resolved."""
         ...
+
+    def trunk_push_failed(self, *, branch: str, error: str) -> None:
+        """Trunk push to origin failed (likely diverged from remote)."""
+        ...

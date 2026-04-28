@@ -252,3 +252,6 @@ class StructlogProbe:
 
     def state_sync_failed(self, **kw: object) -> None:
         self._log.warning("state_sync_failed", **kw)
+
+    def trunk_push_failed(self, **kw: object) -> None:
+        self._log.warning("trunk_push_failed", **kw)

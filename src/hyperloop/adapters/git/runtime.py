@@ -374,8 +374,37 @@ class AgentSdkRuntime:
             return WorkerResult(verdict=Verdict.FAIL, detail="Trunk agent failed")
 
     def _push_trunk(self) -> None:
-        """Push trunk (base branch) to origin after serial agent commits."""
+        """Push trunk (base branch) to origin after serial agent commits.
+
+        Pulls --rebase first so local commits replay on top of any PRs
+        merged on the remote since the last push.
+        """
         import subprocess
+
+        try:
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    self._repo_path,
+                    "pull",
+                    "--rebase",
+                    "origin",
+                    self._base_branch,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=clean_git_env(),
+                timeout=30,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            if self._probe is not None:
+                self._probe.trunk_push_failed(
+                    branch=self._base_branch,
+                    error=str(exc),
+                )
+            return
 
         try:
             subprocess.run(
@@ -386,9 +415,12 @@ class AgentSdkRuntime:
                 env=clean_git_env(),
                 timeout=30,
             )
-            log.info("sdk_trunk_pushed", branch=self._base_branch)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-            log.warning("sdk_trunk_push_failed", branch=self._base_branch, error=str(exc))
+            if self._probe is not None:
+                self._probe.trunk_push_failed(
+                    branch=self._base_branch,
+                    error=str(exc),
+                )
 
     # -- Private helpers -------------------------------------------------------
 
