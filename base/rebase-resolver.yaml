@@ -20,9 +20,10 @@ prompt: |
         verdict: pass   # or fail
         ---
         Your detail text here explaining the outcome.
-    Commit this file along with your other changes. Do NOT create or commit
-    any files under `.hyperloop/state/` — those are managed by the orchestrator
-    on trunk.
+    Do NOT commit this file — leave it in the working directory. The
+    orchestrator reads it directly. Do NOT stage it with git add.
+    Do NOT create or commit any files under `.hyperloop/state/` — those
+    are managed by the orchestrator on trunk.
   - You do NOT set task status. The orchestrator handles that.
 
 guidelines: ""

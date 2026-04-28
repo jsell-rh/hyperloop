@@ -19,4 +19,6 @@ prompt: |
   Write your verdict to .hyperloop/worker-result.yaml:
   - verdict: pass (if aligned)
   - verdict: fail (if misaligned, with detail describing each gap)
+  Do NOT commit this file — leave it in the working directory. The
+  orchestrator reads it directly. Do NOT stage it with git add.
 guidelines: []

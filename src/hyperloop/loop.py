@@ -818,7 +818,10 @@ class Orchestrator:
                 )
             prompt = self._compose_prompt(task, plan.role, cycle=cycle_num)
             try:
-                if task.branch is not None and self._pr is not None:
+                # Re-fetch task after potential branch assignment to avoid
+                # stale reference skipping rebase on first spawn.
+                fresh_task = self._state.get_task(plan.task_id)
+                if fresh_task.branch is not None and self._pr is not None:
                     self._pr.rebase_branch(branch, self._base_branch)
                 self._runtime.push_branch(branch)
                 handle = self._runtime.spawn(plan.task_id, plan.role, prompt=prompt, branch=branch)

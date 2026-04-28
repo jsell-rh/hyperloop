@@ -225,7 +225,8 @@ class AmbientRuntime:
         Reads verdict from .hyperloop/worker-result.yaml on the fetched
         branch ref. Falls back to FAIL if no verdict file exists and
         the session ended in failure, PASS otherwise.
-        The verdict file is stripped from the branch later by rebase_branch.
+        The verdict file is stripped from the branch by rebase_branch
+        during the next spawn cycle.
         """
         from hyperloop.adapters.verdict import read_verdict_from_ref
 

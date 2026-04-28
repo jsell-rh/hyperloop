@@ -157,9 +157,12 @@ class AgentSdkRuntime:
 
         Reads verdict from .hyperloop/worker-result.yaml in the worktree.
         Falls back to SDK ResultMessage if no verdict file exists.
-        The verdict file is stripped from the branch later by rebase_branch.
+        After reading, strips the verdict file from the worktree and
+        branch index so it never contaminates the branch history.
         """
-        from hyperloop.adapters.verdict import read_verdict_file
+        import subprocess
+
+        from hyperloop.adapters.verdict import VERDICT_FILE, read_verdict_file
 
         task_id = handle.task_id
         worktree_path = self._worktrees.get(task_id)
@@ -178,6 +181,32 @@ class AgentSdkRuntime:
                     verdict=Verdict.FAIL,
                     detail="Agent future missing or failed",
                 )
+
+        # Strip verdict file from worktree and branch index before cleanup
+        # to prevent it from contaminating the branch and causing merge
+        # conflicts on rebase.
+        verdict_path = os.path.join(worktree_path, VERDICT_FILE)
+        if os.path.exists(verdict_path):
+            os.remove(verdict_path)
+            subprocess.run(
+                ["git", "-C", worktree_path, "rm", "-f", "--cached", VERDICT_FILE],
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    worktree_path,
+                    "commit",
+                    "--amend",
+                    "--no-edit",
+                    "--allow-empty",
+                ],
+                capture_output=True,
+                text=True,
+                env=clean_git_env(),
+            )
 
         # Clean up
         self._futures.pop(task_id, None)
