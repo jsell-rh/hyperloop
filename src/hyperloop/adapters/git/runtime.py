@@ -335,6 +335,7 @@ class AgentSdkRuntime:
         log.info("sdk_trunk_agent_started", role=role)
 
         def _do_trunk() -> WorkerResult:
+            self._ensure_on_base_branch()
             loop = asyncio.new_event_loop()
             try:
                 result = loop.run_until_complete(
@@ -349,6 +350,8 @@ class AgentSdkRuntime:
                     )
                 )
                 log.info("sdk_trunk_agent_completed", role=role)
+                # Agent may have switched branches — restore before push
+                self._ensure_on_base_branch()
                 self._push_trunk()
                 return result
             except TimeoutError:
@@ -358,6 +361,7 @@ class AgentSdkRuntime:
                 log.exception("sdk_trunk_agent_failed", role=role)
                 raise
             finally:
+                self._ensure_on_base_branch()
                 loop.close()
 
         try:
@@ -421,6 +425,23 @@ class AgentSdkRuntime:
                     branch=self._base_branch,
                     error=str(exc),
                 )
+
+    def _ensure_on_base_branch(self) -> None:
+        """Checkout the base branch in the main repo.
+
+        Trunk agents (PM, process-improver) may switch branches during
+        execution.  If the checkout is left on a non-base branch,
+        create_worktree() will branch from the wrong HEAD and
+        _push_trunk() will pull --rebase on the wrong branch.
+        """
+        import subprocess
+
+        subprocess.run(
+            ["git", "-C", self._repo_path, "checkout", self._base_branch],
+            capture_output=True,
+            text=True,
+            env=clean_git_env(),
+        )
 
     # -- Private helpers -------------------------------------------------------
 
