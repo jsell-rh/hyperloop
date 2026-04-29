@@ -404,6 +404,7 @@ class AmbientRuntime:
         from hyperloop.adapters.retry import retry_with_backoff
 
         def _do_trunk() -> WorkerResult:
+            self._ensure_on_base_branch()
             session_name = f"hyperloop-serial-{role}"
 
             args = [
@@ -428,6 +429,7 @@ class AmbientRuntime:
             success = self._stream_sse_foreground(session_id)
 
             if success:
+                self._ensure_on_base_branch()
                 fetched = self._git_fetch_with_backoff(self._base_branch)
                 if fetched:
                     try:
@@ -474,6 +476,14 @@ class AmbientRuntime:
                 verdict=Verdict.FAIL,
                 detail=f"Trunk agent {role} failed after retries",
             )
+
+    def _ensure_on_base_branch(self) -> None:
+        """Checkout the base branch in the main repo."""
+        subprocess.run(
+            ["git", "-C", self._repo_path, "checkout", self._base_branch],
+            capture_output=True,
+            text=True,
+        )
 
     # -- Private helpers -------------------------------------------------------
 
