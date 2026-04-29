@@ -1,6 +1,6 @@
 [project]
 name = "hyperloop"
-version = "0.46.0"
+version = "0.47.0"
 description = "Orchestrator that walks tasks through composable process pipelines using AI agents"
 readme = "README.md"
 requires-python = ">=3.12"

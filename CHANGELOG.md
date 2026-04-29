@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v0.47.0 (2026-04-29)
+
+### Bug Fixes
+
+- Restore base branch checkout after trunk agent runs
+  ([`7b45a5f`](https://github.com/jsell-rh/hyperloop/commit/7b45a5ffa532151dd15498e950dfac69d3ce7d63))
+
+### Features
+
+- Add fleet dashboard for multi-instance overview
+  ([`6ff4bd7`](https://github.com/jsell-rh/hyperloop/commit/6ff4bd757de3ac95321278ed02a764b3c7656e50))
+
+- Fleet-first navigation — scope all pages under /repo/{hash}
+  ([`d614dbb`](https://github.com/jsell-rh/hyperloop/commit/d614dbb4f0535ad43b91429b974045a193b19621))
+
+
 ## v0.46.0 (2026-04-28)
 
 
