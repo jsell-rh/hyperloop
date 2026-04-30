@@ -602,3 +602,6 @@ class OtelProbe:
 
     def trunk_push_failed(self, **_kw: object) -> None:
         pass
+
+    def rebase_conflict_detected(self, **_kw: object) -> None:
+        pass

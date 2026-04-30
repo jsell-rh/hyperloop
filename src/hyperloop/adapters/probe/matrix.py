@@ -411,6 +411,12 @@ class MatrixProbe:
         body = f"⚠️ trunk push failed — {branch} diverged from remote\n{error}"
         self._send(body)
 
+    def rebase_conflict_detected(self, **kw: object) -> None:
+        task_id = str(kw.get("task_id", ""))
+        files = kw.get("conflicting_files", ())
+        file_list = ", ".join(str(f) for f in files) if files else "unknown"
+        self._send(f"⚠️ rebase conflict: {task_id} — {file_list}")
+
     def step_executed(self, **kw: object) -> None:
         pass
 

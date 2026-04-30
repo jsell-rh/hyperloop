@@ -1069,6 +1069,35 @@ class TestProbeIntegration:
         assert len(sig_calls) >= 1
         assert sig_calls[0]["signal_name"] == "human-approval"
 
+    def test_rebase_conflict_detected_fires_on_spawn(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+        pr_mgr.set_rebase_fails(
+            "hyperloop/task-001",
+            conflict_files=("src/model.py", "tests/test_model.py"),
+        )
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("implement"),
+                branch="hyperloop/task-001",
+                round=2,
+            )
+        )
+
+        probe = RecordingProbe()
+        orch = _make_orchestrator(state, runtime, pr_manager=pr_mgr, probe=probe)
+        orch.run_cycle()
+
+        conflict_calls = probe.of_method("rebase_conflict_detected")
+        assert len(conflict_calls) == 1
+        assert conflict_calls[0]["task_id"] == "task-001"
+        assert "src/model.py" in conflict_calls[0]["conflicting_files"]
+        assert "tests/test_model.py" in conflict_calls[0]["conflicting_files"]
+
 
 class TestPollInterval:
     """poll_interval causes a sleep between cycles."""

@@ -148,6 +148,9 @@ class NullProbe:
     def trunk_push_failed(self, **_: object) -> None:
         pass
 
+    def rebase_conflict_detected(self, **_: object) -> None:
+        pass
+
 
 class MultiProbe:
     """Fans out all probe calls to N child probes.
@@ -294,3 +297,6 @@ class MultiProbe:
 
     def trunk_push_failed(self, **kw: object) -> None:
         self._call("trunk_push_failed", **kw)
+
+    def rebase_conflict_detected(self, **kw: object) -> None:
+        self._call("rebase_conflict_detected", **kw)

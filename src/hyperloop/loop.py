@@ -828,6 +828,12 @@ class Orchestrator:
                             rebase_result.conflicting_files,
                             self._base_branch,
                         )
+                        self._probe.rebase_conflict_detected(
+                            task_id=plan.task_id,
+                            branch=branch,
+                            conflicting_files=rebase_result.conflicting_files,
+                            cycle=cycle_num,
+                        )
                 self._runtime.push_branch(branch)
                 handle = self._runtime.spawn(plan.task_id, plan.role, prompt=prompt, branch=branch)
             except Exception:

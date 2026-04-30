@@ -255,3 +255,6 @@ class StructlogProbe:
 
     def trunk_push_failed(self, **kw: object) -> None:
         self._log.warning("trunk_push_failed", **kw)
+
+    def rebase_conflict_detected(self, **kw: object) -> None:
+        self._log.warning("rebase_conflict_detected", **kw)

@@ -502,3 +502,14 @@ class OrchestratorProbe(Protocol):
     def trunk_push_failed(self, *, branch: str, error: str) -> None:
         """Trunk push to origin failed (likely diverged from remote)."""
         ...
+
+    def rebase_conflict_detected(
+        self,
+        *,
+        task_id: str,
+        branch: str,
+        conflicting_files: tuple[str, ...],
+        cycle: int,
+    ) -> None:
+        """Spawn-time rebase failed with genuine code conflicts."""
+        ...

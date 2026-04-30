@@ -244,3 +244,6 @@ class FileProbe:
 
     def trunk_push_failed(self, **kw: object) -> None:
         self._write("trunk_push_failed", **kw)
+
+    def rebase_conflict_detected(self, **kw: object) -> None:
+        self._write("rebase_conflict_detected", **kw)

@@ -164,3 +164,6 @@ class RecordingProbe:
 
     def trunk_push_failed(self, **kw: object) -> None:
         self._record("trunk_push_failed", **kw)
+
+    def rebase_conflict_detected(self, **kw: object) -> None:
+        self._record("rebase_conflict_detected", **kw)
