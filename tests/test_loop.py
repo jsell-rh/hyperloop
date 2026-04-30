@@ -25,7 +25,7 @@ from hyperloop.domain.model import (
     WorkerPollStatus,
     WorkerResult,
 )
-from hyperloop.loop import Orchestrator
+from hyperloop.loop import Orchestrator, _format_rebase_conflicts
 from tests.fakes.channel import FakeChannelPort
 from tests.fakes.pr import FakePRManager
 from tests.fakes.probe import RecordingProbe
@@ -1097,6 +1097,77 @@ class TestProbeIntegration:
         assert conflict_calls[0]["task_id"] == "task-001"
         assert "src/model.py" in conflict_calls[0]["conflicting_files"]
         assert "tests/test_model.py" in conflict_calls[0]["conflicting_files"]
+
+    def test_rebase_conflict_enriches_prompt(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+        pr_mgr.set_rebase_fails(
+            "hyperloop/task-001",
+            conflict_files=("src/model.py", "tests/test_model.py"),
+        )
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("implement"),
+                branch="hyperloop/task-001",
+                round=2,
+            )
+        )
+
+        probe = RecordingProbe()
+        orch = _make_orchestrator(state, runtime, pr_manager=pr_mgr, probe=probe)
+        orch.run_cycle()
+
+        prompt = runtime.spawn_prompts.get("task-001", "")
+        assert "Rebase Conflicts" in prompt
+        assert "src/model.py" in prompt
+        assert "tests/test_model.py" in prompt
+
+    def test_successful_rebase_does_not_enrich_prompt(self) -> None:
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        pr_mgr = FakePRManager(repo="org/repo")
+
+        state.add_task(
+            _task(
+                id="task-001",
+                status=TaskStatus.IN_PROGRESS,
+                phase=Phase("implement"),
+                branch="hyperloop/task-001",
+                round=2,
+            )
+        )
+
+        probe = RecordingProbe()
+        orch = _make_orchestrator(state, runtime, pr_manager=pr_mgr, probe=probe)
+        orch.run_cycle()
+
+        prompt = runtime.spawn_prompts.get("task-001", "")
+        assert "Rebase Conflicts" not in prompt
+
+        conflict_calls = probe.of_method("rebase_conflict_detected")
+        assert len(conflict_calls) == 0
+
+
+class TestFormatRebaseConflicts:
+    """Unit tests for the _format_rebase_conflicts helper."""
+
+    def test_formats_file_list(self) -> None:
+        result = _format_rebase_conflicts(("src/a.py", "src/b.py"), "main")
+        assert "- `src/a.py`" in result
+        assert "- `src/b.py`" in result
+
+    def test_includes_base_branch(self) -> None:
+        result = _format_rebase_conflicts(("x.py",), "alpha")
+        assert "alpha" in result
+        assert "git rebase alpha" in result
+
+    def test_includes_section_header(self) -> None:
+        result = _format_rebase_conflicts(("x.py",), "main")
+        assert "## Rebase Conflicts" in result
 
 
 class TestPollInterval:

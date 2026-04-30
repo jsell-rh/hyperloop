@@ -977,7 +977,8 @@ class Orchestrator:
 
 
 def _format_rebase_conflicts(files: tuple[str, ...], base_branch: str) -> str:
-    file_list = "\n".join(f"- {f}" for f in files)
+    sanitized = [f.replace("`", "").replace("\n", "") for f in files]
+    file_list = "\n".join(f"- `{f}`" for f in sanitized)
     return (
         f"\n## Rebase Conflicts\n\n"
         f"Your branch could not be automatically rebased onto {base_branch}.\n"

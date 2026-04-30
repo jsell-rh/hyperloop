@@ -60,6 +60,7 @@ class InMemoryRuntime:
         self._reaped: set[str] = set()
         self._cancelled: set[str] = set()
         self._spawn_counter: int = 0
+        self.spawn_prompts: dict[str, str] = {}
         self.serial_runs: list[SerialRunRecord] = []
         self.auditor_runs: list[AuditorRunRecord] = []
         self.trunk_agent_runs: list[TrunkAgentRunRecord] = []
@@ -157,6 +158,7 @@ class InMemoryRuntime:
     def spawn(self, task_id: str, role: str, prompt: str, branch: str) -> WorkerHandle:
         """Start a worker agent session. Returns an opaque handle."""
         self._spawn_counter += 1
+        self.spawn_prompts[task_id] = prompt
         handle = WorkerHandle(
             task_id=task_id,
             role=role,

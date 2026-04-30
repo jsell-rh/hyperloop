@@ -12,8 +12,7 @@ import re
 import subprocess
 from typing import TYPE_CHECKING
 
-from hyperloop.domain.model import RebaseResult
-from hyperloop.ports.pr import PRState
+from hyperloop.ports.pr import PRState, RebaseResult
 
 if TYPE_CHECKING:
     from hyperloop.ports.probe import OrchestratorProbe
@@ -426,8 +425,8 @@ class PRManager:
                     text=True,
                 )
                 if rebase.returncode != 0:
-                    conflicts = _resolve_rebase_state_conflicts(tmpdir)
-                    if conflicts is not None:
+                    conflict_files = _resolve_rebase_state_conflicts(tmpdir)
+                    if conflict_files is not None:
                         subprocess.run(
                             ["git", "-C", tmpdir, "rebase", "--abort"],
                             capture_output=True,
@@ -435,7 +434,7 @@ class PRManager:
                         )
                         return RebaseResult(
                             success=False,
-                            conflicting_files=conflicts,
+                            conflicting_files=conflict_files,
                         )
 
                 # Remove stale verdict file if present (secondary cleanup)

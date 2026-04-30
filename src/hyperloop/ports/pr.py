@@ -6,10 +6,15 @@ Implementations: PRManager (gh CLI), FakePRManager (in-memory for tests).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
-if TYPE_CHECKING:
-    from hyperloop.domain.model import RebaseResult
+
+@dataclass(frozen=True)
+class RebaseResult:
+    """Outcome of a branch rebase attempt."""
+
+    success: bool
+    conflicting_files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

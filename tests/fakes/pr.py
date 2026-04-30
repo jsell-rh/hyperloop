@@ -8,8 +8,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from hyperloop.domain.model import RebaseResult
-from hyperloop.ports.pr import PRState
+from hyperloop.ports.pr import PRState, RebaseResult
 
 
 @dataclass

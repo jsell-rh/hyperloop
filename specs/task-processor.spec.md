@@ -99,6 +99,15 @@ For agent steps, the task processor SHALL manage worker lifecycle through spawn,
 - THEN it composes a prompt and spawns a worker via the Runtime port
 - AND records the worker handle
 
+#### Scenario: Rebase conflict enriches prompt
+
+- GIVEN task-001 has a branch that cannot be rebased onto the base branch
+- AND the rebase failure identifies conflicting files (e.g. `src/model.py`, `tests/test_model.py`)
+- WHEN the task processor spawns a worker
+- THEN the conflicting file paths are appended to the worker's prompt
+- AND the worker is instructed to resolve the conflicts before doing other work
+- AND a `rebase_conflict_detected` probe event is emitted with the task ID and file list
+
 #### Scenario: Worker still running
 
 - GIVEN task-001 has an active worker

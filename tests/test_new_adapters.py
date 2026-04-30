@@ -210,6 +210,23 @@ class TestPRMergeStep:
         assert result.outcome == StepOutcome.RETRY
         assert "rebase failed" in result.detail.lower()
 
+    def test_merge_conflict_rebase_fails_includes_file_names(self) -> None:
+        pr = _pr_manager()
+        step = PRMergeStep(pr=pr, base_branch="main")
+        pr_url = pr.create_draft("task-001", "hyperloop/task-001", "Widget", "specs/widget.md")
+        pr.set_merge_fails(pr_url)
+        pr.set_rebase_fails(
+            "hyperloop/task-001",
+            conflict_files=("src/model.py", "tests/test_model.py"),
+        )
+
+        task = _task(pr=pr_url)
+        result = step.execute(task, "merge-pr", {})
+
+        assert result.outcome == StepOutcome.RETRY
+        assert "src/model.py" in result.detail
+        assert "tests/test_model.py" in result.detail
+
     def test_merge_conflict_rebase_succeeds_but_still_not_mergeable(self) -> None:
         pr = _pr_manager()
         step = PRMergeStep(pr=pr, base_branch="main")
