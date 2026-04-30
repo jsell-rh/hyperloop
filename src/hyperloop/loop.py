@@ -289,6 +289,9 @@ class Orchestrator:
                 )
             if t.pr_url is not None:
                 self._state.set_task_pr(t.task_id, t.pr_url)
+            if t.status == TaskStatus.COMPLETED:
+                completed_task = self._state.get_task(t.task_id)
+                self._write_summary(completed_task)
         self._probe.advance_completed(
             cycle=cycle_num,
             duration_s=time.monotonic() - advance_start,
@@ -642,7 +645,7 @@ class Orchestrator:
         )
         for action in gc_actions:
             task = world.tasks[action.task_id]
-            self._write_gc_summary(task)
+            self._write_summary(task)
             self._state.delete_task(action.task_id)
         if gc_actions:
             self._probe.gc_ran(
@@ -683,8 +686,8 @@ class Orchestrator:
             )
         return summaries
 
-    def _write_gc_summary(self, task: Task) -> None:
-        """Build and store a Summary record for a task being pruned by GC."""
+    def _write_summary(self, task: Task) -> None:
+        """Build and store a Summary record for a task (on completion or GC prune)."""
         import yaml
 
         spec_path = task.spec_ref.split("@")[0]
