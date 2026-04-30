@@ -12,6 +12,7 @@ import re
 import subprocess
 from typing import TYPE_CHECKING
 
+from hyperloop.domain.model import RebaseResult
 from hyperloop.ports.pr import PRState
 
 if TYPE_CHECKING:
@@ -391,8 +392,8 @@ class PRManager:
 
         return result.returncode == 0
 
-    def rebase_branch(self, branch: str, base_branch: str) -> bool:
-        """Rebase a branch onto base. Returns True if clean, False if conflicts.
+    def rebase_branch(self, branch: str, base_branch: str) -> RebaseResult:
+        """Rebase a branch onto base. Returns RebaseResult with conflict details.
 
         Uses a temporary worktree to avoid checking out the branch in the
         main repo (which would conflict with uncommitted state changes and
@@ -408,7 +409,7 @@ class PRManager:
                 text=True,
             )
             if wt.returncode != 0:
-                return False
+                return RebaseResult(success=False)
 
             try:
                 # Fetch latest base
@@ -424,13 +425,18 @@ class PRManager:
                     capture_output=True,
                     text=True,
                 )
-                if rebase.returncode != 0 and not _resolve_rebase_state_conflicts(tmpdir):
-                    subprocess.run(
-                        ["git", "-C", tmpdir, "rebase", "--abort"],
-                        capture_output=True,
-                        text=True,
-                    )
-                    return False
+                if rebase.returncode != 0:
+                    conflicts = _resolve_rebase_state_conflicts(tmpdir)
+                    if conflicts is not None:
+                        subprocess.run(
+                            ["git", "-C", tmpdir, "rebase", "--abort"],
+                            capture_output=True,
+                            text=True,
+                        )
+                        return RebaseResult(
+                            success=False,
+                            conflicting_files=conflicts,
+                        )
 
                 # Remove stale verdict file if present (secondary cleanup)
                 _remove_verdict_file(tmpdir)
@@ -449,9 +455,9 @@ class PRManager:
                         text=True,
                     )
                     if push.returncode != 0:
-                        return False
+                        return RebaseResult(success=False)
 
-                return True
+                return RebaseResult(success=True)
             finally:
                 # Clean up the worktree
                 subprocess.run(
@@ -560,7 +566,7 @@ def _is_auto_resolvable(path: str) -> bool:
     )
 
 
-def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
+def _resolve_rebase_state_conflicts(tmpdir: str) -> tuple[str, ...] | None:
     """Auto-resolve .hyperloop/state/ and verdict file conflicts during rebase.
 
     State file ownership:
@@ -568,7 +574,7 @@ def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
       - reviews/ → take theirs (worker commit being replayed)
       - worker-result.yaml → delete (should never exist on trunk)
 
-    If non-resolvable conflicts exist, returns False (caller should abort).
+    Returns None on success, or a tuple of non-resolvable file paths.
     May loop through multiple conflicting commits (rebase --continue
     can hit the next conflict).
     """
@@ -584,11 +590,11 @@ def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
         )
         conflicted = [f for f in result.stdout.strip().splitlines() if f]
         if not conflicted:
-            return True  # No more conflicts — rebase is done
+            return None  # No more conflicts — rebase is done
 
         non_resolvable = [f for f in conflicted if not _is_auto_resolvable(f)]
         if non_resolvable:
-            return False  # Real conflicts — caller should abort
+            return tuple(non_resolvable)  # Real conflicts — caller should abort
 
         # Resolve each file
         for f in conflicted:
@@ -630,7 +636,7 @@ def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
             env={**os.environ, "GIT_EDITOR": "true"},
         )
         if cont.returncode == 0:
-            return True  # Rebase completed successfully
+            return None  # Rebase completed successfully
 
         # Continuing can fail when all conflict resolutions result in an
         # empty commit (e.g. state file taken from trunk matches trunk).
@@ -644,10 +650,10 @@ def _resolve_rebase_state_conflicts(tmpdir: str) -> bool:
                 env={**os.environ, "GIT_EDITOR": "true"},
             )
             if skip.returncode == 0:
-                return True
+                return None
             # --skip hit another conflict — loop will handle it
 
-    return False  # Exceeded max rounds
+    return ()  # Exceeded max rounds
 
 
 def _conventional_title(title: str, spec_ref: str) -> str:

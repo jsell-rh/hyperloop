@@ -141,13 +141,24 @@ class TestRebaseBranch:
     def test_rebase_succeeds_by_default(self):
         pr = FakePRManager(repo="org/repo")
         result = pr.rebase_branch("hyperloop/task-001", "main")
-        assert result is True
+        assert result.success is True
+        assert result.conflicting_files == ()
 
     def test_rebase_fails_when_configured(self):
         pr = FakePRManager(repo="org/repo")
         pr.set_rebase_fails("hyperloop/task-001")
         result = pr.rebase_branch("hyperloop/task-001", "main")
-        assert result is False
+        assert result.success is False
+
+    def test_rebase_fails_with_conflict_files(self):
+        pr = FakePRManager(repo="org/repo")
+        pr.set_rebase_fails(
+            "hyperloop/task-001",
+            conflict_files=("src/model.py", "tests/test_model.py"),
+        )
+        result = pr.rebase_branch("hyperloop/task-001", "main")
+        assert result.success is False
+        assert result.conflicting_files == ("src/model.py", "tests/test_model.py")
 
     def test_rebase_records_call(self):
         pr = FakePRManager(repo="org/repo")

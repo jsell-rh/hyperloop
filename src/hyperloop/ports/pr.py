@@ -6,7 +6,10 @@ Implementations: PRManager (gh CLI), FakePRManager (in-memory for tests).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from hyperloop.domain.model import RebaseResult
 
 
 @dataclass(frozen=True)
@@ -58,8 +61,8 @@ class PRPort(Protocol):
         """Squash-merge a PR. Returns True on success, False on conflict."""
         ...
 
-    def rebase_branch(self, branch: str, base_branch: str) -> bool:
-        """Rebase a branch onto base. Returns True if clean, False if conflicts."""
+    def rebase_branch(self, branch: str, base_branch: str) -> RebaseResult:
+        """Rebase a branch onto base. Returns RebaseResult with conflict details."""
         ...
 
     def remove_gate_label(self, pr_url: str) -> None:

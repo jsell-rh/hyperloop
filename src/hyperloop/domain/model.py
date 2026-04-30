@@ -191,6 +191,14 @@ class StepResult:
     pr_url: str | None = None
 
 
+@dataclass(frozen=True)
+class RebaseResult:
+    """Outcome of a branch rebase attempt."""
+
+    success: bool
+    conflicting_files: tuple[str, ...] = ()
+
+
 class SignalStatus(StrEnum):
     """Status of an external signal (gate replacement)."""
 

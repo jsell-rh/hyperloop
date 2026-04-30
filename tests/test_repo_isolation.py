@@ -459,7 +459,7 @@ class TestRebaseAutoResolution:
         finally:
             os.chdir(original_cwd)
 
-        assert result is True
+        assert result.success is True
         assert _current_branch(repo) == "main"
 
     def test_agent_memory_conflict_auto_resolved(self, tmp_path: Path) -> None:
@@ -500,7 +500,7 @@ class TestRebaseAutoResolution:
         finally:
             os.chdir(original_cwd)
 
-        assert result is True
+        assert result.success is True
 
     def test_verdict_file_conflict_auto_resolved(self, tmp_path: Path) -> None:
         """Worker branch has worker-result.yaml that also appears on trunk.
@@ -541,7 +541,7 @@ class TestRebaseAutoResolution:
         finally:
             os.chdir(original_cwd)
 
-        assert result is True
+        assert result.success is True
 
     def test_multiple_auto_resolvable_conflicts_in_sequence(self, tmp_path: Path) -> None:
         """Worker branch has state + agent-memory + verdict conflicts across
@@ -590,7 +590,7 @@ class TestRebaseAutoResolution:
         finally:
             os.chdir(original_cwd)
 
-        assert result is True
+        assert result.success is True
 
     def test_real_conflict_not_auto_resolved(self, tmp_path: Path) -> None:
         """A conflict in a non-state file (real code) should NOT be
@@ -624,4 +624,5 @@ class TestRebaseAutoResolution:
         finally:
             os.chdir(original_cwd)
 
-        assert result is False
+        assert result.success is False
+        assert "app.py" in result.conflicting_files

@@ -822,7 +822,12 @@ class Orchestrator:
                 # stale reference skipping rebase on first spawn.
                 fresh_task = self._state.get_task(plan.task_id)
                 if fresh_task.branch is not None and self._pr is not None:
-                    self._pr.rebase_branch(branch, self._base_branch)
+                    rebase_result = self._pr.rebase_branch(branch, self._base_branch)
+                    if not rebase_result.success and rebase_result.conflicting_files:
+                        prompt += _format_rebase_conflicts(
+                            rebase_result.conflicting_files,
+                            self._base_branch,
+                        )
                 self._runtime.push_branch(branch)
                 handle = self._runtime.spawn(plan.task_id, plan.role, prompt=prompt, branch=branch)
             except Exception:
@@ -960,3 +965,15 @@ class Orchestrator:
             reaped_ids=tuple(reaped_results.keys()),
             duration_s=time.monotonic() - cycle_start,
         )
+
+
+def _format_rebase_conflicts(files: tuple[str, ...], base_branch: str) -> str:
+    file_list = "\n".join(f"- {f}" for f in files)
+    return (
+        f"\n## Rebase Conflicts\n\n"
+        f"Your branch could not be automatically rebased onto {base_branch}.\n"
+        f"Conflicting files:\n{file_list}\n\n"
+        f"You MUST run `git rebase {base_branch}` and resolve these "
+        f"conflicts before doing any other work. After resolving, run "
+        f"tests to verify correctness."
+    )

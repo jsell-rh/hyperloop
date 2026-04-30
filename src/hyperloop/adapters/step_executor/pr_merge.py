@@ -99,13 +99,15 @@ class PRMergeStep:
 
         # Wait for mergeable — attempt auto-rebase on conflict
         if not self._pr.wait_mergeable(pr_url):
-            if not self._pr.rebase_branch(branch, self._base_branch):
-                return StepResult(
-                    outcome=StepOutcome.RETRY,
-                    detail="PR not mergeable -- rebase failed (code conflicts with "
-                    + self._base_branch
-                    + ")",
-                )
+            rebase_result = self._pr.rebase_branch(branch, self._base_branch)
+            if not rebase_result.success:
+                files = ", ".join(rebase_result.conflicting_files)
+                detail = "PR not mergeable -- rebase failed"
+                if files:
+                    detail += f" (conflicts in: {files})"
+                else:
+                    detail += f" (code conflicts with {self._base_branch})"
+                return StepResult(outcome=StepOutcome.RETRY, detail=detail)
             if not self._pr.wait_mergeable(pr_url):
                 return StepResult(
                     outcome=StepOutcome.RETRY,

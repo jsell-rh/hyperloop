@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from hyperloop.domain.model import RebaseResult
 from hyperloop.ports.pr import PRState
 
 
@@ -49,6 +50,7 @@ class FakePRManager:
         self._merge_fails: set[str] = set()
         self._merge_only_fails: set[str] = set()
         self._rebase_fails: set[str] = set()
+        self._rebase_conflict_files: dict[str, tuple[str, ...]] = {}
         self._merge_fails_until_rebase: dict[str, str] = {}  # pr_url -> branch
 
         # Recording for assertions
@@ -66,9 +68,11 @@ class FakePRManager:
         """Pre-configure merge() to return False, but wait_mergeable() still succeeds."""
         self._merge_only_fails.add(pr_url)
 
-    def set_rebase_fails(self, branch: str) -> None:
-        """Pre-configure rebase_branch() to return False for this branch."""
+    def set_rebase_fails(self, branch: str, conflict_files: tuple[str, ...] = ()) -> None:
+        """Pre-configure rebase_branch() to fail for this branch."""
         self._rebase_fails.add(branch)
+        if conflict_files:
+            self._rebase_conflict_files[branch] = conflict_files
 
     def set_merge_fails_until_rebase(self, pr_url: str, branch: str) -> None:
         """PR is not mergeable until rebase_branch(branch) succeeds."""
@@ -180,17 +184,18 @@ class FakePRManager:
         self.merged.append(pr_url)
         return True
 
-    def rebase_branch(self, branch: str, base_branch: str) -> bool:
-        """Rebase a branch onto base. Returns True if clean, False if conflicts."""
+    def rebase_branch(self, branch: str, base_branch: str) -> RebaseResult:
+        """Rebase a branch onto base. Returns RebaseResult with conflict details."""
         self.rebased.append((branch, base_branch))
         if branch in self._rebase_fails:
-            return False
+            files = self._rebase_conflict_files.get(branch, ())
+            return RebaseResult(success=False, conflicting_files=files)
         # Clear merge failure for PRs that were waiting on this rebase
         resolved = [url for url, b in self._merge_fails_until_rebase.items() if b == branch]
         for url in resolved:
             self._merge_fails.discard(url)
             del self._merge_fails_until_rebase[url]
-        return True
+        return RebaseResult(success=True)
 
     def get_feedback(self, pr_url: str) -> str:
         """Return empty feedback in the fake."""
