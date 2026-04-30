@@ -191,7 +191,7 @@ const spawnTooltip = computed(() => {
           v-if="reconcilePct > 0"
           class="bg-purple-300 dark:bg-purple-700/50 transition-all"
           :style="{ width: `${reconcilePct}%` }"
-          :title="`Reconcile: ${reconcile?.reconcile_duration_s?.toFixed(1)}s (${reconcilePct}% of cycle)`"
+          :title="`Reconcile: ${reconcile?.reconcile_duration_s != null ? formatDuration(reconcile.reconcile_duration_s) : '--'} (${reconcilePct}% of cycle)`"
         />
       </div>
       <div v-if="reconcilePct > 10" class="flex justify-between mt-0.5">

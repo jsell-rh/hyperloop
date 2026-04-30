@@ -67,7 +67,8 @@ function formatDuration(d: number | null): string {
   if (d == null) return '--'
   if (d < 0.01) return '<0.01s'
   if (d < 1) return `${(d * 1000).toFixed(0)}ms`
-  return `${d.toFixed(1)}s`
+  if (d < 60) return `${d.toFixed(1)}s`
+  return `${Math.floor(d / 60)}m${Math.round(d % 60)}s`
 }
 
 function segmentTooltip(seg: PhaseSegment & { duration: number | null }): string {

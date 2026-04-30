@@ -107,7 +107,7 @@ function formatTime(ts: string): string {
             </p>
             <p v-if="event.verdict" class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
               Verdict: {{ event.verdict }}
-              <span v-if="event.duration_s !== null"> ({{ event.duration_s.toFixed(1) }}s)</span>
+              <span v-if="event.duration_s !== null"> ({{ event.duration_s < 60 ? event.duration_s.toFixed(1) + 's' : Math.floor(event.duration_s / 60) + 'm' + Math.round(event.duration_s % 60) + 's' }})</span>
             </p>
           </div>
         </div>
