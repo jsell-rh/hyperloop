@@ -42,6 +42,7 @@ class InMemoryStateStore:
         self._epochs: dict[str, str] = {}
         self._files: dict[str, str] = {}
         self._summaries: dict[str, str] = {}
+        self._converged: dict[str, str] = {}
         self.committed_messages: list[str] = []
 
     # -- Setup helpers (for tests) ------------------------------------------
@@ -220,6 +221,14 @@ class InMemoryStateStore:
     def list_summaries(self) -> dict[str, str]:
         """Return all summary records as {spec_path: yaml_content}."""
         return dict(self._summaries)
+
+    def store_converged(self, spec_path: str, data: str) -> None:
+        """Write a convergence record for a spec (YAML content)."""
+        self._converged[spec_path] = data
+
+    def list_converged(self) -> dict[str, str]:
+        """Return all convergence records as {spec_path: yaml_content}."""
+        return dict(self._converged)
 
     def ingest_external_tasks(self, directory: Path) -> list[str]:
         """Scan directory for task .md files, parse and add new tasks.

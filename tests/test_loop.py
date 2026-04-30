@@ -2495,3 +2495,155 @@ class TestAuditMisalignmentStoresFinding:
         # PM intake should have been triggered (because _has_drift was set)
         pm_runs = [r for r in runtime.serial_runs if r.role == "pm"]
         assert len(pm_runs) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Convergence persistence
+# ---------------------------------------------------------------------------
+
+
+class TestConvergencePersistence:
+    """Convergence records are persisted to state and loaded on startup."""
+
+    def test_converged_specs_loaded_from_state(self) -> None:
+        """Seed converged records in fake state, verify auditors don't run."""
+        import yaml
+
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(
+            Task(
+                id="task-001",
+                title="Task 001",
+                spec_ref="specs/auth.md@abc123",
+                status=TaskStatus.COMPLETED,
+                phase=None,
+                deps=(),
+                round=1,
+                branch="hyperloop/task-001",
+                pr=None,
+            )
+        )
+        state.set_file("specs/auth.md", "Auth spec content")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/auth.md", "Auth spec content")
+        spec_source.set_version("abc123")
+
+        # Pre-seed convergence record in state store
+        converged_data = yaml.dump(
+            {
+                "spec_ref": "specs/auth.md@abc123",
+                "audited_at": "2026-04-30T14:10:00+00:00",
+            },
+            default_flow_style=False,
+            sort_keys=False,
+        )
+        state.store_converged("specs/auth.md", converged_data)
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        orch.run_cycle()
+
+        # Converged specs should have been pre-populated from state
+        assert "specs/auth.md@abc123" in orch._converged_specs
+
+        # No auditor should have run (already converged)
+        assert len(runtime.auditor_runs) == 0
+
+    def test_converged_specs_written_on_audit_pass(self) -> None:
+        """Run a convergence check with passing auditor, verify record stored."""
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(
+            Task(
+                id="task-001",
+                title="Task 001",
+                spec_ref="specs/auth.md@abc123",
+                status=TaskStatus.COMPLETED,
+                phase=None,
+                deps=(),
+                round=1,
+                branch="hyperloop/task-001",
+                pr=None,
+            )
+        )
+        state.set_file("specs/auth.md", "Auth spec content")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/auth.md", "Auth spec content")
+        spec_source.set_version("abc123")
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        orch.run_cycle()
+
+        # Auditor should have run and passed
+        assert len(runtime.auditor_runs) >= 1
+
+        # Converged record should be stored in state
+        converged = state.list_converged()
+        assert "specs/auth.md" in converged
+        import yaml
+
+        parsed = yaml.safe_load(converged["specs/auth.md"])
+        assert parsed["spec_ref"] == "specs/auth.md@abc123"
+        assert "audited_at" in parsed
+
+    def test_stale_converged_ignored(self) -> None:
+        """Seed a converged record with old SHA, verify auditor DOES run."""
+        import yaml
+
+        state = InMemoryStateStore()
+        runtime = InMemoryRuntime()
+        probe = RecordingProbe()
+        composer = PromptComposer(templates=load_templates_from_dir(BASE_DIR), state=state)
+
+        state.add_task(
+            Task(
+                id="task-001",
+                title="Task 001",
+                spec_ref="specs/auth.md@newsha",
+                status=TaskStatus.COMPLETED,
+                phase=None,
+                deps=(),
+                round=1,
+                branch="hyperloop/task-001",
+                pr=None,
+            )
+        )
+        state.set_file("specs/auth.md", "Auth spec content v2")
+
+        spec_source = FakeSpecSource()
+        spec_source.add_spec("specs/auth.md", "Auth spec content v2")
+        spec_source.set_version("newsha")
+
+        # Pre-seed stale convergence record (old SHA)
+        converged_data = yaml.dump(
+            {
+                "spec_ref": "specs/auth.md@oldsha",
+                "audited_at": "2026-04-20T10:00:00+00:00",
+            },
+            default_flow_style=False,
+            sort_keys=False,
+        )
+        state.store_converged("specs/auth.md", converged_data)
+
+        orch = _make_orchestrator(
+            state, runtime, composer=composer, probe=probe, spec_source=spec_source
+        )
+        orch.run_cycle()
+
+        # Stale record should NOT have been loaded (SHA mismatch)
+        assert "specs/auth.md@oldsha" not in orch._converged_specs
+
+        # Auditor should have run (not skipped)
+        assert len(runtime.auditor_runs) >= 1

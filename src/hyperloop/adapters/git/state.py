@@ -721,6 +721,45 @@ class GitStateStore:
 
         return summaries
 
+    def store_converged(self, spec_path: str, data: str) -> None:
+        """Write a convergence record for a spec (YAML content) to the state branch."""
+        self._ensure_bootstrapped()
+        path = f"{STATE_PREFIX}/converged/{spec_path}.yaml"
+        self._buffer[path] = data
+
+    def list_converged(self) -> dict[str, str]:
+        """Return all convergence records as {spec_path: yaml_content}."""
+        self._ensure_bootstrapped()
+        converged: dict[str, str] = {}
+
+        # Read from branch
+        tree_output = self._git_try("ls-tree", "-r", "--name-only", STATE_BRANCH)
+        if tree_output:
+            prefix = f"{STATE_PREFIX}/converged/"
+            for line in tree_output.splitlines():
+                if line.startswith(prefix) and line.endswith(".yaml"):
+                    relative = line[len(prefix) :]
+                    if relative == ".gitkeep":
+                        continue
+                    spec_path = relative.removesuffix(".yaml")
+                    if line not in self._buffer:
+                        content = self._git_show(line)
+                        if content is not None:
+                            converged[spec_path] = content
+
+        # Overlay buffered converged records
+        prefix = f"{STATE_PREFIX}/converged/"
+        for path, content in self._buffer.items():
+            if path.startswith(prefix) and path.endswith(".yaml"):
+                relative = path[len(prefix) :]
+                if relative == ".gitkeep":
+                    continue
+                spec_path = relative.removesuffix(".yaml")
+                if content:
+                    converged[spec_path] = content
+
+        return converged
+
     def persist(self, message: str) -> None:
         """Commit buffered changes to the state branch via git plumbing.
 

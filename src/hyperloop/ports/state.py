@@ -122,6 +122,14 @@ class StateStore(Protocol):
         """Return raw content of all review files for a task, sorted by round."""
         ...
 
+    def store_converged(self, spec_path: str, data: str) -> None:
+        """Write a convergence record for a spec (YAML content)."""
+        ...
+
+    def list_converged(self) -> dict[str, str]:
+        """Return all convergence records as {spec_path: yaml_content}."""
+        ...
+
     def sync(self) -> str | None:
         """Sync state with remote. Returns error detail on failure, None on success."""
         ...

@@ -116,6 +116,7 @@ class Orchestrator:
 
         # Reconciler state
         self._converged_specs: set[str] = set()
+        self._converged_loaded: bool = False
         self._pm_consecutive_failures: int = 0
         self._pm_skip_until: int = 0
         self._gc_last_cycle: int = 0
@@ -351,6 +352,9 @@ class Orchestrator:
         drift_count = self._run_drift_detection(world.tasks, cycle_num)
 
         # 4. Convergence tracking (auditor for completed specs)
+        if not self._converged_loaded:
+            self._load_converged_specs()
+            self._converged_loaded = True
         self._last_audits_run = 0
         self._run_convergence_check(world.tasks, cycle_num)
 
@@ -526,6 +530,7 @@ class Orchestrator:
 
                 if result.verdict == Verdict.PASS:
                     self._converged_specs.add(spec_ref)
+                    self._store_converged(spec_ref)
                     self._probe.convergence_marked(
                         spec_path=spec_path, spec_ref=spec_ref, cycle=cycle_num
                     )
@@ -685,6 +690,49 @@ class Orchestrator:
                 else None,
             )
         return summaries
+
+    def _load_converged_specs(self) -> None:
+        """Load persisted convergence records and populate _converged_specs.
+
+        For each stored record, compare the stored spec SHA against the
+        current blob SHA. Only add to _converged_specs when they match.
+        """
+        import yaml
+
+        raw = self._state.list_converged()
+        for spec_path, content in raw.items():
+            parsed = yaml.safe_load(content)
+            if not isinstance(parsed, dict):
+                continue
+            d = cast("dict[str, object]", parsed)
+            spec_ref = str(d.get("spec_ref", ""))
+            if "@" not in spec_ref:
+                continue
+            stored_sha = spec_ref.split("@")[1]
+
+            if self._spec_source is not None:
+                current_sha = self._spec_source.file_version(spec_path)
+                if current_sha and current_sha != stored_sha:
+                    continue
+
+            self._converged_specs.add(spec_ref)
+
+    def _store_converged(self, spec_ref: str) -> None:
+        """Persist a convergence record to the state branch."""
+        from datetime import UTC, datetime
+
+        import yaml
+
+        spec_path = spec_ref.split("@")[0] if "@" in spec_ref else spec_ref
+        data = yaml.dump(
+            {
+                "spec_ref": spec_ref,
+                "audited_at": datetime.now(UTC).isoformat(),
+            },
+            default_flow_style=False,
+            sort_keys=False,
+        )
+        self._state.store_converged(spec_path, data)
 
     def _write_summary(self, task: Task) -> None:
         """Build and store a Summary record for a task (on completion or GC prune)."""
