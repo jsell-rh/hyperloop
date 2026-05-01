@@ -70,6 +70,14 @@ The PM agent SHALL be a mandatory, first-class component of the reconciler. It i
 - THEN the PM receives: failure summaries from all previous attempts
 - AND the PM uses this context to create better-scoped tasks
 
+#### Scenario: Intake triggers only on terminal failure
+
+- GIVEN a task at phase "verify" with round 2 and max_task_rounds 50
+- WHEN the verifier returns verdict FAIL
+- THEN the task retries (loops back to implement with round 3)
+- AND PM intake is NOT triggered — the task is still in progress
+- AND intake is only triggered when a task transitions to "failed" status (e.g. max rounds exceeded)
+
 #### Scenario: PM prompt is customizable
 
 - GIVEN the PM is an agent with a prompt template
