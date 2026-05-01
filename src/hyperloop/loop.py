@@ -718,15 +718,26 @@ class Orchestrator:
             self._converged_specs.add(spec_ref)
 
     def _store_converged(self, spec_ref: str) -> None:
-        """Persist a convergence record to the state branch."""
+        """Persist a convergence record to the state branch.
+
+        Normalizes the spec_ref SHA to a blob SHA so that
+        _load_converged_specs can compare against file_version().
+        """
         from datetime import UTC, datetime
 
         import yaml
 
         spec_path = spec_ref.split("@")[0] if "@" in spec_ref else spec_ref
+        # Normalize to blob SHA for consistent comparison with file_version()
+        stored_ref = spec_ref
+        if "@" in spec_ref and self._spec_source is not None:
+            pinned = spec_ref.split("@")[1]
+            blob = self._spec_source.file_version_at(spec_path, pinned)
+            if blob and blob != pinned:
+                stored_ref = f"{spec_path}@{blob}"
         data = yaml.dump(
             {
-                "spec_ref": spec_ref,
+                "spec_ref": stored_ref,
                 "audited_at": datetime.now(UTC).isoformat(),
             },
             default_flow_style=False,
