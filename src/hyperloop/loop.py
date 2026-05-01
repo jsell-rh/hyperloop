@@ -867,6 +867,12 @@ class Orchestrator:
                     plan.transition_status,
                     plan.transition_phase,
                 )
+            # Pin spec_ref with blob SHA if not already pinned
+            if "@" not in task.spec_ref and self._spec_source is not None:
+                v = self._spec_source.file_version(task.spec_ref)
+                if v:
+                    self._state.set_spec_ref(task.id, f"{task.spec_ref}@{v}")
+                    task = self._state.get_task(plan.task_id)
             prompt = self._compose_prompt(task, plan.role, cycle=cycle_num)
             try:
                 # Re-fetch task after potential branch assignment to avoid
