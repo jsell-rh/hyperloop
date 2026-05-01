@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.49.0 (2026-04-30)
+
+### Features
+
+- Persist convergence state to git state branch
+  ([`0858740`](https://github.com/jsell-rh/hyperloop/commit/08587403234a29b4831840fb131a3bf4fbbb683c))
+
+
 ## v0.48.0 (2026-04-30)
 
 
