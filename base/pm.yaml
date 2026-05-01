@@ -22,6 +22,8 @@ prompt: |
       round: 0
       branch: null
       pr: null
+      pr_title: "<conventional commit title, e.g. feat: add workspace-scoped KG listing>"
+      pr_description: "<1-3 sentence summary of what this PR delivers and why>"
       ---
   - Break specs into tasks that are small enough for a single implementation round.
   - Identify dependencies between tasks. A task must list all tasks that must complete before it can start.
