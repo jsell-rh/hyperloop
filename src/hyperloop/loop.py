@@ -223,8 +223,6 @@ class Orchestrator:
             cycle=cycle_num,
         )
         self._workers = collected.remaining_workers
-        if any(r.verdict == Verdict.FAIL for r in collected.reaped.values()):
-            self._has_failures_since_intake = True
 
         # Emit crash notifications for workers whose poll status was FAILED
         for task_id in collected.crashed_task_ids:
@@ -293,6 +291,8 @@ class Orchestrator:
             if t.status == TaskStatus.COMPLETED:
                 completed_task = self._state.get_task(t.task_id)
                 self._write_summary(completed_task)
+        if advanced.had_failures:
+            self._has_failures_since_intake = True
         self._probe.advance_completed(
             cycle=cycle_num,
             duration_s=time.monotonic() - advance_start,
