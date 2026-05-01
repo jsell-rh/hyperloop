@@ -15,7 +15,7 @@ prompt: |
       ---
       id: task-{id}
       title: <concise title>
-      spec_ref: <path to originating spec>
+      spec_ref: "<path>@<blob-sha>"  # e.g. specs/auth.spec.md@a1b2c3d — use git hash-object <path> to get the blob SHA
       status: not-started
       phase: null
       deps: [<task IDs this depends on>]
