@@ -15,6 +15,7 @@ const navLinks = computed(() => {
   if (repoHash.value) {
     links.push(
       { label: 'Activity', to: `/repo/${repoHash.value}/activity` },
+      { label: 'Tasks', to: `/repo/${repoHash.value}/tasks` },
       { label: 'Process', to: `/repo/${repoHash.value}/process` },
       { label: 'Agents', to: `/repo/${repoHash.value}/agents` },
     )
