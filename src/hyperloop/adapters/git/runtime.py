@@ -400,7 +400,7 @@ class AgentSdkRuntime:
                 capture_output=True,
                 text=True,
                 env=clean_git_env(),
-                timeout=30,
+                timeout=120,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             if self._probe is not None:
@@ -417,7 +417,7 @@ class AgentSdkRuntime:
                 capture_output=True,
                 text=True,
                 env=clean_git_env(),
-                timeout=30,
+                timeout=120,
             )
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             if self._probe is not None:
