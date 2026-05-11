@@ -133,7 +133,7 @@ When a task fails, it SHALL be retried with all failure events passed as context
 
 ### Requirement: Re-Decomposition on Retry Exhaustion
 
-When a task exhausts its retry limit, the spec SHALL be sent back to the decomposition agent exactly once for the current reconciliation attempt. If re-decomposed tasks also exhaust their retry limits, the spec SHALL transition to Failed.
+When a task exhausts its retry limit, the spec SHALL be sent back to the decomposition agent up to the configured max_redecompositions limit (default: 1) for the current reconciliation attempt. If re-decomposed tasks also exhaust their retry limits and the re-decomposition budget is spent, the spec SHALL transition to Failed.
 
 #### Scenario: Re-decomposition after retry exhaustion
 
@@ -147,7 +147,7 @@ When a task exhausts its retry limit, the spec SHALL be sent back to the decompo
 
 - GIVEN a spec was re-decomposed and the new tasks also exhaust their retry limits
 - WHEN re-decomposition is evaluated again
-- THEN the spec SHALL transition to Failed (re-decomposition is allowed only once per reconciliation attempt)
+- THEN the spec SHALL transition to Failed (re-decomposition budget is exhausted per the configured max_redecompositions)
 - AND a human intervention event is recorded with accumulated failure context
 
 ### Requirement: Concurrent Task Execution

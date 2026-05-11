@@ -97,7 +97,7 @@ An Event SHALL contain:
 | Field | Description |
 |---|---|
 | type | Normal or Warning |
-| reason | Machine-readable event reason. The set of valid reasons is extensible; examples include TaskFailed, VerificationFailed, VerificationPassed, and DependencyInvalidated |
+| reason | Machine-readable event reason. The set of valid reasons is extensible; examples include TaskFailed, VerificationFailed, VerificationPassed, DependencyInvalidated, and DecompositionFailed |
 | count | Number of times this event has occurred |
 | first_timestamp | When this event first occurred |
 | last_timestamp | When this event most recently occurred |
