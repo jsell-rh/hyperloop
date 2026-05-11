@@ -90,19 +90,28 @@ The AgentRuntime port SHALL manage agent lifecycle for decomposition, implementa
 - THEN an implementation agent is started in the provided workspace
 - AND a handle is returned for tracking
 
-#### Scenario: Poll task agent
+#### Scenario: Poll an agent
 
-- GIVEN an active task handle
+- GIVEN an active handle (task or verification)
 - WHEN poll is called
 - THEN it returns one of: Running, Complete, or Failed
 - AND if Complete or Failed, includes a rationale string
+- AND if Complete, MAY include a verdict (Pass or Fail) for agents that produce assessments
+
+#### Scenario: Poll distinguishes completion from crash
+
+- GIVEN a verification agent that completes and finds misalignment
+- WHEN poll is called
+- THEN it returns Complete with verdict Fail and rationale describing the misalignment
+- AND it does NOT return Failed (which indicates the agent itself crashed, not that it found problems)
 
 #### Scenario: Launch verification agent
 
 - GIVEN a spec (at pinned SHA) and the workspace containing the combined implementation
 - WHEN launch_verification is called
 - THEN a verification agent is started in a fresh session with no context from implementation agents
-- AND it returns a verdict (Pass or Fail) with rationale
+- AND a handle is returned for tracking (same as launch_task)
+- AND when polled to completion, the result includes a verdict (Pass or Fail) with rationale
 
 #### Scenario: Launch merge resolution agent
 
