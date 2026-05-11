@@ -1,3 +1,7 @@
+# Vision Reference (Historical)
+
+> **This document is historical context, not a spec.** It was the original vision document that preceded the formal specs in `specs/reconciliation/`. The pseudocode and design notes here informed the proper specs but may diverge from them. When in doubt, the specs are the source of truth.
+
 ## Agentic Loop Principles
 
 - There are two primary loops used to reconcile a spec with code. 
