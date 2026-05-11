@@ -63,7 +63,7 @@ Include: data model, write paths, read paths, RBAC, migration plan for all exist
 Spawn critics in parallel per the workflow. Standard critics (every spec change):
 - Schema / migration
 - RBAC / auth
-- Ambient terminology
+- Hyperloop terminology
 
 Plus scope-driven critics based on the components identified in Phase 1.
 
