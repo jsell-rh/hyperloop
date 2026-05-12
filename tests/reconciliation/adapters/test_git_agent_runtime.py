@@ -48,13 +48,14 @@ def _push_branch(repo: Path, branch: str) -> None:
     _git(repo, "push", "origin", branch)
 
 
-def _make_runtime(repo_path: Path) -> GitAgentRuntime:
-    return GitAgentRuntime(repo_path, remote="origin")
-
-
+BRANCH_PREFIX = "hyperloop/"
 BLOB_SHA = "abc123"
-TASK_BRANCH = f"hyperloop/spec/{BLOB_SHA}/task/5"
-VERIFIER_BRANCH = f"hyperloop/spec/{BLOB_SHA}/verifier"
+TASK_BRANCH = f"{BRANCH_PREFIX}spec/{BLOB_SHA}/task/5"
+VERIFIER_BRANCH = f"{BRANCH_PREFIX}spec/{BLOB_SHA}/verifier"
+
+
+def _make_runtime(repo_path: Path) -> GitAgentRuntime:
+    return GitAgentRuntime(repo_path, branch_prefix=BRANCH_PREFIX, remote="origin")
 
 
 class TestPollRunningTask:
@@ -413,6 +414,53 @@ class TestCancel:
         handle = AgentHandle(id=TASK_BRANCH)
         runtime.cancel(handle)
         runtime.cancel(handle)
+
+
+class TestCustomBranchPrefix:
+    def test_poll_works_with_custom_prefix(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        prefix = "myloop/"
+        branch = f"{prefix}spec/abc123/task/1"
+
+        _create_branch_from(local, branch, "main")
+        _create_signal_commit(local, branch, "Done\n\nTask-Status: Complete")
+        _push_branch(local, branch)
+
+        runtime = GitAgentRuntime(local, branch_prefix=prefix, remote="origin")
+        result = runtime.poll(AgentHandle(id=branch))
+
+        assert result.status == AgentStatus.COMPLETE
+
+    def test_detect_orphans_uses_configured_prefix(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        prefix = "myloop/"
+        branch = f"{prefix}spec/abc123/task/1"
+
+        _create_branch_from(local, branch, "main")
+        _create_work_commit(local, branch, "Work")
+        _push_branch(local, branch)
+
+        runtime = GitAgentRuntime(local, branch_prefix=prefix, remote="origin")
+        orphans = runtime.detect_orphans()
+
+        orphan_ids = {h.id for h in orphans}
+        assert branch in orphan_ids
+
+    def test_detect_orphans_ignores_other_prefixes(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        branch = f"{BRANCH_PREFIX}spec/abc123/task/1"
+        _create_branch_from(local, branch, "main")
+        _create_work_commit(local, branch, "Work")
+        _push_branch(local, branch)
+
+        runtime = GitAgentRuntime(local, branch_prefix="other/", remote="origin")
+        orphans = runtime.detect_orphans()
+
+        assert orphans == []
 
 
 class TestProtocolConformance:

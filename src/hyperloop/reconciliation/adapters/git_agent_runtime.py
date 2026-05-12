@@ -16,14 +16,30 @@ _VERIFICATION_STATUS_RE = re.compile(
     r"^Verification-Status:\s*(Pass|Fail)\s*$", re.MULTILINE
 )
 
-_TASK_BRANCH_PATTERN = re.compile(r"^hyperloop/spec/[^/]+/task/\d+$")
-_VERIFIER_BRANCH_PATTERN = re.compile(r"^hyperloop/spec/[^/]+/verifier$")
+
+def _build_branch_patterns(
+    branch_prefix: str,
+) -> tuple[re.Pattern[str], re.Pattern[str]]:
+    escaped = re.escape(branch_prefix)
+    task_pattern = re.compile(rf"^{escaped}spec/[^/]+/task/\d+$")
+    verifier_pattern = re.compile(rf"^{escaped}spec/[^/]+/verifier$")
+    return task_pattern, verifier_pattern
 
 
 class GitAgentRuntime:
-    def __init__(self, repo_path: Path, *, remote: str = "origin") -> None:
+    def __init__(
+        self,
+        repo_path: Path,
+        *,
+        branch_prefix: str,
+        remote: str = "origin",
+    ) -> None:
         self._repo_path = repo_path
+        self._branch_prefix = branch_prefix
         self._remote = remote
+        self._task_branch_re, self._verifier_branch_re = _build_branch_patterns(
+            branch_prefix
+        )
 
     def poll(self, handle: AgentHandle) -> PollResult:
         self._fetch_branch(handle.id)
@@ -36,14 +52,14 @@ class GitAgentRuntime:
         return self._parse_signal(message)
 
     def detect_orphans(self) -> list[AgentHandle]:
-        self._fetch_all_hyperloop_branches()
-        branches = self._list_remote_hyperloop_branches()
+        self._fetch_all_managed_branches()
+        branches = self._list_remote_managed_branches()
         orphans: list[AgentHandle] = []
 
         for branch in branches:
             if not (
-                _TASK_BRANCH_PATTERN.match(branch)
-                or _VERIFIER_BRANCH_PATTERN.match(branch)
+                self._task_branch_re.match(branch)
+                or self._verifier_branch_re.match(branch)
             ):
                 continue
 
@@ -78,11 +94,11 @@ class GitAgentRuntime:
             check=False,
         )
 
-    def _fetch_all_hyperloop_branches(self) -> None:
+    def _fetch_all_managed_branches(self) -> None:
         self._git(
             "fetch",
             self._remote,
-            f"+refs/heads/hyperloop/*:refs/remotes/{self._remote}/hyperloop/*",
+            f"+refs/heads/{self._branch_prefix}*:refs/remotes/{self._remote}/{self._branch_prefix}*",
             check=False,
         )
 
@@ -108,11 +124,11 @@ class GitAgentRuntime:
         )
         return result.stdout.strip() == ""
 
-    def _list_remote_hyperloop_branches(self) -> list[str]:
+    def _list_remote_managed_branches(self) -> list[str]:
         result = self._git(
             "for-each-ref",
             "--format=%(refname:strip=3)",
-            f"refs/remotes/{self._remote}/hyperloop/",
+            f"refs/remotes/{self._remote}/{self._branch_prefix}",
         )
         if not result.stdout.strip():
             return []
