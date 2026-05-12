@@ -13,6 +13,7 @@ Spec-driven reconciliation engine. Specs declare desired state; code is actual s
 ## Architecture
 
 - **Domain-Driven Design / Hexagonal Architecture.** Organize files by domain, not by port/adapter/layer.
+- **One file per type.** Nested directories denote domains and subcomponents. Within each domain, `models/`, `ports/`, `adapters/`, etc. are directories. Each file contains a single type (one model, one port, one adapter). No multi-type files.
 - **Correctness over backwards compatibility.** Never take shortcuts or make decisions to preserve backwards compatibility. Provide correct implementations only.
 - **Simplicity is a virtue.** Remove dead code. But simplicity must not supersede correctness or break prescribed architecture/existing patterns.
 

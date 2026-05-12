@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from hyperloop.reconciliation.plan import (
+from hyperloop.reconciliation.models import (
     Event,
     EventType,
     Plan,
