@@ -261,6 +261,30 @@ class TestSync:
         entries = source.list_specs()
         assert entries[0].blob_sha != v1_sha
 
+    def test_synced_content_is_readable(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, remote = git_env
+        expected_content = "# Auth Spec\nLogin required\n"
+
+        other = tmp_path / "other"
+        subprocess.run(
+            ["git", "clone", str(remote), str(other)],
+            check=True,
+            capture_output=True,
+        )
+        _git(other, "config", "user.name", "Test User")
+        _git(other, "config", "user.email", "test@example.com")
+        _write_and_commit(other, "specs/auth.spec.md", expected_content, "Add auth")
+        _git(other, "push", "origin", "main")
+
+        source = _make_source(local)
+        source.sync()
+
+        entries = source.list_specs()
+        content = source.read_at(entries[0].path, entries[0].blob_sha)
+        assert content == expected_content
+
 
 class TestCustomSuffix:
     def test_filters_by_configured_suffix(self, git_env: tuple[Path, Path]) -> None:
