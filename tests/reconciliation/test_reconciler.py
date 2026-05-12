@@ -4460,3 +4460,230 @@ class TestIntegrationSummary:
         _, task_summaries, _ = agent_runtime.compose_summary_calls[0]
         assert len(task_summaries) == 1
         assert task_summaries[0] == ("done-task", "Completed work")
+
+
+class TestDecompositionFailure:
+    def test_failure_records_event_and_stays_out_of_sync(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_error(RuntimeError("agent crashed"))
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        sp = plan.spec_plans[0]
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        assert sp.tasks == []
+
+        decomp_events = [
+            e for e in sp.events if e.reason == EventReason.DECOMPOSITION_FAILED
+        ]
+        assert len(decomp_events) == 1
+        assert decomp_events[0].count == 1
+        assert "agent crashed" in decomp_events[0].message
+
+    def test_failure_fires_decomposition_failed_probe(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_error(RuntimeError("timeout"))
+
+        reconciler.run_cycle()
+
+        probes = observer.calls_for("decomposition_failed")
+        assert len(probes) == 1
+        assert "timeout" in probes[0]["reason"]
+        assert probes[0]["cycle"] == 1
+
+    def test_failure_increments_reconciliation_attempts(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_error(RuntimeError("fail"))
+
+        reconciler.run_cycle()
+
+        sp = plan_store.get_plan().spec_plans[0]
+        assert sp.reconciliation_attempts == 1
+
+    def test_repeated_failure_exceeds_convergence_bound(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        convergence_bound = 3
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            convergence_bound=convergence_bound,
+        )
+
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_error(RuntimeError("keeps failing"))
+
+        for _ in range(convergence_bound):
+            reconciler.run_cycle()
+
+        sp = plan_store.get_plan().spec_plans[0]
+        assert sp.status == SpecPlanStatus.FAILED
+        assert sp.reconciliation_attempts == convergence_bound
+
+        failed_probes = observer.calls_for("spec_failed")
+        assert len(failed_probes) == 1
+        assert failed_probes[0]["spec_path"] == "auth.spec.md"
+        assert failed_probes[0]["spec_blob_sha"] == "abc123"
+
+    def test_failure_below_convergence_bound_stays_out_of_sync(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        convergence_bound = 3
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            convergence_bound=convergence_bound,
+        )
+
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_error(RuntimeError("fail"))
+
+        for _ in range(convergence_bound - 1):
+            reconciler.run_cycle()
+
+        sp = plan_store.get_plan().spec_plans[0]
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        assert sp.reconciliation_attempts == convergence_bound - 1
+
+        decomp_events = [
+            e for e in sp.events if e.reason == EventReason.DECOMPOSITION_FAILED
+        ]
+        assert len(decomp_events) == 1
+        assert decomp_events[0].count == convergence_bound - 1
+
+    def test_successful_retry_after_prior_failure(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_error(RuntimeError("transient"))
+
+        reconciler.run_cycle()
+
+        sp = plan_store.get_plan().spec_plans[0]
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        assert sp.reconciliation_attempts == 1
+
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="implement-auth",
+                    description="Implement auth",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        sp = plan_store.get_plan().spec_plans[0]
+        assert sp.status == SpecPlanStatus.RECONCILING
+        assert len(sp.tasks) == 1
+
+        decomp_events = [
+            e for e in sp.events if e.reason == EventReason.DECOMPOSITION_FAILED
+        ]
+        assert len(decomp_events) == 1
+        assert decomp_events[0].count == 1
+
+    def test_failed_spec_not_retried_on_next_cycle(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            convergence_bound=1,
+        )
+
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_error(RuntimeError("fatal"))
+
+        reconciler.run_cycle()
+
+        sp = plan_store.get_plan().spec_plans[0]
+        assert sp.status == SpecPlanStatus.FAILED
+
+        observer.calls.clear()
+        reconciler.run_cycle()
+
+        assert observer.calls_for("decomposition_started") == []
+
+    def test_no_tasks_created_on_failure(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_error(RuntimeError("crash"))
+
+        reconciler.run_cycle()
+
+        sp = plan_store.get_plan().spec_plans[0]
+        assert sp.tasks == []
+        assert observer.calls_for("task_created") == []
+
+    def test_cycle_completes_normally_after_decomposition_failure(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_error(RuntimeError("boom"))
+
+        reconciler.run_cycle()
+
+        cycle_completed = observer.calls_for("cycle_completed")
+        assert len(cycle_completed) == 1
+        assert cycle_completed[0]["cycle"] == 1
