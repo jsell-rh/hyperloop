@@ -166,11 +166,26 @@ The WorkspaceManager port SHALL manage isolated workspaces for task execution an
 - THEN the changes are submitted for integration to trunk
 - AND an integration identifier is returned
 
+#### Scenario: Create a verification workspace
+
+- GIVEN a spec entering Verifying state
+- WHEN create_verification_workspace is called
+- THEN a fresh workspace is created from the delivery workspace for verification
+- AND if a verification workspace already exists, it is replaced (fresh verification session)
+- AND the workspace identifier is returned
+
 #### Scenario: Clean up workspaces
 
 - GIVEN a task workspace or delivery workspace is no longer needed (task cancelled, spec superseded)
 - WHEN cleanup is called
 - THEN the workspace and its resources are removed
+
+#### Scenario: Clean up verification workspace
+
+- GIVEN the verification agent has completed (pass or fail)
+- WHEN cleanup_verification is called
+- THEN the verification workspace is removed
+- AND the delivery workspace and task workspaces are preserved
 
 ### Requirement: Observer Port
 
