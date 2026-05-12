@@ -4,12 +4,14 @@ import re
 import subprocess
 from pathlib import Path
 
+from hyperloop.reconciliation.adapters.agent_executor import AgentExecutor
 from hyperloop.reconciliation.models.agent_handle import AgentHandle
 from hyperloop.reconciliation.models.poll_result import (
     AgentStatus,
     AgentVerdict,
     PollResult,
 )
+from hyperloop.reconciliation.models.task_briefing import TaskBriefing
 
 _TASK_STATUS_RE = re.compile(r"^Task-Status:\s*(Complete|Failed)\s*$", re.MULTILINE)
 _VERIFICATION_STATUS_RE = re.compile(
@@ -32,10 +34,12 @@ class GitAgentRuntime:
         repo_path: Path,
         *,
         branch_prefix: str,
+        executor: AgentExecutor,
         remote: str = "origin",
     ) -> None:
         self._repo_path = repo_path
         self._branch_prefix = branch_prefix
+        self._executor = executor
         self._remote = remote
         self._task_branch_re, self._verifier_branch_re = _build_branch_patterns(
             branch_prefix
@@ -71,6 +75,11 @@ class GitAgentRuntime:
 
         return orphans
 
+    def launch_task(self, briefing: TaskBriefing) -> AgentHandle:
+        branch = self._workspace_to_branch(briefing.workspace_id)
+        self._executor.start_task_agent(branch=branch, briefing=briefing)
+        return AgentHandle(id=branch)
+
     def cancel(self, handle: AgentHandle) -> None:
         self._git(
             "branch",
@@ -85,6 +94,19 @@ class GitAgentRuntime:
             handle.id,
             check=False,
         )
+
+    def _workspace_to_branch(self, workspace_id: str) -> str:
+        parts = workspace_id.split("/")
+        ws_type = parts[0]
+        blob_sha = parts[1]
+        if ws_type == "task":
+            task_id = parts[2]
+            return f"{self._branch_prefix}spec/{blob_sha}/task/{task_id}"
+        if ws_type == "verification":
+            return f"{self._branch_prefix}spec/{blob_sha}/verifier"
+        if ws_type == "delivery":
+            return f"{self._branch_prefix}spec/{blob_sha}/delivery"
+        raise ValueError(f"Unknown workspace type: {ws_type}")
 
     def _fetch_branch(self, branch: str) -> None:
         self._git(

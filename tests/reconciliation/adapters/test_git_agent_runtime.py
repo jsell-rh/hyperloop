@@ -10,6 +10,9 @@ from hyperloop.reconciliation.models.poll_result import (
     AgentVerdict,
     PollResult,
 )
+from hyperloop.reconciliation.models.task_briefing import TaskBriefing
+
+from tests.reconciliation.fakes.fake_agent_executor import FakeAgentExecutor
 
 
 def _git(
@@ -54,8 +57,16 @@ TASK_BRANCH = f"{BRANCH_PREFIX}spec/{BLOB_SHA}/task/5"
 VERIFIER_BRANCH = f"{BRANCH_PREFIX}spec/{BLOB_SHA}/verifier"
 
 
-def _make_runtime(repo_path: Path) -> GitAgentRuntime:
-    return GitAgentRuntime(repo_path, branch_prefix=BRANCH_PREFIX, remote="origin")
+def _make_runtime(
+    repo_path: Path,
+    executor: FakeAgentExecutor | None = None,
+) -> GitAgentRuntime:
+    return GitAgentRuntime(
+        repo_path,
+        branch_prefix=BRANCH_PREFIX,
+        executor=executor or FakeAgentExecutor(),
+        remote="origin",
+    )
 
 
 class TestPollRunningTask:
@@ -426,7 +437,9 @@ class TestCustomBranchPrefix:
         _create_signal_commit(local, branch, "Done\n\nTask-Status: Complete")
         _push_branch(local, branch)
 
-        runtime = GitAgentRuntime(local, branch_prefix=prefix, remote="origin")
+        runtime = GitAgentRuntime(
+            local, branch_prefix=prefix, executor=FakeAgentExecutor(), remote="origin"
+        )
         result = runtime.poll(AgentHandle(id=branch))
 
         assert result.status == AgentStatus.COMPLETE
@@ -442,7 +455,9 @@ class TestCustomBranchPrefix:
         _create_work_commit(local, branch, "Work")
         _push_branch(local, branch)
 
-        runtime = GitAgentRuntime(local, branch_prefix=prefix, remote="origin")
+        runtime = GitAgentRuntime(
+            local, branch_prefix=prefix, executor=FakeAgentExecutor(), remote="origin"
+        )
         orphans = runtime.detect_orphans()
 
         orphan_ids = {h.id for h in orphans}
@@ -457,10 +472,121 @@ class TestCustomBranchPrefix:
         _create_work_commit(local, branch, "Work")
         _push_branch(local, branch)
 
-        runtime = GitAgentRuntime(local, branch_prefix="other/", remote="origin")
+        runtime = GitAgentRuntime(
+            local,
+            branch_prefix="other/",
+            executor=FakeAgentExecutor(),
+            remote="origin",
+        )
         orphans = runtime.detect_orphans()
 
         assert orphans == []
+
+
+class TestLaunchTask:
+    def test_returns_handle_with_branch_as_id(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        _create_branch_from(local, TASK_BRANCH, "main")
+
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(local, executor)
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            task_description="Implement auth endpoint",
+            workspace_id=f"task/{BLOB_SHA}/5",
+        )
+
+        handle = runtime.launch_task(briefing)
+
+        assert handle.id == TASK_BRANCH
+
+    def test_delegates_to_executor_with_branch_and_briefing(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        _create_branch_from(local, TASK_BRANCH, "main")
+
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(local, executor)
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            task_description="Implement auth endpoint",
+            workspace_id=f"task/{BLOB_SHA}/5",
+        )
+
+        runtime.launch_task(briefing)
+
+        assert len(executor.started_tasks) == 1
+        branch, received_briefing = executor.started_tasks[0]
+        assert branch == TASK_BRANCH
+        assert received_briefing is briefing
+
+    def test_handle_is_pollable(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        _create_branch_from(local, TASK_BRANCH, "main")
+        _create_work_commit(local, TASK_BRANCH, "Agent work")
+        _push_branch(local, TASK_BRANCH)
+
+        runtime = _make_runtime(local)
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            task_description="Implement auth endpoint",
+            workspace_id=f"task/{BLOB_SHA}/5",
+        )
+
+        handle = runtime.launch_task(briefing)
+        result = runtime.poll(handle)
+
+        assert result.status == AgentStatus.RUNNING
+
+    def test_uses_configured_branch_prefix(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        prefix = "myloop/"
+        branch = f"{prefix}spec/{BLOB_SHA}/task/5"
+        _create_branch_from(local, branch, "main")
+
+        executor = FakeAgentExecutor()
+        runtime = GitAgentRuntime(
+            local, branch_prefix=prefix, executor=executor, remote="origin"
+        )
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            task_description="Implement auth endpoint",
+            workspace_id=f"task/{BLOB_SHA}/5",
+        )
+
+        handle = runtime.launch_task(briefing)
+
+        assert handle.id == branch
+
+    def test_executor_failure_propagates(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        _create_branch_from(local, TASK_BRANCH, "main")
+
+        executor = FakeAgentExecutor()
+        executor.set_start_task_error(RuntimeError("Agent start failed"))
+        runtime = _make_runtime(local, executor)
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            task_description="Implement auth endpoint",
+            workspace_id=f"task/{BLOB_SHA}/5",
+        )
+
+        try:
+            runtime.launch_task(briefing)
+            assert False, "Expected RuntimeError"
+        except RuntimeError as exc:
+            assert "Agent start failed" in str(exc)
 
 
 class TestProtocolConformance:

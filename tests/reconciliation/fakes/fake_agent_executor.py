@@ -12,6 +12,8 @@ class FakeAgentExecutor:
     def __init__(self) -> None:
         self._decomposition_result: list[ProposedTask] = []
         self._decomposition_error: Exception | None = None
+        self._start_task_error: Exception | None = None
+        self._start_verification_error: Exception | None = None
         self._merge_result: bool = True
         self._integration_summary: IntegrationSummary = IntegrationSummary(
             title="Default title", body="Default body"
@@ -42,7 +44,15 @@ class FakeAgentExecutor:
     def set_integration_summary_error(self, error: Exception) -> None:
         self._integration_summary_error = error
 
+    def set_start_task_error(self, error: Exception) -> None:
+        self._start_task_error = error
+
+    def set_start_verification_error(self, error: Exception) -> None:
+        self._start_verification_error = error
+
     def start_task_agent(self, *, branch: str, briefing: TaskBriefing) -> None:
+        if self._start_task_error is not None:
+            raise self._start_task_error
         self.started_tasks.append((branch, briefing))
 
     def start_verification_agent(
@@ -53,6 +63,8 @@ class FakeAgentExecutor:
         spec_path: str,
         spec_blob_sha: str,
     ) -> None:
+        if self._start_verification_error is not None:
+            raise self._start_verification_error
         self.started_verifications.append(
             (branch, spec_content, spec_path, spec_blob_sha)
         )
