@@ -262,6 +262,92 @@ class TestCrashRecovery:
         # write_plan called during recovery + once per cycle
         assert plan_store.write_count >= 2
 
+    def test_orphan_without_matching_task_is_cancelled(
+        self,
+        spec_source: AutoStopSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        orphan_handle = AgentHandle(id="unknown-agent")
+        agent_runtime.set_orphans([orphan_handle])
+
+        reconciler = _make_reconciler(
+            spec_source, plan_store, observer, agent_runtime, workspace_manager
+        )
+        reconciler.run()
+
+        assert agent_runtime.is_cancelled(orphan_handle)
+        assert observer.calls_for("agent_orphan_detected") == []
+
+    def test_mixed_orphans_matching_and_non_matching(
+        self,
+        spec_source: AutoStopSpecSource,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        matching_handle = AgentHandle(id="task-agent")
+        non_matching_handle = AgentHandle(id="stale-agent")
+        agent_runtime.set_orphans([matching_handle, non_matching_handle])
+
+        plan = Plan()
+        sp = plan.add_spec("auth.spec.md", "abc123")
+        task = Task(
+            id=1,
+            spec_path="auth.spec.md",
+            spec_blob_sha="abc123",
+            name="Implement auth",
+            description="Add auth module",
+            status=TaskStatus.IN_PROGRESS,
+            agent_handle=matching_handle,
+        )
+        plan.add_tasks(sp, [task])
+        plan_store = FakePlanStore(plan)
+
+        spec_source.add_spec("auth.spec.md", "abc123")
+        reconciler = _make_reconciler(
+            spec_source, plan_store, observer, agent_runtime, workspace_manager
+        )
+        reconciler.run()
+
+        assert agent_runtime.is_cancelled(matching_handle)
+        assert agent_runtime.is_cancelled(non_matching_handle)
+
+        orphan_calls = observer.calls_for("agent_orphan_detected")
+        assert len(orphan_calls) == 1
+        assert orphan_calls[0]["task_id"] == 1
+
+        recovery_calls = observer.calls_for("crash_recovery_started")
+        assert recovery_calls[0]["orphaned_agent_count"] == 2
+
+    def test_cancel_exception_during_recovery_is_swallowed(
+        self,
+        spec_source: AutoStopSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        orphan_handle = AgentHandle(id="broken-agent")
+
+        class FailingCancelRuntime(FakeAgentRuntime):
+            def cancel(self, handle: AgentHandle) -> None:
+                if handle.id == "broken-agent":
+                    raise RuntimeError("Agent process not found")
+                super().cancel(handle)
+
+        agent_runtime = FailingCancelRuntime()
+        agent_runtime.set_orphans([orphan_handle])
+
+        reconciler = _make_reconciler(
+            spec_source, plan_store, observer, agent_runtime, workspace_manager
+        )
+        reconciler.run()
+
+        started_calls = observer.calls_for("reconciler_started")
+        assert len(started_calls) == 1
+
 
 class TestReconcilerRun:
     def test_emits_reconciler_started_with_spec_count(
