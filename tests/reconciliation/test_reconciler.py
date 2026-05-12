@@ -4672,6 +4672,31 @@ class TestDecompositionFailure:
         assert sp.tasks == []
         assert observer.calls_for("task_created") == []
 
+    def test_multiple_specs_all_receive_failure_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "aaa111")
+        spec_source.add_spec("users.spec.md", "bbb222")
+        agent_runtime.set_decomposition_error(RuntimeError("batch failure"))
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        assert len(plan.spec_plans) == 2
+        for sp in plan.spec_plans:
+            assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+            assert sp.reconciliation_attempts == 1
+            assert sp.tasks == []
+            decomp_events = [
+                e for e in sp.events if e.reason == EventReason.DECOMPOSITION_FAILED
+            ]
+            assert len(decomp_events) == 1
+            assert "batch failure" in decomp_events[0].message
+
     def test_cycle_completes_normally_after_decomposition_failure(
         self,
         reconciler: Reconciler,
