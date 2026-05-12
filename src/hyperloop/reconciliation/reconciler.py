@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from hyperloop.reconciliation.models.cancellation_reason import CancellationReason
 from hyperloop.reconciliation.models.event import Event, EventType
 from hyperloop.reconciliation.models.event_reason import EventReason
+from hyperloop.reconciliation.models.halt_reason import HaltReason
 from hyperloop.reconciliation.models.merge_result import MergeOutcome
 from hyperloop.reconciliation.models.plan import Plan
 from hyperloop.reconciliation.models.poll_result import AgentStatus, AgentVerdict
@@ -37,6 +38,7 @@ class Reconciler:
         max_integration_retries: int = 3,
         max_task_retries: int = 3,
         max_redecompositions: int = 1,
+        cycle_interval_seconds: int = 30,
     ) -> None:
         self._spec_source = spec_source
         self._plan_store = plan_store
@@ -48,7 +50,72 @@ class Reconciler:
         self._max_integration_retries = max_integration_retries
         self._max_task_retries = max_task_retries
         self._max_redecompositions = max_redecompositions
+        self._cycle_interval_seconds = cycle_interval_seconds
         self._cycle: int = 0
+        self._running: bool = False
+
+    def run(self) -> None:
+        self._recover()
+        self._running = True
+
+        plan = self._plan_store.get_plan()
+        spec_count = sum(1 for sp in plan.spec_plans if not sp.superseded)
+        self._observer.reconciler_started(spec_count=spec_count, cycle=self._cycle)
+
+        try:
+            while self._running:
+                self.run_cycle()
+                if self._running:
+                    time.sleep(self._cycle_interval_seconds)
+        except KeyboardInterrupt:
+            pass
+
+        self._observer.reconciler_halted(
+            reason=HaltReason.SHUTDOWN, total_cycles=self._cycle
+        )
+
+    def stop(self) -> None:
+        self._running = False
+
+    def _recover(self) -> None:
+        plan = self._plan_store.get_plan()
+        orphans = self._agent_runtime.detect_orphans()
+
+        if not orphans:
+            return
+
+        self._observer.crash_recovery_started(orphaned_agent_count=len(orphans))
+
+        handle_to_task: dict[str, tuple[int, str]] = {}
+        for sp in plan.spec_plans:
+            for task in sp.tasks:
+                if task.agent_handle is not None:
+                    handle_to_task[task.agent_handle.id] = (task.id, task.spec_path)
+
+        for handle in orphans:
+            if handle.id in handle_to_task:
+                task_id, spec_path = handle_to_task[handle.id]
+                self._observer.agent_orphan_detected(
+                    task_id=task_id, spec_path=spec_path
+                )
+            try:
+                self._agent_runtime.cancel(handle)
+            except Exception:
+                pass
+
+        for sp in plan.spec_plans:
+            if sp.superseded:
+                continue
+            for task in sp.tasks:
+                if task.status == TaskStatus.IN_PROGRESS:
+                    task.status = TaskStatus.BACKLOG
+                    task.agent_handle = None
+            if sp.verification_handle is not None:
+                sp.verification_handle = None
+                if sp.status == SpecPlanStatus.VERIFYING:
+                    sp.status = SpecPlanStatus.RECONCILING
+
+        self._plan_store.write_plan(plan)
 
     def run_cycle(self) -> None:
         self._cycle += 1
