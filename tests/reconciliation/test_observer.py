@@ -3,8 +3,6 @@ from __future__ import annotations
 import inspect
 from typing import get_type_hints
 
-import pytest
-
 from hyperloop.reconciliation.adapters.composite_observer import CompositeObserver
 from hyperloop.reconciliation.adapters.null_probe import NullProbe
 from hyperloop.reconciliation.ports.observer import ChangeType, Observer
@@ -21,7 +19,11 @@ EXPECTED_METHODS: dict[str, dict[str, type]] = {
         "tasks_completed": int,
         "tasks_failed": int,
     },
-    "spec_divergence_detected": {"spec_path": str, "blob_sha": str, "change_type": ChangeType},
+    "spec_divergence_detected": {
+        "spec_path": str,
+        "blob_sha": str,
+        "change_type": ChangeType,
+    },
     "spec_superseded": {"spec_path": str, "old_sha": str, "new_sha": str},
     "decomposition_started": {"specs_count": int, "cycle": int},
     "decomposition_completed": {
@@ -45,7 +47,12 @@ EXPECTED_METHODS: dict[str, dict[str, type]] = {
         "retry_count": int,
         "cycle": int,
     },
-    "task_completed": {"task_id": int, "spec_path": str, "spec_blob_sha": str, "cycle": int},
+    "task_completed": {
+        "task_id": int,
+        "spec_path": str,
+        "spec_blob_sha": str,
+        "cycle": int,
+    },
     "task_failed": {
         "task_id": int,
         "spec_path": str,
@@ -70,7 +77,11 @@ EXPECTED_METHODS: dict[str, dict[str, type]] = {
     "task_merge_completed": {"task_id": int, "spec_blob_sha": str},
     "task_merge_conflict": {"task_id": int, "spec_blob_sha": str},
     "merge_resolution_launched": {"task_id": int, "spec_blob_sha": str},
-    "merge_resolution_completed": {"task_id": int, "spec_blob_sha": str, "success": bool},
+    "merge_resolution_completed": {
+        "task_id": int,
+        "spec_blob_sha": str,
+        "success": bool,
+    },
     "trunk_integration_started": {
         "spec_path": str,
         "spec_blob_sha": str,
@@ -101,7 +112,12 @@ EXPECTED_METHODS: dict[str, dict[str, type]] = {
         "total_tasks": int,
         "cycle": int,
     },
-    "spec_failed": {"spec_path": str, "spec_blob_sha": str, "reason": str, "cycle": int},
+    "spec_failed": {
+        "spec_path": str,
+        "spec_blob_sha": str,
+        "reason": str,
+        "cycle": int,
+    },
     "redecomposition_triggered": {
         "spec_path": str,
         "spec_blob_sha": str,
@@ -133,7 +149,9 @@ def _build_kwargs(params: dict[str, type]) -> dict[str, object]:
 class TestObserverProtocol:
     def test_all_expected_methods_exist(self) -> None:
         for method_name in EXPECTED_METHODS:
-            assert hasattr(Observer, method_name), f"Observer missing method: {method_name}"
+            assert hasattr(Observer, method_name), (
+                f"Observer missing method: {method_name}"
+            )
 
     def test_no_extra_methods(self) -> None:
         protocol_methods = {
@@ -164,9 +182,7 @@ class TestObserverProtocol:
     def test_all_methods_return_none(self) -> None:
         for method_name in EXPECTED_METHODS:
             hints = get_type_hints(getattr(Observer, method_name))
-            assert hints.get("return") is type(None), (
-                f"{method_name} must return None"
-            )
+            assert hints.get("return") is type(None), f"{method_name} must return None"
 
 
 class TestChangeType:
@@ -228,14 +244,24 @@ class TestCompositeObserver:
         composite = CompositeObserver([r1, r2])
 
         composite.task_dispatched(
-            task_id=1, spec_path="a.spec.md", spec_blob_sha="abc", retry_count=0, cycle=1
+            task_id=1,
+            spec_path="a.spec.md",
+            spec_blob_sha="abc",
+            retry_count=0,
+            cycle=1,
         )
 
         assert len(r1.calls) == 1
         assert len(r2.calls) == 1
         assert r1.calls[0] == (
             "task_dispatched",
-            {"task_id": 1, "spec_path": "a.spec.md", "spec_blob_sha": "abc", "retry_count": 0, "cycle": 1},
+            {
+                "task_id": 1,
+                "spec_path": "a.spec.md",
+                "spec_blob_sha": "abc",
+                "retry_count": 0,
+                "cycle": 1,
+            },
         )
 
     def test_adapter_failure_does_not_affect_others(self) -> None:
@@ -246,7 +272,10 @@ class TestCompositeObserver:
         composite.reconciler_started(spec_count=3, cycle=1)
 
         assert len(recording.calls) == 1
-        assert recording.calls[0] == ("reconciler_started", {"spec_count": 3, "cycle": 1})
+        assert recording.calls[0] == (
+            "reconciler_started",
+            {"spec_count": 3, "cycle": 1},
+        )
 
     def test_all_adapter_failures_suppressed(self) -> None:
         f1 = _FailingObserver()

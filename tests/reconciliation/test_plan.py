@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 import pytest
 
 from hyperloop.reconciliation.models import (
-    Event,
     EventType,
     Plan,
     SpecPlan,
@@ -192,8 +191,20 @@ class TestMonotonicTaskIds:
         plan.add_tasks(
             sp_a,
             [
-                Task(id=id1, spec_path=sp_a.path, spec_blob_sha=sp_a.blob_sha, name="T1", description="D1"),
-                Task(id=id2, spec_path=sp_a.path, spec_blob_sha=sp_a.blob_sha, name="T2", description="D2"),
+                Task(
+                    id=id1,
+                    spec_path=sp_a.path,
+                    spec_blob_sha=sp_a.blob_sha,
+                    name="T1",
+                    description="D1",
+                ),
+                Task(
+                    id=id2,
+                    spec_path=sp_a.path,
+                    spec_blob_sha=sp_a.blob_sha,
+                    name="T2",
+                    description="D2",
+                ),
             ],
         )
 
@@ -202,8 +213,20 @@ class TestMonotonicTaskIds:
         plan.add_tasks(
             sp_b,
             [
-                Task(id=id3, spec_path=sp_b.path, spec_blob_sha=sp_b.blob_sha, name="T3", description="D3"),
-                Task(id=id4, spec_path=sp_b.path, spec_blob_sha=sp_b.blob_sha, name="T4", description="D4"),
+                Task(
+                    id=id3,
+                    spec_path=sp_b.path,
+                    spec_blob_sha=sp_b.blob_sha,
+                    name="T3",
+                    description="D3",
+                ),
+                Task(
+                    id=id4,
+                    spec_path=sp_b.path,
+                    spec_blob_sha=sp_b.blob_sha,
+                    name="T4",
+                    description="D4",
+                ),
             ],
         )
 
@@ -225,8 +248,20 @@ class TestUnblockedTaskSelection:
         plan.add_tasks(
             sp,
             [
-                Task(id=id1, spec_path=sp.path, spec_blob_sha=sp.blob_sha, name="T1", description="D1"),
-                Task(id=id2, spec_path=sp.path, spec_blob_sha=sp.blob_sha, name="T2", description="D2"),
+                Task(
+                    id=id1,
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    name="T1",
+                    description="D1",
+                ),
+                Task(
+                    id=id2,
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    name="T2",
+                    description="D2",
+                ),
                 Task(
                     id=id3,
                     spec_path=sp.path,
@@ -247,9 +282,27 @@ class TestUnblockedTaskSelection:
         plan.add_tasks(
             sp,
             [
-                Task(id=ids[0], spec_path=sp.path, spec_blob_sha=sp.blob_sha, name="T1", description="D1"),
-                Task(id=ids[1], spec_path=sp.path, spec_blob_sha=sp.blob_sha, name="T2", description="D2"),
-                Task(id=ids[2], spec_path=sp.path, spec_blob_sha=sp.blob_sha, name="T3", description="D3"),
+                Task(
+                    id=ids[0],
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    name="T1",
+                    description="D1",
+                ),
+                Task(
+                    id=ids[1],
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    name="T2",
+                    description="D2",
+                ),
+                Task(
+                    id=ids[2],
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    name="T3",
+                    description="D3",
+                ),
             ],
         )
         unblocked = plan.get_unblocked_tasks()
@@ -280,7 +333,15 @@ class TestUnblockedTaskSelection:
         task_id = plan.next_task_id()
         plan.add_tasks(
             sp,
-            [Task(id=task_id, spec_path=sp.path, spec_blob_sha=sp.blob_sha, name="T1", description="D1")],
+            [
+                Task(
+                    id=task_id,
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    name="T1",
+                    description="D1",
+                )
+            ],
         )
         sp.superseded = True
 
@@ -297,7 +358,15 @@ class TestUnblockedTaskSelection:
         id_a = plan.next_task_id()
         plan.add_tasks(
             sp_a,
-            [Task(id=id_a, spec_path=sp_a.path, spec_blob_sha=sp_a.blob_sha, name="T1", description="D1")],
+            [
+                Task(
+                    id=id_a,
+                    spec_path=sp_a.path,
+                    spec_blob_sha=sp_a.blob_sha,
+                    name="T1",
+                    description="D1",
+                )
+            ],
         )
 
         id_b = plan.next_task_id()
@@ -331,7 +400,15 @@ class TestUnblockedTaskSelection:
         task_id = plan.next_task_id()
         plan.add_tasks(
             sp,
-            [Task(id=task_id, spec_path=sp.path, spec_blob_sha=sp.blob_sha, name="T1", description="D1")],
+            [
+                Task(
+                    id=task_id,
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    name="T1",
+                    description="D1",
+                )
+            ],
         )
         sp.tasks[0].status = TaskStatus.IN_PROGRESS
 
@@ -417,7 +494,14 @@ class TestTaskStatus:
 
     def test_invalid_status_rejected(self) -> None:
         with pytest.raises(ValueError):
-            Task(id=1, spec_path="a", spec_blob_sha="b", name="T", description="D", status="invalid")
+            Task(
+                id=1,
+                spec_path="a",
+                spec_blob_sha="b",
+                name="T",
+                description="D",
+                status="invalid",
+            )
 
 
 class TestSpecPlanStatus:
@@ -468,7 +552,13 @@ class TestSerialization:
         plan.add_tasks(
             sp,
             [
-                Task(id=id1, spec_path=sp.path, spec_blob_sha=sp.blob_sha, name="T1", description="D1"),
+                Task(
+                    id=id1,
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    name="T1",
+                    description="D1",
+                ),
                 Task(
                     id=id2,
                     spec_path=sp.path,
