@@ -13,7 +13,7 @@ All branches created by the reconciler SHALL use the `hyperloop/` prefix to avoi
 | Branch | Purpose |
 |---|---|
 | `hyperloop/plan` | Plan state persistence |
-| `hyperloop/spec/{blob_sha}` | Spec delivery branch (collects completed task work) |
+| `hyperloop/spec/{blob_sha}/delivery` | Spec delivery branch (collects completed task work) |
 | `hyperloop/spec/{blob_sha}/task/{task_id}` | Task work branch (individual unit of work) |
 | `hyperloop/spec/{blob_sha}/verifier` | Verification agent workspace |
 
@@ -22,7 +22,7 @@ All branches created by the reconciler SHALL use the `hyperloop/` prefix to avoi
 - GIVEN a spec "auth.spec.md" at blob SHA abc123 with tasks 5 and 6
 - WHEN the reconciler creates workspaces
 - THEN the following branches are created:
-  - `hyperloop/spec/abc123` (delivery branch)
+  - `hyperloop/spec/abc123/delivery` (delivery branch)
   - `hyperloop/spec/abc123/task/5` (task 5 work)
   - `hyperloop/spec/abc123/task/6` (task 6 work)
 
@@ -105,14 +105,14 @@ The git WorkspaceManager adapter SHALL use a dedicated branch per spec version a
 
 - GIVEN a spec entering Reconciling at blob SHA abc123
 - WHEN create_delivery_workspace is called
-- THEN a branch `hyperloop/spec/abc123` is created from the current trunk HEAD
+- THEN a branch `hyperloop/spec/abc123/delivery` is created from the current trunk HEAD
 - AND if the branch already exists, no action is taken (idempotent)
 
 #### Scenario: Delivery branch is the PR vehicle
 
 - GIVEN all tasks for abc123 are complete and verified
 - WHEN integrate is called
-- THEN a pull request is opened from `hyperloop/spec/abc123` to trunk
+- THEN a pull request is opened from `hyperloop/spec/abc123/delivery` to trunk
 - AND the PR title and body reference the spec path and blob SHA
 
 ### Requirement: Task Workspace
@@ -123,7 +123,7 @@ The git WorkspaceManager adapter SHALL create a branch per task, branched from t
 
 - GIVEN task 5 for spec at blob SHA abc123
 - WHEN create_task_workspace is called
-- THEN a branch `hyperloop/spec/abc123/task/5` is created from `hyperloop/spec/abc123`
+- THEN a branch `hyperloop/spec/abc123/task/5` is created from `hyperloop/spec/abc123/delivery`
 
 #### Scenario: Task briefing as empty commit
 
@@ -137,7 +137,7 @@ The git WorkspaceManager adapter SHALL create a branch per task, branched from t
 
 - GIVEN task 5 has completed on branch `hyperloop/spec/abc123/task/5`
 - WHEN merge_task is called
-- THEN the task branch is merged into `hyperloop/spec/abc123`
+- THEN the task branch is merged into `hyperloop/spec/abc123/delivery`
 - AND on success, the task branch is deleted (cleanup)
 - AND on merge conflict, failure is returned for merge resolution handling
 
@@ -149,7 +149,7 @@ The git WorkspaceManager adapter SHALL create a verification branch from the spe
 
 - GIVEN a spec at blob SHA abc123 entering Verifying state
 - WHEN the verification workspace is created
-- THEN a branch `hyperloop/spec/abc123/verifier` is created from `hyperloop/spec/abc123`
+- THEN a branch `hyperloop/spec/abc123/verifier` is created from `hyperloop/spec/abc123/delivery`
 - AND if the branch already exists, it is deleted and recreated (fresh verification)
 
 #### Scenario: Cleanup after verification
@@ -297,7 +297,7 @@ The git WorkspaceManager adapter SHALL integrate verified spec work to trunk by 
 
 - GIVEN spec "auth.spec.md" at SHA abc123 has passed verification
 - WHEN integrate is called
-- THEN a pull request is opened from `hyperloop/spec/abc123` to trunk
+- THEN a pull request is opened from `hyperloop/spec/abc123/delivery` to trunk
 - AND the PR identifies the spec and blob SHA
 - AND the PR URL is returned as the integration identifier
 
@@ -316,7 +316,7 @@ When a spec is superseded or deleted, the git WorkspaceManager adapter SHALL del
 
 - GIVEN spec at blob SHA abc123 is superseded by def456
 - WHEN cleanup is called for abc123
-- THEN branches `hyperloop/spec/abc123`, `hyperloop/spec/abc123/task/*`, and `hyperloop/spec/abc123/verifier` are deleted
+- THEN branches `hyperloop/spec/abc123/delivery`, `hyperloop/spec/abc123/task/*`, and `hyperloop/spec/abc123/verifier` are deleted
 - AND both local and remote refs are cleaned up
 
 #### Scenario: Plan branch is never cleaned up
