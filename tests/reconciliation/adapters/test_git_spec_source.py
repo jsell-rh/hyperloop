@@ -3,8 +3,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from hyperloop.reconciliation.adapters.git_spec_source import GitSpecSource
 from hyperloop.reconciliation.models.spec_entry import SpecEntry
 
@@ -29,27 +27,6 @@ def _write_and_commit(repo: Path, path: str, content: str, message: str) -> str:
     _git(repo, "add", path)
     _git(repo, "commit", "-m", message)
     return _git(repo, "rev-parse", "HEAD").stdout.strip()
-
-
-@pytest.fixture()
-def git_env(tmp_path: Path) -> tuple[Path, Path]:
-    remote = tmp_path / "remote.git"
-    subprocess.run(
-        ["git", "init", "--bare", str(remote)], check=True, capture_output=True
-    )
-
-    local = tmp_path / "local"
-    subprocess.run(
-        ["git", "clone", str(remote), str(local)], check=True, capture_output=True
-    )
-
-    _git(local, "config", "user.name", "Test User")
-    _git(local, "config", "user.email", "test@example.com")
-
-    _git(local, "commit", "--allow-empty", "-m", "Initial commit")
-    _git(local, "push", "origin", "main")
-
-    return local, remote
 
 
 def _make_source(repo_path: Path) -> GitSpecSource:

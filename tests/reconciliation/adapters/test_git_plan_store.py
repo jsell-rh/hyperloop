@@ -4,8 +4,6 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
-
 from hyperloop.reconciliation.adapters.git_plan_store import GitPlanStore
 from hyperloop.reconciliation.models import (
     EventType,
@@ -38,27 +36,6 @@ def _git(
         input=input,
         check=True,
     )
-
-
-@pytest.fixture()
-def git_env(tmp_path: Path) -> tuple[Path, Path]:
-    remote = tmp_path / "remote.git"
-    subprocess.run(
-        ["git", "init", "--bare", str(remote)], check=True, capture_output=True
-    )
-
-    local = tmp_path / "local"
-    subprocess.run(
-        ["git", "clone", str(remote), str(local)], check=True, capture_output=True
-    )
-
-    _git(local, "config", "user.name", "Test User")
-    _git(local, "config", "user.email", "test@example.com")
-
-    _git(local, "commit", "--allow-empty", "-m", "Initial commit")
-    _git(local, "push", "origin", "main")
-
-    return local, remote
 
 
 def _utc_now() -> datetime:
