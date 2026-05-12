@@ -110,6 +110,7 @@ class TestGetSpecs:
         assert "BLOB SHA" in header
         assert "STATUS" in header
         assert "TASKS" in header
+        assert "AGE" in header
 
     def test_displays_all_non_superseded_specs(self) -> None:
         plan = _build_plan_with_specs()

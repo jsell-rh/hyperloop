@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
-import sys
+import shutil
 from collections import Counter
-from enum import StrEnum
 
 import click
 
 from hyperloop.cli.formatters.table import format_table
 from hyperloop.cli.formatters.time import format_relative_time
+from hyperloop.cli.output_format import OutputFormat
+from hyperloop.cli.serializers import (
+    spec_plan_to_dict,
+    task_to_dict,
+)
 from hyperloop.reconciliation.models.event import Event
 from hyperloop.reconciliation.models.plan import Plan
 from hyperloop.reconciliation.models.spec_plan import SpecPlan
@@ -16,8 +20,8 @@ from hyperloop.reconciliation.models.task import Task, TaskStatus
 from hyperloop.reconciliation.ports.plan_store import PlanStore
 
 
-class OutputFormat(StrEnum):
-    JSON = "json"
+def _terminal_width() -> int:
+    return shutil.get_terminal_size(fallback=(80, 24)).columns
 
 
 @click.group()
@@ -27,17 +31,22 @@ def describe() -> None:
 
 @describe.command()
 @click.argument("path")
-@click.option("--output", "output_format", type=click.Choice(["json"]), default=None)
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice([fmt.value for fmt in OutputFormat if fmt != OutputFormat.TABLE]),
+    default=None,
+)
 @click.pass_obj
 def spec(store: PlanStore, path: str, output_format: str | None) -> None:
     plan = store.get_plan()
     target = _find_spec(plan, path)
     if target is None:
-        click.echo(f"spec {path} not found", err=True)
-        sys.exit(1)
+        raise click.ClickException(f"spec {path} not found")
 
     if output_format == OutputFormat.JSON:
-        click.echo(json.dumps(_spec_to_full_dict(target), indent=2, default=str))
+        data = spec_plan_to_dict(target, include_events=True)
+        click.echo(json.dumps(data, indent=2, default=str))
         return
 
     _render_spec(target)
@@ -45,17 +54,22 @@ def spec(store: PlanStore, path: str, output_format: str | None) -> None:
 
 @describe.command()
 @click.argument("task_id", type=int)
-@click.option("--output", "output_format", type=click.Choice(["json"]), default=None)
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice([fmt.value for fmt in OutputFormat if fmt != OutputFormat.TABLE]),
+    default=None,
+)
 @click.pass_obj
 def task(store: PlanStore, task_id: int, output_format: str | None) -> None:
     plan = store.get_plan()
     target = _find_task(plan, task_id)
     if target is None:
-        click.echo(f"task {task_id} not found", err=True)
-        sys.exit(1)
+        raise click.ClickException(f"task {task_id} not found")
 
     if output_format == OutputFormat.JSON:
-        click.echo(json.dumps(_task_to_full_dict(target), indent=2, default=str))
+        data = task_to_dict(target, include_events=True)
+        click.echo(json.dumps(data, indent=2, default=str))
         return
 
     _render_task(target)
@@ -97,8 +111,10 @@ def _render_spec(sp: SpecPlan) -> None:
 
     click.echo("Tasks:")
     headers = ["ID", "NAME", "STATUS", "RETRIES"]
-    rows = [[str(t.id), t.name, t.status.value, str(len(t.events))] for t in sp.tasks]
-    click.echo(_indent(format_table(headers, rows)), nl=False)
+    rows = [[str(t.id), t.name, t.status.value, str(t.retry_count)] for t in sp.tasks]
+    click.echo(
+        _indent(format_table(headers, rows, max_width=_terminal_width())), nl=False
+    )
     click.echo()
 
     _render_events(sp.events)
@@ -132,45 +148,11 @@ def _render_events(events: list[Event]) -> None:
         ]
         for event in events
     ]
-    click.echo(_indent(format_table(headers, rows)), nl=False)
+    click.echo(
+        _indent(format_table(headers, rows, max_width=_terminal_width())), nl=False
+    )
 
 
 def _indent(text: str, spaces: int = 2) -> str:
     prefix = " " * spaces
     return "\n".join(prefix + line for line in text.split("\n"))
-
-
-def _spec_to_full_dict(sp: SpecPlan) -> dict[str, object]:
-    return {
-        "path": sp.path,
-        "blob_sha": sp.blob_sha,
-        "status": sp.status.value,
-        "superseded": sp.superseded,
-        "reconciliation_attempts": sp.reconciliation_attempts,
-        "has_redecomposed": sp.has_redecomposed,
-        "tasks": [_task_to_full_dict(t) for t in sp.tasks],
-        "events": [_event_to_dict(e) for e in sp.events],
-    }
-
-
-def _task_to_full_dict(t: Task) -> dict[str, object]:
-    return {
-        "id": t.id,
-        "name": t.name,
-        "spec_path": t.spec_path,
-        "spec_blob_sha": t.spec_blob_sha,
-        "status": t.status.value,
-        "depends_on": t.depends_on,
-        "events": [_event_to_dict(e) for e in t.events],
-    }
-
-
-def _event_to_dict(event: Event) -> dict[str, object]:
-    return {
-        "type": event.type.value,
-        "reason": event.reason,
-        "count": event.count,
-        "first_timestamp": event.first_timestamp.isoformat(),
-        "last_timestamp": event.last_timestamp.isoformat(),
-        "message": event.message,
-    }

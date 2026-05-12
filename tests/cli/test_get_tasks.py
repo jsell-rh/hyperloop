@@ -96,6 +96,8 @@ class TestGetTasks:
         assert "NAME" in header
         assert "SPEC" in header
         assert "STATUS" in header
+        assert "RETRIES" in header
+        assert "AGE" in header
 
     def test_displays_all_tasks(self) -> None:
         plan = _build_plan_with_tasks()

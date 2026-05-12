@@ -1,22 +1,29 @@
 from __future__ import annotations
 
 import json
-from enum import StrEnum
+import shutil
 
 import click
 
 from hyperloop.cli.formatters.table import format_table
 from hyperloop.cli.formatters.time import format_relative_time
+from hyperloop.cli.output_format import OutputFormat
+from hyperloop.cli.serializers import (
+    completed_count,
+    event_to_dict,
+    spec_display_status,
+    spec_plan_to_dict,
+    task_to_dict,
+)
 from hyperloop.reconciliation.models.event import Event
 from hyperloop.reconciliation.models.plan import Plan
 from hyperloop.reconciliation.models.spec_plan import SpecPlan
-from hyperloop.reconciliation.models.task import Task, TaskStatus
+from hyperloop.reconciliation.models.task import Task
 from hyperloop.reconciliation.ports.plan_store import PlanStore
 
 
-class OutputFormat(StrEnum):
-    TABLE = "table"
-    JSON = "json"
+def _terminal_width() -> int:
+    return shutil.get_terminal_size(fallback=(80, 24)).columns
 
 
 @click.group()
@@ -26,7 +33,12 @@ def get() -> None:
 
 @get.command()
 @click.option("--all", "show_all", is_flag=True, help="Include superseded specs")
-@click.option("--output", "output_format", type=click.Choice(["json"]), default=None)
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice([fmt.value for fmt in OutputFormat if fmt != OutputFormat.TABLE]),
+    default=None,
+)
 @click.pass_obj
 def specs(store: PlanStore, show_all: bool, output_format: str | None) -> None:
     plan = store.get_plan()
@@ -35,62 +47,48 @@ def specs(store: PlanStore, show_all: bool, output_format: str | None) -> None:
         spec_plans = [sp for sp in spec_plans if not sp.superseded]
 
     if output_format == OutputFormat.JSON:
-        data = [_spec_plan_to_dict(sp) for sp in spec_plans]
+        data = [spec_plan_to_dict(sp) for sp in spec_plans]
         click.echo(json.dumps(data, indent=2, default=str))
         return
 
-    headers = ["PATH", "BLOB SHA", "STATUS", "TASKS"]
+    headers = ["PATH", "BLOB SHA", "STATUS", "TASKS", "AGE"]
     rows = [_spec_plan_to_row(sp) for sp in spec_plans]
-    click.echo(format_table(headers, rows), nl=False)
-
-
-def _completed_count(sp: SpecPlan) -> int:
-    return sum(1 for t in sp.tasks if t.status == TaskStatus.COMPLETE)
-
-
-def _spec_display_status(sp: SpecPlan) -> str:
-    if sp.superseded:
-        return "Superseded"
-    return sp.status.value
+    click.echo(format_table(headers, rows, max_width=_terminal_width()), nl=False)
 
 
 def _spec_plan_to_row(sp: SpecPlan) -> list[str]:
-    completed = _completed_count(sp)
+    completed = completed_count(sp)
     total = len(sp.tasks)
     return [
         sp.path,
         sp.blob_sha,
-        _spec_display_status(sp),
+        spec_display_status(sp),
         f"{completed}/{total}",
+        format_relative_time(sp.created_at),
     ]
-
-
-def _spec_plan_to_dict(sp: SpecPlan) -> dict[str, object]:
-    return {
-        "path": sp.path,
-        "blob_sha": sp.blob_sha,
-        "status": _spec_display_status(sp),
-        "superseded": sp.superseded,
-        "tasks": [_task_to_dict(t) for t in sp.tasks],
-    }
 
 
 @get.command()
 @click.option("--spec", "spec_filter", default=None, help="Filter by spec path")
-@click.option("--output", "output_format", type=click.Choice(["json"]), default=None)
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice([fmt.value for fmt in OutputFormat if fmt != OutputFormat.TABLE]),
+    default=None,
+)
 @click.pass_obj
 def tasks(store: PlanStore, spec_filter: str | None, output_format: str | None) -> None:
     plan = store.get_plan()
     all_tasks = _collect_tasks(plan, spec_filter)
 
     if output_format == OutputFormat.JSON:
-        data = [_task_to_dict(t) for t in all_tasks]
+        data = [task_to_dict(t) for t in all_tasks]
         click.echo(json.dumps(data, indent=2, default=str))
         return
 
-    headers = ["ID", "NAME", "SPEC", "STATUS"]
+    headers = ["ID", "NAME", "SPEC", "STATUS", "RETRIES", "AGE"]
     rows = [_task_to_row(t) for t in all_tasks]
-    click.echo(format_table(headers, rows), nl=False)
+    click.echo(format_table(headers, rows, max_width=_terminal_width()), nl=False)
 
 
 def _collect_tasks(plan: Plan, spec_filter: str | None) -> list[Task]:
@@ -108,22 +106,18 @@ def _task_to_row(task: Task) -> list[str]:
         task.name,
         task.spec_path,
         task.status.value,
+        str(task.retry_count),
+        format_relative_time(task.created_at),
     ]
 
 
-def _task_to_dict(task: Task) -> dict[str, object]:
-    return {
-        "id": task.id,
-        "name": task.name,
-        "spec_path": task.spec_path,
-        "spec_blob_sha": task.spec_blob_sha,
-        "status": task.status.value,
-        "depends_on": task.depends_on,
-    }
-
-
 @get.command()
-@click.option("--output", "output_format", type=click.Choice(["json"]), default=None)
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice([fmt.value for fmt in OutputFormat if fmt != OutputFormat.TABLE]),
+    default=None,
+)
 @click.pass_obj
 def events(store: PlanStore, output_format: str | None) -> None:
     plan = store.get_plan()
@@ -131,13 +125,13 @@ def events(store: PlanStore, output_format: str | None) -> None:
     collected.sort(key=lambda e: e[1].last_timestamp, reverse=True)
 
     if output_format == OutputFormat.JSON:
-        data = [_event_to_dict(obj_ref, event) for obj_ref, event in collected]
+        data = [event_to_dict(event, obj_ref=obj_ref) for obj_ref, event in collected]
         click.echo(json.dumps(data, indent=2, default=str))
         return
 
     headers = ["LAST SEEN", "TYPE", "REASON", "OBJECT", "MESSAGE"]
     rows = [_event_to_row(obj_ref, event) for obj_ref, event in collected]
-    click.echo(format_table(headers, rows), nl=False)
+    click.echo(format_table(headers, rows, max_width=_terminal_width()), nl=False)
 
 
 def _collect_all_events(plan: Plan) -> list[tuple[str, Event]]:
@@ -163,15 +157,3 @@ def _event_to_row(obj_ref: str, event: Event) -> list[str]:
         obj_ref,
         event.message,
     ]
-
-
-def _event_to_dict(obj_ref: str, event: Event) -> dict[str, object]:
-    return {
-        "type": event.type.value,
-        "reason": event.reason,
-        "count": event.count,
-        "first_timestamp": event.first_timestamp.isoformat(),
-        "last_timestamp": event.last_timestamp.isoformat(),
-        "object": obj_ref,
-        "message": event.message,
-    }
