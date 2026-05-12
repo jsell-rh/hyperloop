@@ -27,6 +27,7 @@ class Configuration(BaseSettings):
     observer_adapters: list[str] = []
 
     plan_branch: str = "hyperloop/plan"
+    plan_file: str = "plan.json"
     trunk_branch: str = "main"
     branch_prefix: str = "hyperloop/"
 

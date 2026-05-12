@@ -11,8 +11,6 @@ from hyperloop.cli.commands.run import run
 from hyperloop.reconciliation.adapters.git_plan_store import GitPlanStore
 from hyperloop.reconciliation.models.configuration import Configuration
 
-PLAN_FILE = "plan.json"
-
 
 def _find_git_root() -> Path:
     result = subprocess.run(
@@ -37,7 +35,7 @@ def cli(ctx: click.Context) -> None:
         ctx.obj = GitPlanStore(
             repo_path=repo_path,
             plan_branch=config.plan_branch,
-            plan_file=PLAN_FILE,
+            plan_file=config.plan_file,
         )
     except click.ClickException:
         raise
