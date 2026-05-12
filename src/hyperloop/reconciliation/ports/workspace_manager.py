@@ -1,0 +1,23 @@
+from __future__ import annotations
+
+from typing import Protocol
+
+from hyperloop.reconciliation.models.merge_result import MergeResult
+
+
+class WorkspaceManager(Protocol):
+    def create_delivery_workspace(self, blob_sha: str) -> str: ...
+
+    def create_task_workspace(
+        self, blob_sha: str, task_id: int, briefing: str
+    ) -> str: ...
+
+    def create_verification_workspace(self, blob_sha: str) -> str: ...
+
+    def merge_task(self, blob_sha: str, task_id: int) -> MergeResult: ...
+
+    def integrate(self, blob_sha: str, spec_path: str) -> str: ...
+
+    def cleanup(self, blob_sha: str) -> None: ...
+
+    def cleanup_verification(self, blob_sha: str) -> None: ...
