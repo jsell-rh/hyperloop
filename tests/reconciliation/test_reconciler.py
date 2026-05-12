@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import pytest
 
-from hyperloop.reconciliation.models import SpecPlanStatus
+from hyperloop.reconciliation.models import SpecPlanStatus, Task, TaskStatus
+from hyperloop.reconciliation.models.agent_handle import AgentHandle
+from hyperloop.reconciliation.models.spec_plan import SpecPlan
 from hyperloop.reconciliation.ports.observer import ChangeType
 from hyperloop.reconciliation.reconciler import Reconciler
+from tests.reconciliation.fakes.fake_agent_runtime import FakeAgentRuntime
 from tests.reconciliation.fakes.fake_observer import FakeObserver
 from tests.reconciliation.fakes.fake_plan_store import FakePlanStore
 from tests.reconciliation.fakes.fake_spec_source import FakeSpecSource
+from tests.reconciliation.fakes.fake_workspace_manager import FakeWorkspaceManager
 
 
 @pytest.fixture()
@@ -26,15 +30,29 @@ def observer() -> FakeObserver:
 
 
 @pytest.fixture()
+def agent_runtime() -> FakeAgentRuntime:
+    return FakeAgentRuntime()
+
+
+@pytest.fixture()
+def workspace_manager() -> FakeWorkspaceManager:
+    return FakeWorkspaceManager()
+
+
+@pytest.fixture()
 def reconciler(
     spec_source: FakeSpecSource,
     plan_store: FakePlanStore,
     observer: FakeObserver,
+    agent_runtime: FakeAgentRuntime,
+    workspace_manager: FakeWorkspaceManager,
 ) -> Reconciler:
     return Reconciler(
         spec_source=spec_source,
         plan_store=plan_store,
         observer=observer,
+        agent_runtime=agent_runtime,
+        workspace_manager=workspace_manager,
     )
 
 
@@ -317,3 +335,232 @@ class TestCycleLifecycle:
         synced = observer.calls_for("plan_synced")
         assert len(synced) == 1
         assert synced[0]["cycle"] == 1
+
+
+def _build_in_progress_spec_plan(
+    plan_store: FakePlanStore,
+    workspace_manager: FakeWorkspaceManager,
+    path: str = "auth.spec.md",
+    blob_sha: str = "abc123",
+) -> SpecPlan:
+    plan = plan_store.get_plan()
+    sp = plan.add_spec(path, blob_sha)
+    sp.status = SpecPlanStatus.RECONCILING
+    workspace_manager.create_delivery_workspace(blob_sha)
+
+    handle_a = AgentHandle(id="agent-task-1")
+    handle_b = AgentHandle(id="agent-task-2")
+    id1 = plan.next_task_id()
+    id2 = plan.next_task_id()
+    plan.add_tasks(
+        sp,
+        [
+            Task(
+                id=id1,
+                spec_path=path,
+                spec_blob_sha=blob_sha,
+                name="T1",
+                description="D1",
+                status=TaskStatus.IN_PROGRESS,
+                agent_handle=handle_a,
+            ),
+            Task(
+                id=id2,
+                spec_path=path,
+                spec_blob_sha=blob_sha,
+                name="T2",
+                description="D2",
+                status=TaskStatus.IN_PROGRESS,
+                agent_handle=handle_b,
+            ),
+        ],
+    )
+    return sp
+
+
+class TestSupersedingCancellation:
+    def test_modified_spec_cancels_in_progress_task_agents(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        _build_in_progress_spec_plan(plan_store, workspace_manager)
+        spec_source.add_spec("auth.spec.md", "def456")
+
+        reconciler.run_cycle()
+
+        assert agent_runtime.is_cancelled(AgentHandle(id="agent-task-1"))
+        assert agent_runtime.is_cancelled(AgentHandle(id="agent-task-2"))
+
+    def test_modified_spec_cleans_up_workspaces(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        _build_in_progress_spec_plan(plan_store, workspace_manager)
+        spec_source.add_spec("auth.spec.md", "def456")
+
+        reconciler.run_cycle()
+
+        assert not workspace_manager.has_delivery_workspace("abc123")
+
+    def test_modified_spec_fires_agent_cancelled_events(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        _build_in_progress_spec_plan(plan_store, workspace_manager)
+        spec_source.add_spec("auth.spec.md", "def456")
+
+        reconciler.run_cycle()
+
+        cancelled = observer.calls_for("agent_cancelled")
+        assert len(cancelled) == 2
+        task_ids = {c["task_id"] for c in cancelled}
+        assert task_ids == {1, 2}
+        assert all(c["reason"] == "superseded" for c in cancelled)
+
+    def test_deleted_spec_cancels_in_progress_task_agents(
+        self,
+        reconciler: Reconciler,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        _build_in_progress_spec_plan(plan_store, workspace_manager)
+
+        reconciler.run_cycle()
+
+        assert agent_runtime.is_cancelled(AgentHandle(id="agent-task-1"))
+        assert agent_runtime.is_cancelled(AgentHandle(id="agent-task-2"))
+
+    def test_deleted_spec_cleans_up_workspaces(
+        self,
+        reconciler: Reconciler,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        _build_in_progress_spec_plan(plan_store, workspace_manager)
+
+        reconciler.run_cycle()
+
+        assert not workspace_manager.has_delivery_workspace("abc123")
+
+    def test_verification_cancelled_on_modified_spec(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        plan = plan_store.get_plan()
+        sp = plan.add_spec("auth.spec.md", "abc123")
+        sp.status = SpecPlanStatus.VERIFYING
+        sp.verification_handle = AgentHandle(id="verifier-1")
+        workspace_manager.create_delivery_workspace("abc123")
+        spec_source.add_spec("auth.spec.md", "def456")
+
+        reconciler.run_cycle()
+
+        assert agent_runtime.is_cancelled(AgentHandle(id="verifier-1"))
+
+    def test_verification_cancelled_on_deleted_spec(
+        self,
+        reconciler: Reconciler,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        plan = plan_store.get_plan()
+        sp = plan.add_spec("auth.spec.md", "abc123")
+        sp.status = SpecPlanStatus.VERIFYING
+        sp.verification_handle = AgentHandle(id="verifier-1")
+        workspace_manager.create_delivery_workspace("abc123")
+
+        reconciler.run_cycle()
+
+        assert agent_runtime.is_cancelled(AgentHandle(id="verifier-1"))
+
+    def test_backlog_tasks_not_cancelled(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        plan = plan_store.get_plan()
+        sp = plan.add_spec("auth.spec.md", "abc123")
+        workspace_manager.create_delivery_workspace("abc123")
+        plan.add_tasks(
+            sp,
+            [
+                Task(
+                    id=plan.next_task_id(),
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    name="T1",
+                    description="D1",
+                    status=TaskStatus.BACKLOG,
+                ),
+            ],
+        )
+        spec_source.add_spec("auth.spec.md", "def456")
+
+        reconciler.run_cycle()
+
+        assert observer.calls_for("agent_cancelled") == []
+
+    def test_completed_tasks_not_cancelled(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        plan = plan_store.get_plan()
+        sp = plan.add_spec("auth.spec.md", "abc123")
+        workspace_manager.create_delivery_workspace("abc123")
+        plan.add_tasks(
+            sp,
+            [
+                Task(
+                    id=plan.next_task_id(),
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    name="T1",
+                    description="D1",
+                    status=TaskStatus.COMPLETE,
+                ),
+            ],
+        )
+        spec_source.add_spec("auth.spec.md", "def456")
+
+        reconciler.run_cycle()
+
+        assert observer.calls_for("agent_cancelled") == []
+
+    def test_no_cancellation_when_no_in_flight_work(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        plan_store.get_plan().add_spec("auth.spec.md", "abc123")
+        spec_source.add_spec("auth.spec.md", "def456")
+
+        reconciler.run_cycle()
+
+        assert observer.calls_for("agent_cancelled") == []

@@ -6,9 +6,11 @@ from hyperloop.reconciliation.models.plan import Plan
 from hyperloop.reconciliation.models.spec_entry import SpecEntry
 from hyperloop.reconciliation.models.spec_plan import SpecPlan, SpecPlanStatus
 from hyperloop.reconciliation.models.task import TaskStatus
+from hyperloop.reconciliation.ports.agent_runtime import AgentRuntime
 from hyperloop.reconciliation.ports.observer import ChangeType, Observer
 from hyperloop.reconciliation.ports.plan_store import PlanStore
 from hyperloop.reconciliation.ports.spec_source import SpecSource
+from hyperloop.reconciliation.ports.workspace_manager import WorkspaceManager
 
 
 class Reconciler:
@@ -18,10 +20,14 @@ class Reconciler:
         spec_source: SpecSource,
         plan_store: PlanStore,
         observer: Observer,
+        agent_runtime: AgentRuntime,
+        workspace_manager: WorkspaceManager,
     ) -> None:
         self._spec_source = spec_source
         self._plan_store = plan_store
         self._observer = observer
+        self._agent_runtime = agent_runtime
+        self._workspace_manager = workspace_manager
         self._cycle: int = 0
 
     def run_cycle(self) -> None:
@@ -71,6 +77,7 @@ class Reconciler:
                 )
             elif existing.blob_sha != entry.blob_sha:
                 old_sha = existing.blob_sha
+                self._cancel_superseded(existing)
                 plan.add_spec(entry.path, entry.blob_sha)
                 self._observer.spec_divergence_detected(
                     spec_path=entry.path,
@@ -87,12 +94,28 @@ class Reconciler:
             if sp.superseded:
                 continue
             if sp.path not in source_paths:
+                self._cancel_superseded(sp)
                 sp.superseded = True
                 self._observer.spec_divergence_detected(
                     spec_path=sp.path,
                     blob_sha=sp.blob_sha,
                     change_type=ChangeType.DELETED,
                 )
+
+    def _cancel_superseded(self, spec_plan: SpecPlan) -> None:
+        for task in spec_plan.tasks:
+            if task.status == TaskStatus.IN_PROGRESS and task.agent_handle is not None:
+                self._agent_runtime.cancel(task.agent_handle)
+                self._observer.agent_cancelled(
+                    task_id=task.id,
+                    spec_path=task.spec_path,
+                    reason="superseded",
+                )
+
+        if spec_plan.verification_handle is not None:
+            self._agent_runtime.cancel(spec_plan.verification_handle)
+
+        self._workspace_manager.cleanup(spec_plan.blob_sha)
 
     def _find_active_spec_plan(self, plan: Plan, path: str) -> SpecPlan | None:
         for sp in plan.spec_plans:
