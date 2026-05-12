@@ -22,7 +22,13 @@ class Plan(BaseModel):
         event_type: EventType,
         timestamp: datetime,
     ) -> None:
-        record_event(self.events, reason=reason, message=message, event_type=event_type, timestamp=timestamp)
+        record_event(
+            self.events,
+            reason=reason,
+            message=message,
+            event_type=event_type,
+            timestamp=timestamp,
+        )
 
     def add_spec(self, path: str, blob_sha: str) -> SpecPlan:
         for sp in self.spec_plans:

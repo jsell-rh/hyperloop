@@ -69,7 +69,9 @@ class Configuration(BaseSettings):
     @classmethod
     def specs_directory_must_exist(cls, v: str) -> str:
         if not Path(v).is_dir():
-            raise ValueError(f"specs_directory '{v}' does not exist or is not a directory")
+            raise ValueError(
+                f"specs_directory '{v}' does not exist or is not a directory"
+            )
         return v
 
     @classmethod

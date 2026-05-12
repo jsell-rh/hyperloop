@@ -304,9 +304,7 @@ class CompositeObserver:
         )
 
     def agent_orphan_detected(self, *, task_id: int, spec_path: str) -> None:
-        self._fan_out(
-            "agent_orphan_detected", task_id=task_id, spec_path=spec_path
-        )
+        self._fan_out("agent_orphan_detected", task_id=task_id, spec_path=spec_path)
 
     def agent_launch_failed(
         self, *, task_id: int, role: str, reason: str, cycle: int

@@ -40,7 +40,9 @@ class Observer(Protocol):
         self, *, spec_path: str, blob_sha: str, change_type: ChangeType
     ) -> None: ...
 
-    def spec_superseded(self, *, spec_path: str, old_sha: str, new_sha: str) -> None: ...
+    def spec_superseded(
+        self, *, spec_path: str, old_sha: str, new_sha: str
+    ) -> None: ...
 
     # Decomposition
 
@@ -109,7 +111,9 @@ class Observer(Protocol):
 
     def task_merge_conflict(self, *, task_id: int, spec_blob_sha: str) -> None: ...
 
-    def merge_resolution_launched(self, *, task_id: int, spec_blob_sha: str) -> None: ...
+    def merge_resolution_launched(
+        self, *, task_id: int, spec_blob_sha: str
+    ) -> None: ...
 
     def merge_resolution_completed(
         self, *, task_id: int, spec_blob_sha: str, success: bool

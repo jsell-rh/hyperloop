@@ -218,15 +218,21 @@ class TestYamlLoading:
 
     def test_partial_yaml_fills_defaults(self, specs_dir: Path, tmp_path: Path) -> None:
         config_file = tmp_path / "hyperloop.yaml"
-        _write_yaml(config_file, {"convergence_bound": 7, "specs_directory": str(specs_dir)})
+        _write_yaml(
+            config_file, {"convergence_bound": 7, "specs_directory": str(specs_dir)}
+        )
         config = Configuration.from_yaml(config_file)
         assert config.convergence_bound == 7
         assert config.max_task_retries == 3
         assert config.trunk_branch == "main"
 
-    def test_yaml_with_invalid_values_raises(self, specs_dir: Path, tmp_path: Path) -> None:
+    def test_yaml_with_invalid_values_raises(
+        self, specs_dir: Path, tmp_path: Path
+    ) -> None:
         config_file = tmp_path / "hyperloop.yaml"
-        _write_yaml(config_file, {"convergence_bound": 0, "specs_directory": str(specs_dir)})
+        _write_yaml(
+            config_file, {"convergence_bound": 0, "specs_directory": str(specs_dir)}
+        )
         with pytest.raises(ValueError, match="convergence_bound"):
             Configuration.from_yaml(config_file)
 

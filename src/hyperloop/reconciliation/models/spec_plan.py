@@ -35,7 +35,13 @@ class SpecPlan(BaseModel):
         event_type: EventType,
         timestamp: datetime,
     ) -> None:
-        record_event(self.events, reason=reason, message=message, event_type=event_type, timestamp=timestamp)
+        record_event(
+            self.events,
+            reason=reason,
+            message=message,
+            event_type=event_type,
+            timestamp=timestamp,
+        )
 
     def record_verification_failure(self) -> None:
         self.reconciliation_attempts += 1
