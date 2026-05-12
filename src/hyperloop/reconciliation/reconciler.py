@@ -67,6 +67,7 @@ class Reconciler:
         )
 
         self._detect_divergence(plan, entries)
+        self._invalidate_unsatisfiable_dependencies(plan)
         self._decompose(plan)
         tasks_dispatched = self._dispatch_tasks(plan)
         tasks_completed, tasks_failed = self._collect_results(plan)
@@ -605,6 +606,46 @@ class Reconciler:
                 pass
 
         self._workspace_manager.cleanup(spec_plan.blob_sha)
+
+    def _invalidate_unsatisfiable_dependencies(self, plan: Plan) -> None:
+        valid_task_ids: set[int] = set()
+        for sp in plan.spec_plans:
+            if sp.superseded:
+                continue
+            for task in sp.tasks:
+                valid_task_ids.add(task.id)
+
+        for sp in plan.spec_plans:
+            if sp.superseded:
+                continue
+            for task in sp.tasks:
+                if task.status in (TaskStatus.COMPLETE, TaskStatus.FAILED):
+                    continue
+                for dep_id in task.depends_on:
+                    if dep_id not in valid_task_ids:
+                        self._mark_dependency_invalidated(task, dep_id)
+                        break
+
+    def _mark_dependency_invalidated(self, task: Task, dependency_task_id: int) -> None:
+        if task.status == TaskStatus.IN_PROGRESS and task.agent_handle is not None:
+            try:
+                self._agent_runtime.cancel(task.agent_handle)
+            except Exception:
+                pass
+        task.agent_handle = None
+        task.status = TaskStatus.FAILED
+        task.record_event(
+            reason=EventReason.DEPENDENCY_INVALIDATED,
+            message=f"Dependency on task {dependency_task_id} is unsatisfiable",
+            event_type=EventType.WARNING,
+            timestamp=datetime.now(timezone.utc),
+        )
+        self._observer.dependency_invalidated(
+            task_id=task.id,
+            spec_path=task.spec_path,
+            dependency_task_id=dependency_task_id,
+            reason=f"Dependency on task {dependency_task_id} is unsatisfiable",
+        )
 
     def _find_active_spec_plan(self, plan: Plan, path: str) -> SpecPlan | None:
         for sp in plan.spec_plans:
