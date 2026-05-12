@@ -354,9 +354,18 @@ class Reconciler:
                 sp.blob_sha
             )
             spec_content = self._spec_source.read_at(sp.path, sp.blob_sha)
-            handle = self._agent_runtime.launch_verification(
-                spec_content, sp.path, sp.blob_sha, workspace_id
-            )
+            try:
+                handle = self._agent_runtime.launch_verification(
+                    spec_content, sp.path, sp.blob_sha, workspace_id
+                )
+            except Exception as exc:
+                self._observer.agent_launch_failed(
+                    task_id=0,
+                    role="verification",
+                    reason=str(exc),
+                    cycle=self._cycle,
+                )
+                continue
             sp.status = SpecPlanStatus.VERIFYING
             sp.verification_handle = handle
             self._observer.verification_launched(
@@ -398,7 +407,7 @@ class Reconciler:
                     cycle=self._cycle,
                 )
                 self._integrate_to_trunk(sp)
-            elif result.verdict == AgentVerdict.FAIL:
+            else:
                 rationale = result.rationale or "Verification failed"
                 sp.record_event(
                     reason=EventReason.VERIFICATION_FAILED,

@@ -516,31 +516,6 @@ class TestSpecPlanStatus:
             SpecPlan(path="a", blob_sha="b", status="invalid")
 
 
-class TestReconciliationAttempts:
-    def test_verification_failure_increments_attempts(self) -> None:
-        sp = SpecPlan(path="auth.spec.md", blob_sha="abc123")
-        assert sp.reconciliation_attempts == 0
-
-        sp.record_verification_failure()
-        assert sp.reconciliation_attempts == 1
-        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
-
-    def test_verification_failure_from_verifying_state(self) -> None:
-        sp = SpecPlan(path="auth.spec.md", blob_sha="abc123")
-        sp.status = SpecPlanStatus.VERIFYING
-
-        sp.record_verification_failure()
-        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
-        assert sp.reconciliation_attempts == 1
-
-    def test_redecomposition_flag_resets_on_new_cycle(self) -> None:
-        sp = SpecPlan(path="auth.spec.md", blob_sha="abc123")
-        sp.has_redecomposed = True
-
-        sp.record_verification_failure()
-        assert sp.has_redecomposed is False
-
-
 class TestSerialization:
     def test_plan_roundtrip(self) -> None:
         plan = Plan()

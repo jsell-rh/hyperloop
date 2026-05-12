@@ -755,7 +755,7 @@ class TestDecompositionDispatch:
         plan = plan_store.get_plan()
         sp = plan.add_spec("auth.spec.md", "abc123")
         sp.record_event(
-            reason="VerificationFailed",
+            reason=EventReason.VERIFICATION_FAILED,
             message="timeout handling missing",
             event_type=EventType.WARNING,
             timestamp=datetime.now(timezone.utc),
@@ -768,7 +768,7 @@ class TestDecompositionDispatch:
         assert len(agent_runtime.decomposition_calls) == 1
         _, _, events = agent_runtime.decomposition_calls[0]
         assert len(events) == 1
-        assert events[0].reason == "VerificationFailed"
+        assert events[0].reason == EventReason.VERIFICATION_FAILED
         assert events[0].message == "timeout handling missing"
 
     def test_existing_tasks_passed_for_cross_spec_awareness(
@@ -1205,7 +1205,7 @@ class TestTaskDispatch:
     ) -> None:
         _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
         tasks[0].record_event(
-            reason="TaskFailed",
+            reason=EventReason.TASK_FAILED,
             message="Test compilation error",
             event_type=EventType.WARNING,
             timestamp=datetime.now(timezone.utc),
@@ -1215,7 +1215,7 @@ class TestTaskDispatch:
 
         briefing = agent_runtime.launched_tasks[0]
         assert len(briefing.events) == 1
-        assert briefing.events[0].reason == "TaskFailed"
+        assert briefing.events[0].reason == EventReason.TASK_FAILED
         assert briefing.events[0].message == "Test compilation error"
 
     def test_blocked_task_not_dispatched(
@@ -1767,7 +1767,7 @@ def _build_all_tasks_complete_spec_plan(
     sp.delivery_workspace_id = f"delivery/{blob_sha}"
 
     tasks: list[Task] = []
-    for i in range(task_count):
+    for _ in range(task_count):
         task_id = plan.next_task_id()
         tasks.append(
             Task(
@@ -1797,14 +1797,13 @@ def _build_verifying_spec_plan(
 ) -> tuple[SpecPlan, AgentHandle]:
     plan = plan_store.get_plan()
     sp = plan.add_spec(path, blob_sha)
-    sp.status = SpecPlanStatus.VERIFYING
     sp.reconciliation_attempts = reconciliation_attempts
     spec_source.add_spec(path, blob_sha, content=spec_content)
     workspace_manager.create_delivery_workspace(blob_sha)
     sp.delivery_workspace_id = f"delivery/{blob_sha}"
 
     tasks: list[Task] = []
-    for i in range(task_count):
+    for _ in range(task_count):
         task_id = plan.next_task_id()
         tasks.append(
             Task(
@@ -2005,6 +2004,53 @@ class TestVerificationLaunch:
         reconciler.run_cycle()
 
         assert len(agent_runtime.launched_verifications) == 0
+
+    def test_synced_spec_not_re_verified(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        plan = plan_store.get_plan()
+        sp = plan.add_spec("auth.spec.md", "abc123")
+        sp.status = SpecPlanStatus.SYNCED
+        spec_source.add_spec("auth.spec.md", "abc123")
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.launched_verifications) == 0
+
+    def test_launch_failure_fires_event_and_continues(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        _build_all_tasks_complete_spec_plan(plan_store, spec_source, workspace_manager)
+        original_launch = agent_runtime.launch_verification
+
+        def failing_launch(
+            spec_content: str, spec_path: str, spec_blob_sha: str, workspace_id: str
+        ) -> AgentHandle:
+            raise RuntimeError("Verification agent unavailable")
+
+        agent_runtime.launch_verification = failing_launch  # type: ignore[assignment]
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        sp = next(sp for sp in plan.spec_plans if sp.path == "auth.spec.md")
+        assert sp.status == SpecPlanStatus.RECONCILING
+        events = observer.calls_for("agent_launch_failed")
+        assert len(events) == 1
+        assert events[0]["role"] == "verification"
+        assert "Verification agent unavailable" in events[0]["reason"]
+
+        agent_runtime.launch_verification = original_launch  # type: ignore[assignment]
 
 
 class TestVerificationPass:
@@ -2407,6 +2453,56 @@ class TestVerificationFail:
         reconciler.run_cycle()
 
         assert sp.has_redecomposed is False
+
+    def test_poll_exception_leaves_spec_verifying(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        original_poll = agent_runtime.poll
+
+        def failing_poll(h: AgentHandle) -> PollResult:
+            raise RuntimeError("Connection refused")
+
+        agent_runtime.poll = failing_poll  # type: ignore[assignment]
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.VERIFYING
+        assert sp.verification_handle is not None
+
+        agent_runtime.poll = original_poll  # type: ignore[assignment]
+
+    def test_verdict_none_treated_as_failure(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=None,
+                rationale="Agent returned no verdict",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        assert sp.verification_handle is None
 
 
 class TestConvergenceBound:

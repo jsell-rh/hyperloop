@@ -46,8 +46,3 @@ class SpecPlan(BaseModel):
             event_type=event_type,
             timestamp=timestamp,
         )
-
-    def record_verification_failure(self) -> None:
-        self.reconciliation_attempts += 1
-        self.has_redecomposed = False
-        self.status = SpecPlanStatus.OUT_OF_SYNC
