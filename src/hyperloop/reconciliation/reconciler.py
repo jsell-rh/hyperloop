@@ -34,6 +34,7 @@ class Reconciler:
         workspace_manager: WorkspaceManager,
         max_concurrent_tasks: int = 5,
         convergence_bound: int = 3,
+        max_integration_retries: int = 3,
     ) -> None:
         self._spec_source = spec_source
         self._plan_store = plan_store
@@ -42,6 +43,7 @@ class Reconciler:
         self._workspace_manager = workspace_manager
         self._max_concurrent_tasks = max_concurrent_tasks
         self._convergence_bound = convergence_bound
+        self._max_integration_retries = max_integration_retries
         self._cycle: int = 0
 
     def run_cycle(self) -> None:
@@ -444,6 +446,7 @@ class Reconciler:
                 integration_id=integration_id,
             )
             sp.status = SpecPlanStatus.SYNCED
+            sp.integration_attempts = 0
             self._observer.trunk_integration_completed(
                 spec_path=sp.path,
                 spec_blob_sha=sp.blob_sha,
@@ -456,11 +459,27 @@ class Reconciler:
                 cycle=self._cycle,
             )
         except Exception as exc:
+            sp.integration_attempts += 1
+            reason = str(exc)
+            sp.record_event(
+                reason=EventReason.INTEGRATION_FAILED,
+                message=reason,
+                event_type=EventType.WARNING,
+                timestamp=datetime.now(timezone.utc),
+            )
             self._observer.trunk_integration_failed(
                 spec_path=sp.path,
                 spec_blob_sha=sp.blob_sha,
-                reason=str(exc),
+                reason=reason,
             )
+            if sp.integration_attempts >= self._max_integration_retries:
+                sp.status = SpecPlanStatus.FAILED
+                self._observer.spec_failed(
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    reason=f"Integration retry limit ({self._max_integration_retries}) exceeded",
+                    cycle=self._cycle,
+                )
 
     def _retry_integration(self, sp: SpecPlan) -> None:
         has_passed = any(e.reason == EventReason.VERIFICATION_PASSED for e in sp.events)

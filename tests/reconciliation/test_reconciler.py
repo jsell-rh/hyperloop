@@ -2726,3 +2726,150 @@ class TestIntegrationFailure:
         reconciler.run_cycle()
 
         assert sp.status == SpecPlanStatus.SYNCED
+
+    def test_integration_failure_increments_attempts(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        workspace_manager._delivery_workspaces.discard("abc123")
+
+        reconciler.run_cycle()
+
+        assert sp.integration_attempts == 1
+
+    def test_integration_failure_records_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        workspace_manager._delivery_workspaces.discard("abc123")
+
+        reconciler.run_cycle()
+
+        failed_events = [
+            e for e in sp.events if e.reason == EventReason.INTEGRATION_FAILED
+        ]
+        assert len(failed_events) == 1
+
+    def test_integration_retry_limit_transitions_to_failed(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_integration_retries=2,
+        )
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        workspace_manager._delivery_workspaces.discard("abc123")
+
+        reconciler.run_cycle()
+        assert sp.status == SpecPlanStatus.VERIFYING
+
+        reconciler.run_cycle()
+        assert sp.status == SpecPlanStatus.FAILED
+
+    def test_integration_retry_limit_fires_spec_failed_event(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_integration_retries=1,
+        )
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        workspace_manager._delivery_workspaces.discard("abc123")
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("spec_failed")
+        assert len(events) == 1
+        assert events[0]["spec_path"] == "auth.spec.md"
+
+    def test_successful_integration_resets_attempts(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.integration_attempts == 0

@@ -25,6 +25,7 @@ class SpecPlan(BaseModel):
     status: SpecPlanStatus = SpecPlanStatus.OUT_OF_SYNC
     superseded: bool = False
     reconciliation_attempts: int = 0
+    integration_attempts: int = 0
     has_redecomposed: bool = False
     verification_handle: AgentHandle | None = None
     delivery_workspace_id: str | None = None

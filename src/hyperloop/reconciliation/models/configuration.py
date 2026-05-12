@@ -13,6 +13,7 @@ class Configuration(BaseSettings):
     convergence_bound: int = 3
     max_task_retries: int = 3
     max_redecompositions: int = 1
+    max_integration_retries: int = 3
     max_concurrent_tasks: int = 5
 
     cycle_interval_seconds: int = 30
@@ -50,6 +51,13 @@ class Configuration(BaseSettings):
     def max_redecompositions_must_be_non_negative(cls, v: int) -> int:
         if v < 0:
             raise ValueError("max_redecompositions must be >= 0")
+        return v
+
+    @field_validator("max_integration_retries")
+    @classmethod
+    def max_integration_retries_must_be_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("max_integration_retries must be >= 1")
         return v
 
     @field_validator("max_concurrent_tasks")

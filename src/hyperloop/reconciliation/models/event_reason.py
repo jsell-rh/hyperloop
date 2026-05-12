@@ -11,4 +11,5 @@ class EventReason(StrEnum):
     VERIFICATION_FAILED = "VerificationFailed"
     VERIFICATION_PASSED = "VerificationPassed"
     SPEC_SYNCED = "SpecSynced"
+    INTEGRATION_FAILED = "IntegrationFailed"
     DEPENDENCY_INVALIDATED = "DependencyInvalidated"
