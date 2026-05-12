@@ -3979,3 +3979,65 @@ class TestCrossSpecDependencyInvalidation:
 
         assert task_b.status == TaskStatus.BACKLOG
         assert observer.calls_for("dependency_invalidated") == []
+
+    def test_all_invalid_deps_reported(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        plan = plan_store.get_plan()
+
+        sp_y = plan.add_spec("spec-y.spec.md", "sha-y1")
+        sp_y.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("spec-y.spec.md", "sha-y1")
+        workspace_manager.create_delivery_workspace("sha-y1")
+        task_a1 = Task(
+            id=plan.next_task_id(),
+            spec_path="spec-y.spec.md",
+            spec_blob_sha="sha-y1",
+            name="task-A1",
+            description="Task A1",
+            status=TaskStatus.BACKLOG,
+        )
+        task_a2 = Task(
+            id=plan.next_task_id(),
+            spec_path="spec-y.spec.md",
+            spec_blob_sha="sha-y1",
+            name="task-A2",
+            description="Task A2",
+            status=TaskStatus.BACKLOG,
+        )
+        plan.add_tasks(sp_y, [task_a1, task_a2])
+
+        sp_x = plan.add_spec("spec-x.spec.md", "sha-x1")
+        sp_x.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("spec-x.spec.md", "sha-x1")
+        workspace_manager.create_delivery_workspace("sha-x1")
+        task_b = Task(
+            id=plan.next_task_id(),
+            spec_path="spec-x.spec.md",
+            spec_blob_sha="sha-x1",
+            name="task-B",
+            description="Depends on both A1 and A2",
+            status=TaskStatus.BACKLOG,
+            depends_on=[task_a1.id, task_a2.id],
+        )
+        plan.add_tasks(sp_x, [task_b])
+
+        spec_source.add_spec("spec-y.spec.md", "sha-y2")
+
+        reconciler.run_cycle()
+
+        assert task_b.status == TaskStatus.FAILED
+        dep_events = observer.calls_for("dependency_invalidated")
+        assert len(dep_events) == 2
+        reported_dep_ids = {e["dependency_task_id"] for e in dep_events}
+        assert reported_dep_ids == {task_a1.id, task_a2.id}
+        task_events = [
+            e for e in task_b.events if e.reason == EventReason.DEPENDENCY_INVALIDATED
+        ]
+        assert len(task_events) == 1
+        assert task_events[0].count == 2

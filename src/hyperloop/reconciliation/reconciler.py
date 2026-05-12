@@ -621,12 +621,15 @@ class Reconciler:
             for task in sp.tasks:
                 if task.status in (TaskStatus.COMPLETE, TaskStatus.FAILED):
                     continue
-                for dep_id in task.depends_on:
-                    if dep_id not in valid_task_ids:
-                        self._mark_dependency_invalidated(task, dep_id)
-                        break
+                invalid_deps = [
+                    dep_id for dep_id in task.depends_on if dep_id not in valid_task_ids
+                ]
+                if invalid_deps:
+                    self._mark_dependency_invalidated(task, invalid_deps)
 
-    def _mark_dependency_invalidated(self, task: Task, dependency_task_id: int) -> None:
+    def _mark_dependency_invalidated(
+        self, task: Task, invalid_dep_ids: list[int]
+    ) -> None:
         if task.status == TaskStatus.IN_PROGRESS and task.agent_handle is not None:
             try:
                 self._agent_runtime.cancel(task.agent_handle)
@@ -639,19 +642,20 @@ class Reconciler:
             )
         task.agent_handle = None
         task.status = TaskStatus.FAILED
-        reason = f"Dependency on task {dependency_task_id} is unsatisfiable"
-        task.record_event(
-            reason=EventReason.DEPENDENCY_INVALIDATED,
-            message=reason,
-            event_type=EventType.WARNING,
-            timestamp=datetime.now(timezone.utc),
-        )
-        self._observer.dependency_invalidated(
-            task_id=task.id,
-            spec_path=task.spec_path,
-            dependency_task_id=dependency_task_id,
-            reason=reason,
-        )
+        for dep_id in invalid_dep_ids:
+            reason = f"Dependency on task {dep_id} is unsatisfiable"
+            task.record_event(
+                reason=EventReason.DEPENDENCY_INVALIDATED,
+                message=reason,
+                event_type=EventType.WARNING,
+                timestamp=datetime.now(timezone.utc),
+            )
+            self._observer.dependency_invalidated(
+                task_id=task.id,
+                spec_path=task.spec_path,
+                dependency_task_id=dep_id,
+                reason=reason,
+            )
 
     def _find_active_spec_plan(self, plan: Plan, path: str) -> SpecPlan | None:
         for sp in plan.spec_plans:
