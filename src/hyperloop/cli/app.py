@@ -4,6 +4,7 @@ import click
 
 from hyperloop.cli.commands.describe import describe
 from hyperloop.cli.commands.get import get
+from hyperloop.cli.commands.run import run
 
 
 @click.group()
@@ -14,3 +15,4 @@ def cli(ctx: click.Context) -> None:
 
 cli.add_command(get)
 cli.add_command(describe)
+cli.add_command(run)
