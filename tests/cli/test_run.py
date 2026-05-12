@@ -70,3 +70,9 @@ class TestRunCommand:
         assert result.exit_code == 0
         assert reconciler.config is not None
         assert reconciler.config.convergence_bound == 3
+
+    def test_run_without_reconciler_errors(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["run"], obj=object())
+        assert result.exit_code != 0
+        assert "not yet implemented" in result.output

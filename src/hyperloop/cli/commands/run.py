@@ -16,11 +16,19 @@ class Reconciler(Protocol):
 @click.option(
     "--config", "config_path", default=None, help="Path to configuration file"
 )
-@click.pass_obj
-def run(reconciler: Reconciler, config_path: str | None) -> None:
+@click.pass_context
+def run(ctx: click.Context, config_path: str | None) -> None:
     path = Path(config_path) if config_path else Path(".hyperloop.yaml")
     try:
         config = Configuration.from_yaml(path)
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
+
+    reconciler = ctx.obj if _is_reconciler(ctx.obj) else None
+    if reconciler is None:
+        raise click.ClickException("Reconciler is not yet implemented")
     reconciler.run(config)
+
+
+def _is_reconciler(obj: object) -> bool:
+    return obj is not None and callable(getattr(obj, "run", None))
