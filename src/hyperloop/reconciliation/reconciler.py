@@ -643,10 +643,10 @@ class Reconciler:
         task.agent_handle = None
         task.status = TaskStatus.FAILED
         for dep_id in invalid_dep_ids:
-            reason = f"Dependency on task {dep_id} is unsatisfiable"
+            message = f"Dependency on task {dep_id} is unsatisfiable"
             task.record_event(
                 reason=EventReason.DEPENDENCY_INVALIDATED,
-                message=reason,
+                message=message,
                 event_type=EventType.WARNING,
                 timestamp=datetime.now(timezone.utc),
             )
@@ -654,7 +654,7 @@ class Reconciler:
                 task_id=task.id,
                 spec_path=task.spec_path,
                 dependency_task_id=dep_id,
-                reason=reason,
+                reason=message,
             )
 
     def _find_active_spec_plan(self, plan: Plan, path: str) -> SpecPlan | None:
