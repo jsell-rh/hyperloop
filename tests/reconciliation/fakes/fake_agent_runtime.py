@@ -13,6 +13,7 @@ from hyperloop.reconciliation.models.task_briefing import TaskBriefing
 class FakeAgentRuntime:
     def __init__(self) -> None:
         self._decomposition_result: list[ProposedTask] = []
+        self._decomposition_error: Exception | None = None
         self._poll_results: dict[str, PollResult] = {}
         self._cancelled: set[str] = set()
         self._orphans: list[AgentHandle] = []
@@ -32,6 +33,10 @@ class FakeAgentRuntime:
 
     def set_decomposition_result(self, tasks: list[ProposedTask]) -> None:
         self._decomposition_result = tasks
+        self._decomposition_error = None
+
+    def set_decomposition_error(self, error: Exception) -> None:
+        self._decomposition_error = error
 
     def set_poll_result(self, handle: AgentHandle, result: PollResult) -> None:
         self._poll_results[handle.id] = result
@@ -56,6 +61,8 @@ class FakeAgentRuntime:
         events: list[Event],
     ) -> list[ProposedTask]:
         self.decomposition_calls.append((spec_diffs, existing_tasks, events))
+        if self._decomposition_error is not None:
+            raise self._decomposition_error
         return self._decomposition_result
 
     def launch_task(self, briefing: TaskBriefing) -> AgentHandle:
