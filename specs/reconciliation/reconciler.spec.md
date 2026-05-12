@@ -222,6 +222,13 @@ When a SpecPlan is superseded or deleted, the reconciler SHALL scan all non-supe
 - THEN the decomposition agent for spec X can reference the new spec Y tasks
 - AND the new tasks for spec X have correct dependencies on spec Y's current tasks
 
+#### Scenario: Unresolvable dependency detected at dispatch
+
+- GIVEN task C has a dependency on task ID 99
+- WHEN no task with ID 99 exists in any non-superseded SpecPlan
+- THEN task C is marked Failed with reason DependencyInvalidated
+- AND the failure is handled through the normal task failure path
+
 #### Scenario: Blocked task stays blocked until supersede
 
 - GIVEN task B (spec X) depends on task A (spec Y) and spec Y is Failed (not superseded)
