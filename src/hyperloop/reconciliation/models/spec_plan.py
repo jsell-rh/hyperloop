@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from hyperloop.reconciliation.models.event import Event, EventType, record_event
 from hyperloop.reconciliation.models.task import Task
@@ -20,6 +20,7 @@ class SpecPlanStatus(StrEnum):
 class SpecPlan(BaseModel):
     path: str
     blob_sha: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: SpecPlanStatus = SpecPlanStatus.OUT_OF_SYNC
     superseded: bool = False
     reconciliation_attempts: int = 0
