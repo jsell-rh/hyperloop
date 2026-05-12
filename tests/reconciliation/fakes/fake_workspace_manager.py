@@ -43,6 +43,8 @@ class FakeWorkspaceManager:
         return f"verification/{blob_sha}"
 
     def merge_task(self, blob_sha: str, task_id: int) -> MergeResult:
+        if blob_sha not in self._delivery_workspaces:
+            raise ValueError(f"No delivery workspace for blob_sha={blob_sha}")
         if (blob_sha, task_id) not in self._task_workspaces:
             raise ValueError(
                 f"No task workspace for blob_sha={blob_sha}, task_id={task_id}"
@@ -67,10 +69,12 @@ class FakeWorkspaceManager:
     def cleanup(self, blob_sha: str) -> None:
         self._delivery_workspaces.discard(blob_sha)
         self._verification_workspaces.discard(blob_sha)
+        self._integration_ids.pop(blob_sha, None)
         keys_to_remove = [key for key in self._task_workspaces if key[0] == blob_sha]
         for key in keys_to_remove:
             del self._task_workspaces[key]
             self._task_briefings.pop(key, None)
+            self._merge_results.pop(key, None)
 
     def cleanup_verification(self, blob_sha: str) -> None:
         self._verification_workspaces.discard(blob_sha)
