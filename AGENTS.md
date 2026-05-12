@@ -27,6 +27,11 @@ Spec-driven reconciliation engine. Specs declare desired state; code is actual s
 - **Fakes, not mocks.** All test doubles must be behavioral fakes that provide real guarantees about correctness. No `unittest.mock`, no `MagicMock`, no `patch`.
 - Tests must verify behavior, not implementation details.
 
+
+## Development Workflow
+
+- Invoke the `/develop` skill. This will provide you with a verifiable unit of work tied to a spec that you are to complete.
+
 ## Python Standards
 
 - **Type hints everywhere.** No `Any`. Every function signature, variable where the type is not obvious, and return type must be annotated.
