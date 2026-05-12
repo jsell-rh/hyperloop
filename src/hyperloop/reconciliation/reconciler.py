@@ -425,7 +425,7 @@ class Reconciler:
                 )
                 self._workspace_manager.cleanup_verification(sp.blob_sha)
                 sp.reconciliation_attempts += 1
-                sp.has_redecomposed = False
+                sp.redecomposition_count = 0
                 if sp.reconciliation_attempts >= self._convergence_bound:
                     sp.status = SpecPlanStatus.FAILED
                     self._observer.spec_failed(

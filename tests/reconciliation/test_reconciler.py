@@ -2430,7 +2430,7 @@ class TestVerificationFail:
 
         assert not workspace_manager.has_verification_workspace("abc123")
 
-    def test_has_redecomposed_reset_on_fail(
+    def test_redecomposition_count_reset_on_fail(
         self,
         reconciler: Reconciler,
         spec_source: FakeSpecSource,
@@ -2441,7 +2441,7 @@ class TestVerificationFail:
         sp, handle = _build_verifying_spec_plan(
             plan_store, spec_source, workspace_manager, agent_runtime
         )
-        sp.has_redecomposed = True
+        sp.redecomposition_count = 1
         agent_runtime.set_poll_result(
             handle,
             PollResult(
@@ -2453,7 +2453,7 @@ class TestVerificationFail:
 
         reconciler.run_cycle()
 
-        assert sp.has_redecomposed is False
+        assert sp.redecomposition_count == 0
 
     def test_poll_exception_leaves_spec_verifying(
         self,

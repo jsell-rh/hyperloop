@@ -26,7 +26,7 @@ class SpecPlan(BaseModel):
     superseded: bool = False
     reconciliation_attempts: int = 0
     integration_attempts: int = 0
-    has_redecomposed: bool = False
+    redecomposition_count: int = 0
     verification_handle: AgentHandle | None = None
     delivery_workspace_id: str | None = None
     tasks: list[Task] = []
