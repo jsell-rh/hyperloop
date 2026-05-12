@@ -3,10 +3,13 @@ from __future__ import annotations
 import time
 
 from hyperloop.reconciliation.models.cancellation_reason import CancellationReason
+from hyperloop.reconciliation.models.event import Event
 from hyperloop.reconciliation.models.plan import Plan
+from hyperloop.reconciliation.models.proposed_task import ProposedTask
+from hyperloop.reconciliation.models.spec_diff import SpecDiff
 from hyperloop.reconciliation.models.spec_entry import SpecEntry
 from hyperloop.reconciliation.models.spec_plan import SpecPlan, SpecPlanStatus
-from hyperloop.reconciliation.models.task import TaskStatus
+from hyperloop.reconciliation.models.task import Task, TaskStatus
 from hyperloop.reconciliation.ports.agent_runtime import AgentRuntime
 from hyperloop.reconciliation.ports.observer import ChangeType, Observer
 from hyperloop.reconciliation.ports.plan_store import PlanStore
@@ -48,6 +51,7 @@ class Reconciler:
         )
 
         self._detect_divergence(plan, entries)
+        self._decompose(plan)
 
         self._plan_store.write_plan(plan)
         self._observer.plan_synced(cycle=self._cycle)
@@ -61,6 +65,118 @@ class Reconciler:
             tasks_completed=0,
             tasks_failed=0,
         )
+
+    def _decompose(self, plan: Plan) -> None:
+        out_of_sync = [
+            sp
+            for sp in plan.spec_plans
+            if not sp.superseded and sp.status == SpecPlanStatus.OUT_OF_SYNC
+        ]
+        if not out_of_sync:
+            return
+
+        start = time.monotonic()
+        self._observer.decomposition_started(
+            specs_count=len(out_of_sync), cycle=self._cycle
+        )
+
+        spec_diffs: list[SpecDiff] = []
+        for sp in out_of_sync:
+            old_sha = self._find_last_synced_sha(plan, sp.path)
+            diff_text = self._spec_source.diff(sp.path, old_sha, sp.blob_sha)
+            spec_diffs.append(
+                SpecDiff(spec_path=sp.path, blob_sha=sp.blob_sha, diff_text=diff_text)
+            )
+
+        existing_tasks = self._collect_all_tasks(plan)
+        events = self._collect_spec_events(out_of_sync)
+
+        proposed = self._agent_runtime.launch_decomposition(
+            spec_diffs, existing_tasks, events
+        )
+
+        tasks_created = self._materialize_tasks(plan, out_of_sync, proposed)
+
+        duration = time.monotonic() - start
+        self._observer.decomposition_completed(
+            specs_count=len(out_of_sync),
+            tasks_created=tasks_created,
+            cycle=self._cycle,
+            duration_s=duration,
+        )
+
+    def _find_last_synced_sha(self, plan: Plan, path: str) -> str | None:
+        for sp in reversed(plan.spec_plans):
+            if sp.path == path and sp.status == SpecPlanStatus.SYNCED:
+                return sp.blob_sha
+        return None
+
+    def _collect_all_tasks(self, plan: Plan) -> list[Task]:
+        tasks: list[Task] = []
+        for sp in plan.spec_plans:
+            if sp.superseded:
+                continue
+            tasks.extend(sp.tasks)
+        return tasks
+
+    def _collect_spec_events(self, spec_plans: list[SpecPlan]) -> list[Event]:
+        events: list[Event] = []
+        for sp in spec_plans:
+            events.extend(sp.events)
+        return events
+
+    def _materialize_tasks(
+        self,
+        plan: Plan,
+        out_of_sync: list[SpecPlan],
+        proposed: list[ProposedTask],
+    ) -> int:
+        name_to_id: dict[str, int] = {}
+        for sp in plan.spec_plans:
+            if sp.superseded:
+                continue
+            for task in sp.tasks:
+                name_to_id[task.name] = task.id
+
+        tasks_with_proposed: list[tuple[Task, ProposedTask]] = []
+        for pt in proposed:
+            task_id = plan.next_task_id()
+            name_to_id[pt.name] = task_id
+            task = Task(
+                id=task_id,
+                spec_path=pt.spec_path,
+                spec_blob_sha=pt.spec_blob_sha,
+                name=pt.name,
+                description=pt.description,
+            )
+            tasks_with_proposed.append((task, pt))
+
+        for task, pt in tasks_with_proposed:
+            task.depends_on = [
+                name_to_id[dep_name]
+                for dep_name in pt.depends_on
+                if dep_name in name_to_id
+            ]
+
+        tasks_by_key: dict[tuple[str, str], list[Task]] = {}
+        for task, _ in tasks_with_proposed:
+            key = (task.spec_path, task.spec_blob_sha)
+            tasks_by_key.setdefault(key, []).append(task)
+
+        for sp in out_of_sync:
+            key = (sp.path, sp.blob_sha)
+            tasks = tasks_by_key.get(key, [])
+            plan.add_tasks(sp, tasks)
+            for task in tasks:
+                self._observer.task_created(
+                    task_id=task.id,
+                    spec_path=task.spec_path,
+                    spec_blob_sha=task.spec_blob_sha,
+                    name=task.name,
+                    depends_on=task.depends_on,
+                )
+
+        return len(tasks_with_proposed)
 
     def _detect_divergence(self, plan: Plan, entries: list[SpecEntry]) -> None:
         source_paths: set[str] = set()
