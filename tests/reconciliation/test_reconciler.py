@@ -3126,3 +3126,306 @@ class TestIntegrationFailure:
         reconciler.run_cycle()
 
         assert sp.integration_attempts == 0
+
+
+def _build_retry_exhausted_spec_plan(
+    plan_store: FakePlanStore,
+    spec_source: FakeSpecSource,
+    agent_runtime: FakeAgentRuntime,
+    workspace_manager: FakeWorkspaceManager,
+    path: str = "auth.spec.md",
+    blob_sha: str = "abc123",
+    max_task_retries: int = 2,
+) -> tuple[SpecPlan, list[Task]]:
+    plan = plan_store.get_plan()
+    sp = plan.add_spec(path, blob_sha)
+    sp.status = SpecPlanStatus.RECONCILING
+    spec_source.add_spec(path, blob_sha)
+    workspace_manager.create_delivery_workspace(blob_sha)
+    sp.delivery_workspace_id = f"delivery/{blob_sha}"
+
+    handle_a = AgentHandle(id="agent-task-1")
+    id1 = plan.next_task_id()
+    id2 = plan.next_task_id()
+    ws1 = workspace_manager.create_task_workspace(blob_sha, id1, "D1")
+    ws2 = workspace_manager.create_task_workspace(blob_sha, id2, "D2")
+    plan.add_tasks(
+        sp,
+        [
+            Task(
+                id=id1,
+                spec_path=path,
+                spec_blob_sha=blob_sha,
+                name="T1",
+                description="D1",
+                status=TaskStatus.IN_PROGRESS,
+                agent_handle=handle_a,
+                workspace_id=ws1,
+                retry_count=max_task_retries,
+            ),
+            Task(
+                id=id2,
+                spec_path=path,
+                spec_blob_sha=blob_sha,
+                name="T2",
+                description="D2",
+                status=TaskStatus.COMPLETE,
+                workspace_id=ws2,
+            ),
+        ],
+    )
+    agent_runtime.set_poll_result(
+        handle_a,
+        PollResult(status=AgentStatus.FAILED, rationale="Still failing"),
+    )
+    return sp, sp.tasks
+
+
+class TestRedecomposition:
+    def test_retry_exhaustion_triggers_redecomposition(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=2,
+            max_redecompositions=1,
+        )
+        sp, _ = _build_retry_exhausted_spec_plan(
+            plan_store, spec_source, agent_runtime, workspace_manager
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        assert sp.redecomposition_count == 1
+
+    def test_redecomposition_fires_observer_event(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=2,
+            max_redecompositions=1,
+        )
+        _build_retry_exhausted_spec_plan(
+            plan_store, spec_source, agent_runtime, workspace_manager
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("redecomposition_triggered")
+        assert len(events) == 1
+        assert events[0]["spec_path"] == "auth.spec.md"
+        assert events[0]["spec_blob_sha"] == "abc123"
+        assert events[0]["failed_task_count"] == 1
+        assert events[0]["cycle"] == 1
+
+    def test_redecomposition_cancels_in_progress_tasks(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=2,
+            max_redecompositions=1,
+        )
+        plan = plan_store.get_plan()
+        sp = plan.add_spec("auth.spec.md", "abc123")
+        sp.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("auth.spec.md", "abc123")
+        workspace_manager.create_delivery_workspace("abc123")
+        sp.delivery_workspace_id = "delivery/abc123"
+
+        handle_a = AgentHandle(id="agent-a")
+        handle_b = AgentHandle(id="agent-b")
+        id1 = plan.next_task_id()
+        id2 = plan.next_task_id()
+        plan.add_tasks(
+            sp,
+            [
+                Task(
+                    id=id1,
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    name="T1",
+                    description="D1",
+                    status=TaskStatus.IN_PROGRESS,
+                    agent_handle=handle_a,
+                    retry_count=2,
+                ),
+                Task(
+                    id=id2,
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    name="T2",
+                    description="D2",
+                    status=TaskStatus.IN_PROGRESS,
+                    agent_handle=handle_b,
+                ),
+            ],
+        )
+        agent_runtime.set_poll_result(
+            handle_a, PollResult(status=AgentStatus.FAILED, rationale="Error")
+        )
+        agent_runtime.set_poll_result(handle_b, PollResult(status=AgentStatus.RUNNING))
+
+        reconciler.run_cycle()
+
+        assert agent_runtime.is_cancelled(handle_b)
+        cancelled = observer.calls_for("agent_cancelled")
+        cancelled_ids = {c["task_id"] for c in cancelled}
+        assert id2 in cancelled_ids
+
+    def test_redecomposition_budget_exhausted_fails_spec(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=2,
+            max_redecompositions=1,
+        )
+        sp, _ = _build_retry_exhausted_spec_plan(
+            plan_store, spec_source, agent_runtime, workspace_manager
+        )
+        sp.redecomposition_count = 1
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.FAILED
+
+    def test_redecomposition_budget_exhausted_fires_spec_failed(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=2,
+            max_redecompositions=1,
+        )
+        sp, _ = _build_retry_exhausted_spec_plan(
+            plan_store, spec_source, agent_runtime, workspace_manager
+        )
+        sp.redecomposition_count = 1
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("spec_failed")
+        assert len(events) == 1
+        assert events[0]["spec_path"] == "auth.spec.md"
+        assert events[0]["spec_blob_sha"] == "abc123"
+
+    def test_redecomposed_spec_picked_up_in_next_cycle(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=2,
+            max_redecompositions=1,
+        )
+        sp, _ = _build_retry_exhausted_spec_plan(
+            plan_store, spec_source, agent_runtime, workspace_manager
+        )
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="new-approach",
+                    description="Different approach",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.decomposition_calls) == 1
+        _, _, events = agent_runtime.decomposition_calls[0]
+        task_failed_events = [e for e in events if e.reason == EventReason.TASK_FAILED]
+        assert len(task_failed_events) >= 1
+
+    def test_no_redecomposition_when_no_failed_tasks(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        plan = plan_store.get_plan()
+        sp = plan.add_spec("auth.spec.md", "abc123")
+        sp.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("auth.spec.md", "abc123")
+        workspace_manager.create_delivery_workspace("abc123")
+        plan.add_tasks(
+            sp,
+            [
+                Task(
+                    id=plan.next_task_id(),
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    name="T1",
+                    description="D1",
+                    status=TaskStatus.BACKLOG,
+                ),
+            ],
+        )
+
+        reconciler.run_cycle()
+
+        assert observer.calls_for("redecomposition_triggered") == []
+        assert observer.calls_for("spec_failed") == []

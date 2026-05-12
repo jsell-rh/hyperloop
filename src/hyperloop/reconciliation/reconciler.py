@@ -70,6 +70,7 @@ class Reconciler:
         self._decompose(plan)
         tasks_dispatched = self._dispatch_tasks(plan)
         tasks_completed, tasks_failed = self._collect_results(plan)
+        self._handle_retry_exhaustion(plan)
         self._collect_verification_results(plan)
         self._launch_verification(plan)
 
@@ -143,6 +144,8 @@ class Reconciler:
         events: list[Event] = []
         for sp in spec_plans:
             events.extend(sp.events)
+            for task in sp.tasks:
+                events.extend(task.events)
         return events
 
     def _materialize_tasks(
@@ -326,6 +329,46 @@ class Reconciler:
             )
         else:
             task.status = TaskStatus.FAILED
+
+    def _handle_retry_exhaustion(self, plan: Plan) -> None:
+        for sp in plan.spec_plans:
+            if sp.superseded or sp.status != SpecPlanStatus.RECONCILING:
+                continue
+            failed_tasks = [t for t in sp.tasks if t.status == TaskStatus.FAILED]
+            if not failed_tasks:
+                continue
+
+            if sp.redecomposition_count < self._max_redecompositions:
+                for task in sp.tasks:
+                    if (
+                        task.status == TaskStatus.IN_PROGRESS
+                        and task.agent_handle is not None
+                    ):
+                        try:
+                            self._agent_runtime.cancel(task.agent_handle)
+                        except Exception:
+                            pass
+                        self._observer.agent_cancelled(
+                            task_id=task.id,
+                            spec_path=task.spec_path,
+                            reason=CancellationReason.REDECOMPOSITION,
+                        )
+                sp.redecomposition_count += 1
+                sp.status = SpecPlanStatus.OUT_OF_SYNC
+                self._observer.redecomposition_triggered(
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    failed_task_count=len(failed_tasks),
+                    cycle=self._cycle,
+                )
+            else:
+                sp.status = SpecPlanStatus.FAILED
+                self._observer.spec_failed(
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    reason="Task retry and re-decomposition budget exhausted",
+                    cycle=self._cycle,
+                )
 
     def _merge_task(self, task: Task, spec_plan: SpecPlan) -> bool:
         merge_result = self._workspace_manager.merge_task(task.spec_blob_sha, task.id)

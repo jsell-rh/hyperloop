@@ -14,7 +14,7 @@ def spec_plan_to_dict(
         "status": spec_display_status(sp),
         "superseded": sp.superseded,
         "reconciliation_attempts": sp.reconciliation_attempts,
-        "has_redecomposed": sp.has_redecomposed,
+        "redecomposition_count": sp.redecomposition_count,
         "tasks": [task_to_dict(t, include_events=include_events) for t in sp.tasks],
     }
     if include_events:

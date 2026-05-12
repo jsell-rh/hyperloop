@@ -92,7 +92,7 @@ def _render_spec(sp: SpecPlan) -> None:
     click.echo(f"Status:         {sp.status.value}")
     click.echo(f"Superseded:     {str(sp.superseded).lower()}")
     click.echo(f"Attempts:       {sp.reconciliation_attempts}")
-    click.echo(f"Redecomposed:   {str(sp.has_redecomposed).lower()}")
+    click.echo(f"Redecompositions: {sp.redecomposition_count}")
 
     status_counts: Counter[TaskStatus] = Counter()
     for t in sp.tasks:

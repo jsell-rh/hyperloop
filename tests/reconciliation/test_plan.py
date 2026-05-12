@@ -63,7 +63,7 @@ class TestSpecPlan:
         assert sp.status == SpecPlanStatus.OUT_OF_SYNC
         assert sp.superseded is False
         assert sp.reconciliation_attempts == 0
-        assert sp.has_redecomposed is False
+        assert sp.redecomposition_count == 0
         assert sp.tasks == []
         assert sp.events == []
 
