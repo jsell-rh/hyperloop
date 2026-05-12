@@ -35,6 +35,27 @@ class TestPlanStructure:
         assert len(plan.events) == 1
         assert plan.events[0].reason == "ReconcilerStarted"
 
+    def test_plan_level_event_aggregation(self) -> None:
+        plan = Plan()
+        t1 = _utc_now()
+        plan.record_event(
+            reason="ReconcilerStarted",
+            message="Started",
+            event_type=EventType.NORMAL,
+            timestamp=t1,
+        )
+        t2 = _utc_now()
+        plan.record_event(
+            reason="ReconcilerStarted",
+            message="Started again",
+            event_type=EventType.NORMAL,
+            timestamp=t2,
+        )
+        assert len(plan.events) == 1
+        assert plan.events[0].count == 2
+        assert plan.events[0].first_timestamp == t1
+        assert plan.events[0].last_timestamp == t2
+
 
 class TestSpecPlan:
     def test_new_spec_plan_defaults(self) -> None:
@@ -418,6 +439,14 @@ class TestReconciliationAttempts:
         sp.record_verification_failure()
         assert sp.reconciliation_attempts == 1
         assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+
+    def test_verification_failure_from_verifying_state(self) -> None:
+        sp = SpecPlan(path="auth.spec.md", blob_sha="abc123")
+        sp.status = SpecPlanStatus.VERIFYING
+
+        sp.record_verification_failure()
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        assert sp.reconciliation_attempts == 1
 
     def test_redecomposition_flag_resets_on_new_cycle(self) -> None:
         sp = SpecPlan(path="auth.spec.md", blob_sha="abc123")

@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel
 
 
-class EventType(str, Enum):
+class EventType(StrEnum):
     NORMAL = "Normal"
     WARNING = "Warning"
 
 
-class SpecPlanStatus(str, Enum):
+class SpecPlanStatus(StrEnum):
     OUT_OF_SYNC = "OutOfSync"
     RECONCILING = "Reconciling"
     VERIFYING = "Verifying"
@@ -19,7 +19,7 @@ class SpecPlanStatus(str, Enum):
     FAILED = "Failed"
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     BACKLOG = "Backlog"
     IN_PROGRESS = "InProgress"
     COMPLETE = "Complete"
