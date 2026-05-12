@@ -180,9 +180,13 @@ class Reconciler:
         existing_tasks = self._collect_all_tasks(plan)
         events = self._collect_spec_events(out_of_sync)
 
-        proposed = self._agent_runtime.launch_decomposition(
-            spec_diffs, existing_tasks, events
-        )
+        try:
+            proposed = self._agent_runtime.launch_decomposition(
+                spec_diffs, existing_tasks, events
+            )
+        except Exception as exc:
+            self._handle_decomposition_failure(out_of_sync, str(exc))
+            return
 
         tasks_created = self._materialize_tasks(plan, out_of_sync, proposed)
 
@@ -193,6 +197,25 @@ class Reconciler:
             cycle=self._cycle,
             duration_s=duration,
         )
+
+    def _handle_decomposition_failure(self, specs: list[SpecPlan], reason: str) -> None:
+        self._observer.decomposition_failed(reason=reason, cycle=self._cycle)
+        for sp in specs:
+            sp.record_event(
+                reason=EventReason.DECOMPOSITION_FAILED,
+                message=reason,
+                event_type=EventType.WARNING,
+                timestamp=datetime.now(timezone.utc),
+            )
+            sp.reconciliation_attempts += 1
+            if sp.reconciliation_attempts >= self._convergence_bound:
+                sp.status = SpecPlanStatus.FAILED
+                self._observer.spec_failed(
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    reason=f"Convergence bound ({self._convergence_bound}) exceeded",
+                    cycle=self._cycle,
+                )
 
     def _find_last_synced_sha(self, plan: Plan, path: str) -> str | None:
         for sp in reversed(plan.spec_plans):
