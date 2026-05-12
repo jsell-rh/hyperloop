@@ -35,6 +35,8 @@ class Reconciler:
         max_concurrent_tasks: int = 5,
         convergence_bound: int = 3,
         max_integration_retries: int = 3,
+        max_task_retries: int = 3,
+        max_redecompositions: int = 1,
     ) -> None:
         self._spec_source = spec_source
         self._plan_store = plan_store
@@ -44,6 +46,8 @@ class Reconciler:
         self._max_concurrent_tasks = max_concurrent_tasks
         self._convergence_bound = convergence_bound
         self._max_integration_retries = max_integration_retries
+        self._max_task_retries = max_task_retries
+        self._max_redecompositions = max_redecompositions
         self._cycle: int = 0
 
     def run_cycle(self) -> None:
@@ -295,7 +299,6 @@ class Reconciler:
         return completed, failed
 
     def _mark_task_failed(self, task: Task, reason: str) -> None:
-        task.status = TaskStatus.FAILED
         task.agent_handle = None
         task.record_event(
             reason=EventReason.TASK_FAILED,
@@ -311,6 +314,18 @@ class Reconciler:
             retry_count=task.retry_count,
             cycle=self._cycle,
         )
+        if task.retry_count < self._max_task_retries:
+            task.retry_count += 1
+            task.status = TaskStatus.BACKLOG
+            self._observer.task_retried(
+                task_id=task.id,
+                spec_path=task.spec_path,
+                reason=reason,
+                retry_count=task.retry_count,
+                cycle=self._cycle,
+            )
+        else:
+            task.status = TaskStatus.FAILED
 
     def _merge_task(self, task: Task, spec_plan: SpecPlan) -> bool:
         merge_result = self._workspace_manager.merge_task(task.spec_blob_sha, task.id)

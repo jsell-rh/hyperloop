@@ -1507,7 +1507,7 @@ class TestResultCollection:
 
         assert sp.tasks[0].agent_handle is None
 
-    def test_failed_agent_marks_task_failed(
+    def test_failed_agent_resets_task_to_backlog_for_retry(
         self,
         reconciler: Reconciler,
         spec_source: FakeSpecSource,
@@ -1524,7 +1524,8 @@ class TestResultCollection:
 
         reconciler.run_cycle()
 
-        assert sp.tasks[0].status == TaskStatus.FAILED
+        assert sp.tasks[0].status == TaskStatus.BACKLOG
+        assert sp.tasks[0].retry_count == 1
 
     def test_failed_task_records_event(
         self,
@@ -1721,7 +1722,7 @@ class TestMerge:
 
         assert sp.tasks[0].status == TaskStatus.COMPLETE
 
-    def test_merge_resolution_failure_fails_task(
+    def test_merge_resolution_failure_resets_task_for_retry(
         self,
         reconciler: Reconciler,
         spec_source: FakeSpecSource,
@@ -1747,7 +1748,256 @@ class TestMerge:
 
         reconciler.run_cycle()
 
+        assert sp.tasks[0].status == TaskStatus.BACKLOG
+        assert sp.tasks[0].retry_count == 1
+
+
+class TestTaskRetry:
+    def test_retry_increments_retry_count(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="Compilation error"),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.tasks[0].retry_count == 1
+
+    def test_retry_clears_agent_handle(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="Compilation error"),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.tasks[0].agent_handle is None
+
+    def test_retry_fires_task_retried_observer_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="Compilation error"),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("task_retried")
+        assert len(events) == 1
+        assert events[0]["task_id"] == sp.tasks[0].id
+        assert events[0]["spec_path"] == "auth.spec.md"
+        assert events[0]["reason"] == "Compilation error"
+        assert events[0]["retry_count"] == 1
+        assert events[0]["cycle"] == 1
+
+    def test_retried_task_preserves_failure_events(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="Compilation error"),
+        )
+
+        reconciler.run_cycle()
+
+        assert len(sp.tasks[0].events) == 1
+        assert sp.tasks[0].events[0].reason == EventReason.TASK_FAILED
+
+    def test_retried_task_redispatched_next_cycle(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="Compilation error"),
+        )
+
+        reconciler.run_cycle()
+        assert sp.tasks[0].status == TaskStatus.BACKLOG
+        assert sp.tasks[0].retry_count == 1
+
+        reconciler.run_cycle()
+        assert sp.tasks[0].status == TaskStatus.IN_PROGRESS
+        assert sp.tasks[0].retry_count == 1
+
+    def test_retried_task_briefing_includes_failure_events(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="Compilation error"),
+        )
+
+        reconciler.run_cycle()
+        agent_runtime.launched_tasks.clear()
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.launched_tasks) >= 1
+        briefing = next(
+            b
+            for b in agent_runtime.launched_tasks
+            if b.task_description == sp.tasks[0].description
+        )
+        assert len(briefing.events) == 1
+        assert briefing.events[0].reason == EventReason.TASK_FAILED
+        assert briefing.events[0].message == "Compilation error"
+
+    def test_retry_exhaustion_marks_task_failed(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=2,
+        )
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        sp.tasks[0].retry_count = 2
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="Still failing"),
+        )
+
+        reconciler.run_cycle()
+
         assert sp.tasks[0].status == TaskStatus.FAILED
+        assert sp.tasks[0].retry_count == 2
+
+    def test_retry_exhaustion_does_not_fire_task_retried(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=1,
+        )
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        sp.tasks[0].retry_count = 1
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="Still failing"),
+        )
+
+        reconciler.run_cycle()
+
+        assert observer.calls_for("task_retried") == []
+
+    def test_zero_max_retries_fails_immediately(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=0,
+        )
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="Failing"),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.tasks[0].status == TaskStatus.FAILED
+        assert sp.tasks[0].retry_count == 0
+        assert observer.calls_for("task_retried") == []
+
+    def test_task_failed_observer_fires_on_every_failure(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="Compilation error"),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("task_failed")
+        assert len(events) == 1
+        assert events[0]["task_id"] == sp.tasks[0].id
+        assert events[0]["reason"] == "Compilation error"
 
 
 def _build_all_tasks_complete_spec_plan(
