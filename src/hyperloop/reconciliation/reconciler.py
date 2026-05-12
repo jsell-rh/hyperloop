@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import time
 
+from datetime import datetime, timezone
+
 from hyperloop.reconciliation.models.cancellation_reason import CancellationReason
-from hyperloop.reconciliation.models.event import Event
+from hyperloop.reconciliation.models.event import Event, EventType
+from hyperloop.reconciliation.models.merge_result import MergeOutcome
 from hyperloop.reconciliation.models.plan import Plan
+from hyperloop.reconciliation.models.poll_result import AgentStatus
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
 from hyperloop.reconciliation.models.spec_entry import SpecEntry
 from hyperloop.reconciliation.models.spec_plan import SpecPlan, SpecPlanStatus
 from hyperloop.reconciliation.models.task import Task, TaskStatus
+from hyperloop.reconciliation.models.task_briefing import TaskBriefing
 from hyperloop.reconciliation.ports.agent_runtime import AgentRuntime
 from hyperloop.reconciliation.ports.observer import ChangeType, Observer
 from hyperloop.reconciliation.ports.plan_store import PlanStore
@@ -26,12 +31,14 @@ class Reconciler:
         observer: Observer,
         agent_runtime: AgentRuntime,
         workspace_manager: WorkspaceManager,
+        max_concurrent_tasks: int = 5,
     ) -> None:
         self._spec_source = spec_source
         self._plan_store = plan_store
         self._observer = observer
         self._agent_runtime = agent_runtime
         self._workspace_manager = workspace_manager
+        self._max_concurrent_tasks = max_concurrent_tasks
         self._cycle: int = 0
 
     def run_cycle(self) -> None:
@@ -52,6 +59,8 @@ class Reconciler:
 
         self._detect_divergence(plan, entries)
         self._decompose(plan)
+        tasks_dispatched = self._dispatch_tasks(plan)
+        tasks_completed, tasks_failed = self._collect_results(plan)
 
         self._plan_store.write_plan(plan)
         self._observer.plan_synced(cycle=self._cycle)
@@ -61,9 +70,9 @@ class Reconciler:
             cycle=self._cycle,
             duration_s=duration,
             specs_out_of_sync=self._count_out_of_sync(plan),
-            tasks_dispatched=0,
-            tasks_completed=0,
-            tasks_failed=0,
+            tasks_dispatched=tasks_dispatched,
+            tasks_completed=tasks_completed,
+            tasks_failed=tasks_failed,
         )
 
     def _decompose(self, plan: Plan) -> None:
@@ -177,6 +186,140 @@ class Reconciler:
                 )
 
         return len(tasks_with_proposed)
+
+    def _dispatch_tasks(self, plan: Plan) -> int:
+        in_progress_count = self._count_in_progress(plan)
+        available_slots = self._max_concurrent_tasks - in_progress_count
+        if available_slots <= 0:
+            return 0
+
+        unblocked = plan.get_unblocked_tasks()
+        to_dispatch = unblocked[:available_slots]
+        if not to_dispatch:
+            return 0
+
+        delivery_workspaces_created: set[str] = set()
+        for task in to_dispatch:
+            if task.spec_blob_sha not in delivery_workspaces_created:
+                self._workspace_manager.create_delivery_workspace(task.spec_blob_sha)
+                delivery_workspaces_created.add(task.spec_blob_sha)
+
+            spec_content = self._spec_source.read_at(task.spec_path, task.spec_blob_sha)
+            workspace_id = self._workspace_manager.create_task_workspace(
+                task.spec_blob_sha, task.id, task.description
+            )
+            briefing = TaskBriefing(
+                spec_content=spec_content,
+                spec_path=task.spec_path,
+                spec_blob_sha=task.spec_blob_sha,
+                task_description=task.description,
+                events=list(task.events),
+                workspace_id=workspace_id,
+            )
+            handle = self._agent_runtime.launch_task(briefing)
+            task.status = TaskStatus.IN_PROGRESS
+            task.agent_handle = handle
+            self._observer.task_dispatched(
+                task_id=task.id,
+                spec_path=task.spec_path,
+                spec_blob_sha=task.spec_blob_sha,
+                retry_count=task.retry_count,
+                cycle=self._cycle,
+            )
+
+        return len(to_dispatch)
+
+    def _collect_results(self, plan: Plan) -> tuple[int, int]:
+        completed = 0
+        failed = 0
+        for sp in plan.spec_plans:
+            if sp.superseded:
+                continue
+            for task in sp.tasks:
+                if task.status != TaskStatus.IN_PROGRESS or task.agent_handle is None:
+                    continue
+                result = self._agent_runtime.poll(task.agent_handle)
+                if result.status == AgentStatus.RUNNING:
+                    continue
+                if result.status == AgentStatus.COMPLETE:
+                    if self._merge_task(task):
+                        task.status = TaskStatus.COMPLETE
+                        task.agent_handle = None
+                        self._observer.task_completed(
+                            task_id=task.id,
+                            spec_path=task.spec_path,
+                            spec_blob_sha=task.spec_blob_sha,
+                            cycle=self._cycle,
+                        )
+                        completed += 1
+                    else:
+                        task.status = TaskStatus.FAILED
+                        task.agent_handle = None
+                        task.record_event(
+                            reason="TaskFailed",
+                            message="Merge resolution failed",
+                            event_type=EventType.WARNING,
+                            timestamp=datetime.now(timezone.utc),
+                        )
+                        self._observer.task_failed(
+                            task_id=task.id,
+                            spec_path=task.spec_path,
+                            spec_blob_sha=task.spec_blob_sha,
+                            reason="Merge resolution failed",
+                            retry_count=task.retry_count,
+                            cycle=self._cycle,
+                        )
+                        failed += 1
+                elif result.status == AgentStatus.FAILED:
+                    rationale = result.rationale or "Unknown failure"
+                    task.status = TaskStatus.FAILED
+                    task.agent_handle = None
+                    task.record_event(
+                        reason="TaskFailed",
+                        message=rationale,
+                        event_type=EventType.WARNING,
+                        timestamp=datetime.now(timezone.utc),
+                    )
+                    self._observer.task_failed(
+                        task_id=task.id,
+                        spec_path=task.spec_path,
+                        spec_blob_sha=task.spec_blob_sha,
+                        reason=rationale,
+                        retry_count=task.retry_count,
+                        cycle=self._cycle,
+                    )
+                    failed += 1
+        return completed, failed
+
+    def _merge_task(self, task: Task) -> bool:
+        merge_result = self._workspace_manager.merge_task(task.spec_blob_sha, task.id)
+        if merge_result.outcome == MergeOutcome.SUCCESS:
+            self._observer.task_merge_completed(
+                task_id=task.id, spec_blob_sha=task.spec_blob_sha
+            )
+            return True
+
+        self._observer.task_merge_conflict(
+            task_id=task.id, spec_blob_sha=task.spec_blob_sha
+        )
+        task_workspace_id = f"task/{task.spec_blob_sha}/{task.id}"
+        delivery_workspace_id = f"delivery/{task.spec_blob_sha}"
+        self._observer.merge_resolution_launched(
+            task_id=task.id, spec_blob_sha=task.spec_blob_sha
+        )
+        success = self._agent_runtime.launch_merge_resolution(
+            task_workspace_id,
+            delivery_workspace_id,
+            merge_result.conflict_details or "",
+        )
+        self._observer.merge_resolution_completed(
+            task_id=task.id, spec_blob_sha=task.spec_blob_sha, success=success
+        )
+        if success:
+            self._observer.task_merge_completed(
+                task_id=task.id, spec_blob_sha=task.spec_blob_sha
+            )
+        return success
 
     def _detect_divergence(self, plan: Plan, entries: list[SpecEntry]) -> None:
         source_paths: set[str] = set()

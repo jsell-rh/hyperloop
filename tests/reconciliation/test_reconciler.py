@@ -8,6 +8,8 @@ from hyperloop.reconciliation.models import SpecPlanStatus, Task, TaskStatus
 from hyperloop.reconciliation.models.agent_handle import AgentHandle
 from hyperloop.reconciliation.models.cancellation_reason import CancellationReason
 from hyperloop.reconciliation.models.event import EventType
+from hyperloop.reconciliation.models.merge_result import MergeOutcome, MergeResult
+from hyperloop.reconciliation.models.poll_result import AgentStatus, PollResult
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
 from hyperloop.reconciliation.models.spec_plan import SpecPlan
 from hyperloop.reconciliation.ports.observer import ChangeType
@@ -345,6 +347,7 @@ class TestCycleLifecycle:
 def _build_in_progress_spec_plan(
     plan_store: FakePlanStore,
     workspace_manager: FakeWorkspaceManager,
+    agent_runtime: FakeAgentRuntime | None = None,
     path: str = "auth.spec.md",
     blob_sha: str = "abc123",
 ) -> SpecPlan:
@@ -380,6 +383,13 @@ def _build_in_progress_spec_plan(
             ),
         ],
     )
+    workspace_manager.create_task_workspace(blob_sha, id1, "D1")
+    workspace_manager.create_task_workspace(blob_sha, id2, "D2")
+
+    if agent_runtime is not None:
+        agent_runtime.set_poll_result(handle_a, PollResult(status=AgentStatus.RUNNING))
+        agent_runtime.set_poll_result(handle_b, PollResult(status=AgentStatus.RUNNING))
+
     return sp
 
 
@@ -600,7 +610,7 @@ class TestDecompositionDispatch:
         assert sp.tasks[0].description == "Implement authentication"
         assert sp.tasks[0].spec_path == "auth.spec.md"
         assert sp.tasks[0].spec_blob_sha == "abc123"
-        assert sp.tasks[0].status == TaskStatus.BACKLOG
+        assert sp.tasks[0].status == TaskStatus.IN_PROGRESS
 
     def test_spec_plan_transitions_to_reconciling(
         self,
@@ -1048,3 +1058,634 @@ class TestDecompositionDispatch:
                 all_ids.append(t.id)
         assert all_ids == [1, 2, 3]
         assert len(set(all_ids)) == 3
+
+
+def _build_reconciling_spec_plan(
+    plan_store: FakePlanStore,
+    spec_source: FakeSpecSource,
+    path: str = "auth.spec.md",
+    blob_sha: str = "abc123",
+    spec_content: str = "# Auth Spec\nRequirements here",
+    task_count: int = 2,
+    task_status: TaskStatus = TaskStatus.BACKLOG,
+) -> tuple[SpecPlan, list[Task]]:
+    plan = plan_store.get_plan()
+    sp = plan.add_spec(path, blob_sha)
+    sp.status = SpecPlanStatus.RECONCILING
+    spec_source.add_spec(path, blob_sha, content=spec_content)
+
+    tasks: list[Task] = []
+    for i in range(task_count):
+        task_id = plan.next_task_id()
+        tasks.append(
+            Task(
+                id=task_id,
+                spec_path=path,
+                spec_blob_sha=blob_sha,
+                name=f"task-{task_id}",
+                description=f"Task {task_id} description",
+                status=task_status,
+            )
+        )
+    plan.add_tasks(sp, tasks)
+    return sp, tasks
+
+
+class TestTaskDispatch:
+    def test_unblocked_task_dispatched_to_in_progress(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+    ) -> None:
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+
+        reconciler.run_cycle()
+
+        assert tasks[0].status == TaskStatus.IN_PROGRESS
+
+    def test_agent_handle_stored_on_dispatched_task(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+    ) -> None:
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+
+        reconciler.run_cycle()
+
+        assert tasks[0].agent_handle is not None
+
+    def test_delivery_workspace_created(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+
+        reconciler.run_cycle()
+
+        assert workspace_manager.has_delivery_workspace("abc123")
+
+    def test_task_workspace_created(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+
+        reconciler.run_cycle()
+
+        assert workspace_manager.has_task_workspace("abc123", tasks[0].id)
+
+    def test_agent_launched_with_correct_briefing(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        _build_reconciling_spec_plan(
+            plan_store,
+            spec_source,
+            task_count=1,
+            spec_content="# Auth\nMUST authenticate users",
+        )
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.launched_tasks) == 1
+        briefing = agent_runtime.launched_tasks[0]
+        assert briefing.spec_content == "# Auth\nMUST authenticate users"
+        assert briefing.spec_path == "auth.spec.md"
+        assert briefing.spec_blob_sha == "abc123"
+        assert briefing.task_description == "Task 1 description"
+        assert briefing.workspace_id == "task/abc123/1"
+
+    def test_task_briefing_includes_events_on_retry(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+        tasks[0].record_event(
+            reason="TaskFailed",
+            message="Test compilation error",
+            event_type=EventType.WARNING,
+            timestamp=datetime.now(timezone.utc),
+        )
+
+        reconciler.run_cycle()
+
+        briefing = agent_runtime.launched_tasks[0]
+        assert len(briefing.events) == 1
+        assert briefing.events[0].reason == "TaskFailed"
+        assert briefing.events[0].message == "Test compilation error"
+
+    def test_blocked_task_not_dispatched(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        plan = plan_store.get_plan()
+        sp = plan.add_spec("auth.spec.md", "abc123")
+        sp.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("auth.spec.md", "abc123")
+        t1 = Task(
+            id=plan.next_task_id(),
+            spec_path="auth.spec.md",
+            spec_blob_sha="abc123",
+            name="t1",
+            description="d1",
+        )
+        t2 = Task(
+            id=plan.next_task_id(),
+            spec_path="auth.spec.md",
+            spec_blob_sha="abc123",
+            name="t2",
+            description="d2",
+            depends_on=[t1.id],
+        )
+        plan.add_tasks(sp, [t1, t2])
+
+        reconciler.run_cycle()
+
+        assert t1.status == TaskStatus.IN_PROGRESS
+        assert t2.status == TaskStatus.BACKLOG
+        assert len(agent_runtime.launched_tasks) == 1
+
+    def test_concurrent_limit_enforced(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_concurrent_tasks=2,
+        )
+        _build_reconciling_spec_plan(plan_store, spec_source, task_count=4)
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        sp = next(sp for sp in plan.spec_plans if sp.path == "auth.spec.md")
+        in_progress = [t for t in sp.tasks if t.status == TaskStatus.IN_PROGRESS]
+        backlog = [t for t in sp.tasks if t.status == TaskStatus.BACKLOG]
+        assert len(in_progress) == 2
+        assert len(backlog) == 2
+
+    def test_concurrent_limit_accounts_for_already_in_progress(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_concurrent_tasks=3,
+        )
+        plan = plan_store.get_plan()
+        sp = plan.add_spec("auth.spec.md", "abc123")
+        sp.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("auth.spec.md", "abc123")
+        workspace_manager.create_delivery_workspace("abc123")
+        existing_handle = AgentHandle(id="existing-agent")
+        agent_runtime.set_poll_result(
+            existing_handle, PollResult(status=AgentStatus.RUNNING)
+        )
+        plan.add_tasks(
+            sp,
+            [
+                Task(
+                    id=plan.next_task_id(),
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    name="running",
+                    description="d0",
+                    status=TaskStatus.IN_PROGRESS,
+                    agent_handle=existing_handle,
+                ),
+                Task(
+                    id=plan.next_task_id(),
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    name="backlog-1",
+                    description="d1",
+                ),
+                Task(
+                    id=plan.next_task_id(),
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    name="backlog-2",
+                    description="d2",
+                ),
+                Task(
+                    id=plan.next_task_id(),
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    name="backlog-3",
+                    description="d3",
+                ),
+            ],
+        )
+
+        reconciler.run_cycle()
+
+        in_progress = [t for t in sp.tasks if t.status == TaskStatus.IN_PROGRESS]
+        backlog = [t for t in sp.tasks if t.status == TaskStatus.BACKLOG]
+        assert len(in_progress) == 3
+        assert len(backlog) == 1
+
+    def test_already_in_progress_task_not_re_dispatched(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.launched_tasks) == 0
+
+    def test_task_dispatched_observer_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+    ) -> None:
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("task_dispatched")
+        assert len(events) == 1
+        assert events[0]["task_id"] == tasks[0].id
+        assert events[0]["spec_path"] == "auth.spec.md"
+        assert events[0]["spec_blob_sha"] == "abc123"
+        assert events[0]["retry_count"] == 0
+        assert events[0]["cycle"] == 1
+
+    def test_multiple_tasks_dispatched_in_same_cycle(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        _build_reconciling_spec_plan(plan_store, spec_source, task_count=3)
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.launched_tasks) == 3
+
+    def test_each_task_gets_isolated_workspace(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        _build_reconciling_spec_plan(plan_store, spec_source, task_count=2)
+
+        reconciler.run_cycle()
+
+        workspace_ids = {b.workspace_id for b in agent_runtime.launched_tasks}
+        assert len(workspace_ids) == 2
+
+    def test_cycle_completed_reports_dispatched_count(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+    ) -> None:
+        _build_reconciling_spec_plan(plan_store, spec_source, task_count=2)
+
+        reconciler.run_cycle()
+
+        completed = observer.calls_for("cycle_completed")
+        assert completed[0]["tasks_dispatched"] == 2
+
+
+class TestResultCollection:
+    def test_running_task_status_unchanged(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+
+        reconciler.run_cycle()
+
+        assert sp.tasks[0].status == TaskStatus.IN_PROGRESS
+        assert sp.tasks[1].status == TaskStatus.IN_PROGRESS
+
+    def test_complete_agent_marks_task_complete(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.COMPLETE),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.tasks[0].status == TaskStatus.COMPLETE
+
+    def test_complete_task_handle_cleared(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.COMPLETE),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.tasks[0].agent_handle is None
+
+    def test_failed_agent_marks_task_failed(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="Compilation error"),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.tasks[0].status == TaskStatus.FAILED
+
+    def test_failed_task_records_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="Compilation error"),
+        )
+
+        reconciler.run_cycle()
+
+        assert len(sp.tasks[0].events) == 1
+        assert sp.tasks[0].events[0].reason == "TaskFailed"
+        assert "Compilation error" in sp.tasks[0].events[0].message
+
+    def test_task_completed_observer_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.COMPLETE),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("task_completed")
+        assert len(events) == 1
+        assert events[0]["task_id"] == sp.tasks[0].id
+        assert events[0]["spec_path"] == "auth.spec.md"
+
+    def test_task_failed_observer_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="Compilation error"),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("task_failed")
+        assert len(events) == 1
+        assert events[0]["task_id"] == sp.tasks[0].id
+        assert events[0]["reason"] == "Compilation error"
+
+    def test_cycle_completed_reports_completion_counts(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.COMPLETE),
+        )
+        agent_runtime.set_poll_result(
+            sp.tasks[1].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale="err"),
+        )
+
+        reconciler.run_cycle()
+
+        completed = observer.calls_for("cycle_completed")
+        assert completed[0]["tasks_completed"] == 1
+        assert completed[0]["tasks_failed"] == 1
+
+
+class TestMerge:
+    def test_completed_task_merged_into_delivery_workspace(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.COMPLETE),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("task_merge_completed")
+        assert len(events) == 1
+        assert events[0]["task_id"] == sp.tasks[0].id
+        assert events[0]["spec_blob_sha"] == "abc123"
+
+    def test_successful_merge_cleans_up_task_workspace(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.COMPLETE),
+        )
+
+        reconciler.run_cycle()
+
+        assert not workspace_manager.has_task_workspace("abc123", sp.tasks[0].id)
+
+    def test_merge_conflict_launches_resolution_agent(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.COMPLETE),
+        )
+        workspace_manager.set_merge_result(
+            "abc123",
+            sp.tasks[0].id,
+            MergeResult(
+                outcome=MergeOutcome.CONFLICT,
+                conflict_details="Both modified auth.py",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("merge_resolution_launched")
+        assert len(events) == 1
+        assert events[0]["task_id"] == sp.tasks[0].id
+
+    def test_merge_resolution_success_completes_task(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.COMPLETE),
+        )
+        workspace_manager.set_merge_result(
+            "abc123",
+            sp.tasks[0].id,
+            MergeResult(
+                outcome=MergeOutcome.CONFLICT,
+                conflict_details="Both modified auth.py",
+            ),
+        )
+        agent_runtime.set_merge_result(True)
+
+        reconciler.run_cycle()
+
+        assert sp.tasks[0].status == TaskStatus.COMPLETE
+
+    def test_merge_resolution_failure_fails_task(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.COMPLETE),
+        )
+        workspace_manager.set_merge_result(
+            "abc123",
+            sp.tasks[0].id,
+            MergeResult(
+                outcome=MergeOutcome.CONFLICT,
+                conflict_details="Both modified auth.py",
+            ),
+        )
+        agent_runtime.set_merge_result(False)
+
+        reconciler.run_cycle()
+
+        assert sp.tasks[0].status == TaskStatus.FAILED
