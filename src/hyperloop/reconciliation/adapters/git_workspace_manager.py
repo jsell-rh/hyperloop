@@ -84,28 +84,21 @@ class GitWorkspaceManager:
         delivery = self._delivery_branch(blob_sha)
         self._push_branch(delivery)
 
-        title = f"[hyperloop] {spec_path}"
+        prefix = self._branch_prefix.rstrip("/")
+        title = f"[{prefix}] {spec_path}"
         body = f"Spec: {spec_path}\nBlob SHA: {blob_sha}"
 
-        result = subprocess.run(
-            [
-                "gh",
-                "pr",
-                "create",
-                "--base",
-                self._trunk_branch,
-                "--head",
-                delivery,
-                "--title",
-                title,
-                "--body",
-                body,
-            ],
-            cwd=self._repo_path,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=True,
+        result = self._gh(
+            "pr",
+            "create",
+            "--base",
+            self._trunk_branch,
+            "--head",
+            delivery,
+            "--title",
+            title,
+            "--body",
+            body,
         )
         return result.stdout.strip()
 
@@ -172,5 +165,19 @@ class GitWorkspaceManager:
             text=True,
             encoding="utf-8",
             input=input,
+            check=check,
+        )
+
+    def _gh(
+        self,
+        *args: str,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["gh", *args],
+            cwd=self._repo_path,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
             check=check,
         )
