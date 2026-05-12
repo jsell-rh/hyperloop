@@ -134,6 +134,15 @@ The AgentRuntime port SHALL manage agent lifecycle for decomposition, implementa
 - THEN it returns handles for any agents that were running before the crash
 - AND these handles can be cancelled to clean up
 
+#### Scenario: Compose integration summary
+
+- GIVEN a spec has passed verification and is ready for trunk integration
+- WHEN compose_integration_summary is called with the spec content, task summaries, and verification rationale
+- THEN an agent generates a pull request title and body summarizing the changes
+- AND the call blocks until the summary is produced (like decomposition)
+- AND the returned title is concise (suitable for a PR title)
+- AND the returned body describes what changed and why, aimed at a human reviewer
+
 ### Requirement: WorkspaceManager Port
 
 The WorkspaceManager port SHALL manage isolated workspaces for task execution and spec delivery.
@@ -162,8 +171,8 @@ The WorkspaceManager port SHALL manage isolated workspaces for task execution an
 #### Scenario: Integrate delivery workspace to trunk
 
 - GIVEN a spec's delivery workspace with all verified work
-- WHEN integrate is called
-- THEN the changes are submitted for integration to trunk
+- WHEN integrate is called with blob_sha, spec_path, title, and body
+- THEN the changes are submitted for integration to trunk using the provided title and body
 - AND an integration identifier is returned
 
 #### Scenario: Create a verification workspace

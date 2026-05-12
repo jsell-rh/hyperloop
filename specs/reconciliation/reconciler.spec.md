@@ -167,8 +167,17 @@ After all tasks for a SpecPlan reach Complete status, the reconciler SHALL launc
 - GIVEN the verification agent returns Pass with rationale
 - WHEN the reconciler collects the result
 - THEN a VerificationPassed event is recorded
-- AND the delivery workspace is integrated to trunk via the WorkspaceManager port
+- AND an integration summary (PR title and body) is generated via the AgentRuntime port
+- AND the delivery workspace is integrated to trunk via the WorkspaceManager port using the generated title and body
 - AND on successful integration, the SpecPlan transitions to Synced
+
+#### Scenario: Integration summary generation
+
+- GIVEN a spec has passed verification
+- WHEN the reconciler prepares for trunk integration
+- THEN it calls compose_integration_summary on the AgentRuntime port
+- AND provides the spec content, completed task descriptions, and verification rationale as context
+- AND the agent produces a concise PR title and descriptive body for a human reviewer
 
 #### Scenario: Verification fail
 

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Agent prompts are composed from three layers resolved via kustomize. This enables framework defaults, team customization, and automated refinement to coexist without conflict. Every agent role — decomposition, implementer, verifier, merge resolver — uses the same composition model. The prompt composer is shared infrastructure: it is injected into AgentRuntime adapters by the composition root. Adapters call the composer with structured context and an optional epilogue string. The domain layer does not interact with the composer directly.
+Agent prompts are composed from three layers resolved via kustomize. This enables framework defaults, team customization, and automated refinement to coexist without conflict. Every agent role — decomposition, implementer, verifier, merge resolver, integration summarizer — uses the same composition model. The prompt composer is shared infrastructure: it is injected into AgentRuntime adapters by the composition root. Adapters call the composer with structured context and an optional epilogue string. The domain layer does not interact with the composer directly.
 
 ## Requirements
 
@@ -118,6 +118,13 @@ At compose time, the prompt composer SHALL inject runtime context as additional 
 - GIVEN OutOfSync specs with diffs, events, and cross-spec task state
 - WHEN the decomposition agent's prompt is composed
 - THEN it contains: base prompt + guidelines + spec content at current SHA + diff from last Synced SHA + prior events (if any) + current task state across all specs (for cross-spec dependency awareness)
+
+#### Scenario: Integration summarizer prompt
+
+- GIVEN a spec has passed verification and is ready for trunk integration
+- WHEN the `integration-summarizer` role's prompt is composed
+- THEN it contains: base prompt + guidelines + spec content at pinned SHA + completed task names and descriptions + verification rationale
+- AND the agent produces a structured response with a PR title and body
 
 ### Requirement: Hot-Reload
 

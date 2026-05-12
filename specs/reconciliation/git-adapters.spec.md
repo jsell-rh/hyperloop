@@ -111,9 +111,9 @@ The git WorkspaceManager adapter SHALL use a dedicated branch per spec version a
 #### Scenario: Delivery branch is the PR vehicle
 
 - GIVEN all tasks for abc123 are complete and verified
-- WHEN integrate is called
+- WHEN integrate is called with a title, body, spec_path, and blob_sha
 - THEN a pull request is opened from `hyperloop/spec/abc123/delivery` to trunk
-- AND the PR title and body reference the spec path and blob SHA
+- AND the PR uses the provided title and body
 
 ### Requirement: Task Workspace
 
@@ -291,14 +291,14 @@ The AgentRuntime git adapter SHALL cancel an agent by deleting its branch. If th
 
 ### Requirement: Trunk Integration via Pull Request
 
-The git WorkspaceManager adapter SHALL integrate verified spec work to trunk by opening a pull request from the spec delivery branch.
+The git WorkspaceManager adapter SHALL integrate verified spec work to trunk by opening a pull request from the spec delivery branch. The pull request title and body are provided by the caller — the adapter SHALL NOT generate them.
 
 #### Scenario: PR opened after verification pass
 
 - GIVEN spec "auth.spec.md" at SHA abc123 has passed verification
-- WHEN integrate is called
+- WHEN integrate is called with blob_sha "abc123", spec_path "specs/auth.spec.md", and an agent-generated title and body
 - THEN a pull request is opened from `hyperloop/spec/abc123/delivery` to trunk
-- AND the PR identifies the spec and blob SHA
+- AND the PR uses the provided title and body
 - AND the PR URL is returned as the integration identifier
 
 #### Scenario: PR merge conflict
