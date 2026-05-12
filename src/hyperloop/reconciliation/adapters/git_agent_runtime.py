@@ -6,11 +6,16 @@ from pathlib import Path
 
 from hyperloop.reconciliation.adapters.agent_executor import AgentExecutor
 from hyperloop.reconciliation.models.agent_handle import AgentHandle
+from hyperloop.reconciliation.models.event import Event
+from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.poll_result import (
     AgentStatus,
     AgentVerdict,
     PollResult,
 )
+from hyperloop.reconciliation.models.proposed_task import ProposedTask
+from hyperloop.reconciliation.models.spec_diff import SpecDiff
+from hyperloop.reconciliation.models.task import Task
 from hyperloop.reconciliation.models.task_briefing import TaskBriefing
 
 _TASK_STATUS_RE = re.compile(r"^Task-Status:\s*(Complete|Failed)\s*$", re.MULTILINE)
@@ -79,6 +84,60 @@ class GitAgentRuntime:
         branch = self._workspace_to_branch(briefing.workspace_id)
         self._executor.start_task_agent(branch=branch, briefing=briefing)
         return AgentHandle(id=branch)
+
+    def launch_decomposition(
+        self,
+        spec_diffs: list[SpecDiff],
+        existing_tasks: list[Task],
+        events: list[Event],
+    ) -> list[ProposedTask]:
+        return self._executor.run_decomposition(
+            spec_diffs=spec_diffs,
+            existing_tasks=existing_tasks,
+            events=events,
+        )
+
+    def launch_verification(
+        self,
+        spec_content: str,
+        spec_path: str,
+        spec_blob_sha: str,
+        workspace_id: str,
+    ) -> AgentHandle:
+        branch = self._workspace_to_branch(workspace_id)
+        self._executor.start_verification_agent(
+            branch=branch,
+            spec_content=spec_content,
+            spec_path=spec_path,
+            spec_blob_sha=spec_blob_sha,
+        )
+        return AgentHandle(id=branch)
+
+    def launch_merge_resolution(
+        self,
+        task_workspace_id: str,
+        delivery_workspace_id: str,
+        conflict_details: str,
+    ) -> bool:
+        task_branch = self._workspace_to_branch(task_workspace_id)
+        delivery_branch = self._workspace_to_branch(delivery_workspace_id)
+        return self._executor.resolve_merge(
+            task_branch=task_branch,
+            delivery_branch=delivery_branch,
+            conflict_details=conflict_details,
+        )
+
+    def compose_integration_summary(
+        self,
+        spec_content: str,
+        task_summaries: list[tuple[str, str]],
+        verification_rationale: str,
+    ) -> IntegrationSummary:
+        return self._executor.compose_summary(
+            spec_content=spec_content,
+            task_summaries=task_summaries,
+            verification_rationale=verification_rationale,
+        )
 
     def cancel(self, handle: AgentHandle) -> None:
         self._git(

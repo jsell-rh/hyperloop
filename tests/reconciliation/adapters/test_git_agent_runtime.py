@@ -10,6 +10,9 @@ from hyperloop.reconciliation.models.poll_result import (
     AgentVerdict,
     PollResult,
 )
+from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
+from hyperloop.reconciliation.models.proposed_task import ProposedTask
+from hyperloop.reconciliation.models.spec_diff import SpecDiff
 from hyperloop.reconciliation.models.task_briefing import TaskBriefing
 
 from tests.reconciliation.fakes.fake_agent_executor import FakeAgentExecutor
@@ -587,6 +590,216 @@ class TestLaunchTask:
             assert False, "Expected RuntimeError"
         except RuntimeError as exc:
             assert "Agent start failed" in str(exc)
+
+
+class TestLaunchDecomposition:
+    def test_returns_proposed_tasks_from_executor(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        expected = [
+            ProposedTask(
+                name="implement-auth",
+                description="Add auth endpoint",
+                spec_path="specs/auth.spec.md",
+                spec_blob_sha=BLOB_SHA,
+            ),
+        ]
+        executor = FakeAgentExecutor()
+        executor.set_decomposition_result(expected)
+        runtime = _make_runtime(local, executor)
+
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha=BLOB_SHA,
+                diff_text="+ new requirement",
+            ),
+        ]
+        result = runtime.launch_decomposition(spec_diffs, [], [])
+
+        assert result == expected
+
+    def test_passes_all_parameters_to_executor(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(local, executor)
+
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha=BLOB_SHA,
+                diff_text="+ new requirement",
+            ),
+        ]
+        runtime.launch_decomposition(spec_diffs, [], [])
+
+        assert len(executor.decomposition_calls) == 1
+        received_diffs, received_tasks, received_events = executor.decomposition_calls[
+            0
+        ]
+        assert received_diffs == spec_diffs
+        assert received_tasks == []
+        assert received_events == []
+
+    def test_executor_failure_propagates(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        executor = FakeAgentExecutor()
+        executor.set_decomposition_error(RuntimeError("LLM unavailable"))
+        runtime = _make_runtime(local, executor)
+
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha=BLOB_SHA,
+                diff_text="+ new requirement",
+            ),
+        ]
+
+        try:
+            runtime.launch_decomposition(spec_diffs, [], [])
+            assert False, "Expected RuntimeError"
+        except RuntimeError as exc:
+            assert "LLM unavailable" in str(exc)
+
+
+class TestLaunchVerification:
+    def test_returns_handle_with_verifier_branch_as_id(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        _create_branch_from(local, VERIFIER_BRANCH, "main")
+
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(local, executor)
+
+        handle = runtime.launch_verification(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            workspace_id=f"verification/{BLOB_SHA}",
+        )
+
+        assert handle.id == VERIFIER_BRANCH
+
+    def test_delegates_to_executor(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        _create_branch_from(local, VERIFIER_BRANCH, "main")
+
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(local, executor)
+
+        runtime.launch_verification(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            workspace_id=f"verification/{BLOB_SHA}",
+        )
+
+        assert len(executor.started_verifications) == 1
+        branch, content, path, sha = executor.started_verifications[0]
+        assert branch == VERIFIER_BRANCH
+        assert content == "# Auth Spec"
+        assert path == "specs/auth.spec.md"
+        assert sha == BLOB_SHA
+
+    def test_handle_is_pollable(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        _create_branch_from(local, VERIFIER_BRANCH, "main")
+        _create_signal_commit(
+            local,
+            VERIFIER_BRANCH,
+            "All verified\n\nVerification-Status: Pass",
+        )
+        _push_branch(local, VERIFIER_BRANCH)
+
+        runtime = _make_runtime(local)
+        handle = runtime.launch_verification(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            workspace_id=f"verification/{BLOB_SHA}",
+        )
+        result = runtime.poll(handle)
+
+        assert result.status == AgentStatus.COMPLETE
+        assert result.verdict == AgentVerdict.PASS
+
+
+class TestLaunchMergeResolution:
+    def test_delegates_to_executor_with_branch_names(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(local, executor)
+
+        result = runtime.launch_merge_resolution(
+            task_workspace_id=f"task/{BLOB_SHA}/5",
+            delivery_workspace_id=f"delivery/{BLOB_SHA}",
+            conflict_details="Conflict in auth.py",
+        )
+
+        assert result is True
+        assert len(executor.merge_calls) == 1
+        task_br, delivery_br, details = executor.merge_calls[0]
+        assert task_br == TASK_BRANCH
+        assert delivery_br == f"{BRANCH_PREFIX}spec/{BLOB_SHA}/delivery"
+        assert details == "Conflict in auth.py"
+
+    def test_returns_false_on_failure(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        executor = FakeAgentExecutor()
+        executor.set_merge_result(False)
+        runtime = _make_runtime(local, executor)
+
+        result = runtime.launch_merge_resolution(
+            task_workspace_id=f"task/{BLOB_SHA}/5",
+            delivery_workspace_id=f"delivery/{BLOB_SHA}",
+            conflict_details="Conflict in auth.py",
+        )
+
+        assert result is False
+
+
+class TestComposeIntegrationSummary:
+    def test_delegates_to_executor(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        expected = IntegrationSummary(title="Add auth", body="Implements auth spec")
+        executor = FakeAgentExecutor()
+        executor.set_integration_summary(expected)
+        runtime = _make_runtime(local, executor)
+
+        result = runtime.compose_integration_summary(
+            spec_content="# Auth Spec",
+            task_summaries=[("implement-auth", "Added auth endpoint")],
+            verification_rationale="All requirements met",
+        )
+
+        assert result == expected
+        assert len(executor.summary_calls) == 1
+        content, summaries, rationale = executor.summary_calls[0]
+        assert content == "# Auth Spec"
+        assert summaries == [("implement-auth", "Added auth endpoint")]
+        assert rationale == "All requirements met"
+
+    def test_executor_failure_propagates(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        executor = FakeAgentExecutor()
+        executor.set_integration_summary_error(RuntimeError("LLM unavailable"))
+        runtime = _make_runtime(local, executor)
+
+        try:
+            runtime.compose_integration_summary(
+                spec_content="# Auth Spec",
+                task_summaries=[],
+                verification_rationale="All requirements met",
+            )
+            assert False, "Expected RuntimeError"
+        except RuntimeError as exc:
+            assert "LLM unavailable" in str(exc)
 
 
 class TestProtocolConformance:
