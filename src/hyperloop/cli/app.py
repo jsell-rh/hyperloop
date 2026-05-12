@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import click
 
+from hyperloop.cli.commands.describe import describe
 from hyperloop.cli.commands.get import get
 
 
@@ -12,3 +13,4 @@ def cli(ctx: click.Context) -> None:
 
 
 cli.add_command(get)
+cli.add_command(describe)
