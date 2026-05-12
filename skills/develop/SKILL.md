@@ -32,7 +32,7 @@ Spawn critics in parallel to review the implementation. Standard critics:
 - Security review
 - Consistency, code style (ex. NO MAGIC STRINGS), etc.
 - Test coverage
-- Verify actual functionality by running in real-world scenarios.
+- Verify actual functionality by running the real binary/entry points from the command line, not just via test harnesses. If the work produces a CLI command, run it. If it produces an API, call it. Tests verify code correctness — this critic verifies that the software actually works when a user runs it.
 
 Plus work-driven critics based on the scope of the unit of work.
 
