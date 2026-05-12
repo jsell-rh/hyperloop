@@ -11,7 +11,7 @@ Follow the workflow phases in order.
 
 ### Phase 1 — Retrieve Unit of Work
 
-Spawn a subagent with instructions found verbatim in workflows/development/next-unit-of-work.workflow.md.
+Spawn a subagent with instructions found verbatim in <repo_root>/workflows/development/next-unit-of-work.workflow.md.
 
 ### Phase 2 — Execute the Unit of Work
 
