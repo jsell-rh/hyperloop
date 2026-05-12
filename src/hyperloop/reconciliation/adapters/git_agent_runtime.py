@@ -82,7 +82,7 @@ class GitAgentRuntime:
         self._git(
             "fetch",
             self._remote,
-            "+refs/heads/hyperloop/*:refs/heads/hyperloop/*",
+            f"+refs/heads/hyperloop/*:refs/remotes/{self._remote}/hyperloop/*",
             check=False,
         )
 
@@ -116,14 +116,14 @@ class GitAgentRuntime:
         )
         if not result.stdout.strip():
             return []
-        return [line for line in result.stdout.strip().splitlines()]
+        return result.stdout.strip().splitlines()
 
     def _parse_signal(self, message: str) -> PollResult:
         task_match = _TASK_STATUS_RE.search(message)
         if task_match:
             status_value = task_match.group(1)
             rationale = message[: task_match.start()].strip()
-            if status_value == "Complete":
+            if status_value == AgentStatus.COMPLETE:
                 return PollResult(
                     status=AgentStatus.COMPLETE,
                     rationale=rationale or None,
@@ -138,7 +138,9 @@ class GitAgentRuntime:
             verdict_value = verification_match.group(1)
             rationale = message[: verification_match.start()].strip()
             verdict = (
-                AgentVerdict.PASS if verdict_value == "Pass" else AgentVerdict.FAIL
+                AgentVerdict.PASS
+                if verdict_value == AgentVerdict.PASS
+                else AgentVerdict.FAIL
             )
             return PollResult(
                 status=AgentStatus.COMPLETE,

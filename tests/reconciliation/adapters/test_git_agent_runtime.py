@@ -110,6 +110,25 @@ class TestPollCompletedTask:
         assert "Implemented login endpoint" in result.rationale
         assert result.verdict is None
 
+    def test_preserves_multiline_rationale(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        _create_branch_from(local, TASK_BRANCH, "main")
+        _create_signal_commit(
+            local,
+            TASK_BRANCH,
+            "Implemented login endpoint\n\nAlso added input validation\nand rate limiting\n\nTask-Status: Complete",
+        )
+        _push_branch(local, TASK_BRANCH)
+
+        runtime = _make_runtime(local)
+        handle = AgentHandle(id=TASK_BRANCH)
+        result = runtime.poll(handle)
+
+        assert result.status == AgentStatus.COMPLETE
+        assert result.rationale is not None
+        assert "input validation" in result.rationale
+        assert "rate limiting" in result.rationale
+
 
 class TestPollFailedTask:
     def test_returns_failed_with_rationale(self, git_env: tuple[Path, Path]) -> None:
@@ -236,7 +255,7 @@ class TestDetectOrphans:
         assert branch_5 in orphan_ids
         assert branch_6 in orphan_ids
 
-    def test_excludes_branches_with_completion_signal(
+    def test_excludes_branches_with_complete_signal(
         self, git_env: tuple[Path, Path]
     ) -> None:
         local, _ = git_env
@@ -246,6 +265,30 @@ class TestDetectOrphans:
         _create_branch_from(local, branch_5, "main")
         _create_work_commit(local, branch_5, "Work on task 5")
         _create_signal_commit(local, branch_5, "Done\n\nTask-Status: Complete")
+        _push_branch(local, branch_5)
+
+        _create_branch_from(local, branch_6, "main")
+        _create_work_commit(local, branch_6, "Work on task 6")
+        _push_branch(local, branch_6)
+
+        runtime = _make_runtime(local)
+        orphans = runtime.detect_orphans()
+
+        orphan_ids = {h.id for h in orphans}
+        assert branch_5 not in orphan_ids
+        assert branch_6 in orphan_ids
+
+    def test_excludes_branches_with_failed_signal(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        branch_5 = f"hyperloop/spec/{BLOB_SHA}/task/5"
+        branch_6 = f"hyperloop/spec/{BLOB_SHA}/task/6"
+
+        _create_branch_from(local, branch_5, "main")
+        _create_signal_commit(
+            local, branch_5, "Could not complete\n\nTask-Status: Failed"
+        )
         _push_branch(local, branch_5)
 
         _create_branch_from(local, branch_6, "main")
@@ -301,6 +344,29 @@ class TestDetectOrphans:
         runtime = _make_runtime(local)
         orphans = runtime.detect_orphans()
         assert orphans == []
+
+    def test_detects_orphans_pushed_by_other_clone(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, remote = git_env
+
+        agent_clone = tmp_path / "agent"
+        subprocess.run(
+            ["git", "clone", str(remote), str(agent_clone)],
+            check=True,
+            capture_output=True,
+        )
+        _git(agent_clone, "config", "user.name", "Agent")
+        _git(agent_clone, "config", "user.email", "agent@example.com")
+        _git(agent_clone, "branch", TASK_BRANCH, "main")
+        _create_work_commit(agent_clone, TASK_BRANCH, "Agent work")
+        _push_branch(agent_clone, TASK_BRANCH)
+
+        runtime = _make_runtime(local)
+        orphans = runtime.detect_orphans()
+
+        orphan_ids = {h.id for h in orphans}
+        assert TASK_BRANCH in orphan_ids
 
 
 class TestCancel:
