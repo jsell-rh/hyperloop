@@ -80,9 +80,13 @@ class GitWorkspaceManager:
 
         return MergeResult(outcome=MergeOutcome.SUCCESS)
 
+    _MAX_PR_TITLE_LENGTH = 256
+
     def integrate(self, blob_sha: str, spec_path: str, title: str, body: str) -> str:
         delivery = self._delivery_branch(blob_sha)
         self._push_branch(delivery)
+
+        truncated_title = title[: self._MAX_PR_TITLE_LENGTH]
 
         result = self._gh(
             "pr",
@@ -92,7 +96,7 @@ class GitWorkspaceManager:
             "--head",
             delivery,
             "--title",
-            title,
+            truncated_title,
             "--body",
             body,
         )

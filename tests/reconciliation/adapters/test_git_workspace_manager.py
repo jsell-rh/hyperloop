@@ -433,6 +433,21 @@ class TestIntegrate:
         captured_args = args_file.read_text()
         assert TRUNK in captured_args
 
+    def test_truncates_long_title(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        long_title = "A" * 500
+        args_file = self._setup_fake_gh(tmp_path)
+        manager.integrate(BLOB_SHA, "specs/auth.spec.md", long_title, "body")
+
+        captured_args = args_file.read_text()
+        assert "A" * 256 in captured_args
+        assert "A" * 257 not in captured_args
+
     def test_returns_pr_url(self, git_env: tuple[Path, Path], tmp_path: Path) -> None:
         local, _ = git_env
         manager = _make_manager(local)
