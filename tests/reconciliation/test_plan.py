@@ -10,6 +10,7 @@ from hyperloop.reconciliation.models import (
     Task,
     TaskStatus,
 )
+from hyperloop.reconciliation.models.agent_handle import AgentHandle
 
 
 def _utc_now() -> datetime:
@@ -595,3 +596,33 @@ class TestSerialization:
         assert len(restored.events) == 1
         assert len(restored.spec_plans[0].events) == 1
         assert restored.task_id_counter == plan.task_id_counter
+
+    def test_plan_roundtrip_with_handles(self) -> None:
+        plan = Plan()
+        plan.add_spec("auth.spec.md", "abc123")
+        sp = plan.spec_plans[0]
+        sp.verification_handle = AgentHandle(id="verifier-1")
+
+        task_id = plan.next_task_id()
+        plan.add_tasks(
+            sp,
+            [
+                Task(
+                    id=task_id,
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    name="T1",
+                    description="D1",
+                    agent_handle=AgentHandle(id="agent-1"),
+                    status=TaskStatus.IN_PROGRESS,
+                ),
+            ],
+        )
+
+        json_str = plan.model_dump_json()
+        restored = Plan.model_validate_json(json_str)
+
+        assert restored.spec_plans[0].verification_handle == AgentHandle(
+            id="verifier-1"
+        )
+        assert restored.spec_plans[0].tasks[0].agent_handle == AgentHandle(id="agent-1")

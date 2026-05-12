@@ -5,6 +5,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from hyperloop.reconciliation.models.agent_handle import AgentHandle
 from hyperloop.reconciliation.models.event import Event, EventType, record_event
 from hyperloop.reconciliation.models.task import Task
 
@@ -25,6 +26,7 @@ class SpecPlan(BaseModel):
     superseded: bool = False
     reconciliation_attempts: int = 0
     has_redecomposed: bool = False
+    verification_handle: AgentHandle | None = None
     tasks: list[Task] = []
     events: list[Event] = []
 

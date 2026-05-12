@@ -5,6 +5,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from hyperloop.reconciliation.models.agent_handle import AgentHandle
 from hyperloop.reconciliation.models.event import Event, EventType, record_event
 
 
@@ -24,6 +25,7 @@ class Task(BaseModel):
     description: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     retry_count: int = 0
+    agent_handle: AgentHandle | None = None
     status: TaskStatus = TaskStatus.BACKLOG
     events: list[Event] = []
 
