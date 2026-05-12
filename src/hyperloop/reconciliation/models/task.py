@@ -26,6 +26,7 @@ class Task(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     retry_count: int = 0
     agent_handle: AgentHandle | None = None
+    workspace_id: str | None = None
     status: TaskStatus = TaskStatus.BACKLOG
     events: list[Event] = []
 

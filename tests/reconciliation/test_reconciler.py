@@ -8,9 +8,11 @@ from hyperloop.reconciliation.models import SpecPlanStatus, Task, TaskStatus
 from hyperloop.reconciliation.models.agent_handle import AgentHandle
 from hyperloop.reconciliation.models.cancellation_reason import CancellationReason
 from hyperloop.reconciliation.models.event import EventType
+from hyperloop.reconciliation.models.event_reason import EventReason
 from hyperloop.reconciliation.models.merge_result import MergeOutcome, MergeResult
 from hyperloop.reconciliation.models.poll_result import AgentStatus, PollResult
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
+from hyperloop.reconciliation.models.task_briefing import TaskBriefing
 from hyperloop.reconciliation.models.spec_plan import SpecPlan
 from hyperloop.reconciliation.ports.observer import ChangeType
 from hyperloop.reconciliation.reconciler import Reconciler
@@ -1392,6 +1394,35 @@ class TestTaskDispatch:
         completed = observer.calls_for("cycle_completed")
         assert completed[0]["tasks_dispatched"] == 2
 
+    def test_launch_failure_skips_task_and_fires_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+        original_launch = agent_runtime.launch_task
+
+        def failing_launch(briefing: TaskBriefing) -> AgentHandle:
+            raise RuntimeError("Agent unavailable")
+
+        agent_runtime.launch_task = failing_launch  # type: ignore[assignment]
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        sp = next(sp for sp in plan.spec_plans if sp.path == "auth.spec.md")
+        assert sp.tasks[0].status == TaskStatus.BACKLOG
+        events = observer.calls_for("agent_launch_failed")
+        assert len(events) == 1
+        assert events[0]["task_id"] == sp.tasks[0].id
+        assert events[0]["role"] == "task"
+        assert "Agent unavailable" in events[0]["reason"]
+
+        agent_runtime.launch_task = original_launch  # type: ignore[assignment]
+
 
 class TestResultCollection:
     def test_running_task_status_unchanged(
@@ -1485,7 +1516,7 @@ class TestResultCollection:
         reconciler.run_cycle()
 
         assert len(sp.tasks[0].events) == 1
-        assert sp.tasks[0].events[0].reason == "TaskFailed"
+        assert sp.tasks[0].events[0].reason == EventReason.TASK_FAILED
         assert "Compilation error" in sp.tasks[0].events[0].message
 
     def test_task_completed_observer_event(

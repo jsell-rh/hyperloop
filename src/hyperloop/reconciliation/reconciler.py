@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from hyperloop.reconciliation.models.cancellation_reason import CancellationReason
 from hyperloop.reconciliation.models.event import Event, EventType
+from hyperloop.reconciliation.models.event_reason import EventReason
 from hyperloop.reconciliation.models.merge_result import MergeOutcome
 from hyperloop.reconciliation.models.plan import Plan
 from hyperloop.reconciliation.models.poll_result import AgentStatus
@@ -198,16 +199,21 @@ class Reconciler:
         if not to_dispatch:
             return 0
 
-        delivery_workspaces_created: set[str] = set()
+        dispatched = 0
         for task in to_dispatch:
-            if task.spec_blob_sha not in delivery_workspaces_created:
-                self._workspace_manager.create_delivery_workspace(task.spec_blob_sha)
-                delivery_workspaces_created.add(task.spec_blob_sha)
+            sp = self._find_spec_plan_for_task(plan, task)
+            if sp is not None and sp.delivery_workspace_id is None:
+                sp.delivery_workspace_id = (
+                    self._workspace_manager.create_delivery_workspace(
+                        task.spec_blob_sha
+                    )
+                )
 
             spec_content = self._spec_source.read_at(task.spec_path, task.spec_blob_sha)
             workspace_id = self._workspace_manager.create_task_workspace(
                 task.spec_blob_sha, task.id, task.description
             )
+            task.workspace_id = workspace_id
             briefing = TaskBriefing(
                 spec_content=spec_content,
                 spec_path=task.spec_path,
@@ -216,7 +222,16 @@ class Reconciler:
                 events=list(task.events),
                 workspace_id=workspace_id,
             )
-            handle = self._agent_runtime.launch_task(briefing)
+            try:
+                handle = self._agent_runtime.launch_task(briefing)
+            except Exception as exc:
+                self._observer.agent_launch_failed(
+                    task_id=task.id,
+                    role="task",
+                    reason=str(exc),
+                    cycle=self._cycle,
+                )
+                continue
             task.status = TaskStatus.IN_PROGRESS
             task.agent_handle = handle
             self._observer.task_dispatched(
@@ -226,8 +241,17 @@ class Reconciler:
                 retry_count=task.retry_count,
                 cycle=self._cycle,
             )
+            dispatched += 1
 
-        return len(to_dispatch)
+        return dispatched
+
+    def _find_spec_plan_for_task(self, plan: Plan, task: Task) -> SpecPlan | None:
+        for sp in plan.spec_plans:
+            if sp.superseded:
+                continue
+            if sp.path == task.spec_path and sp.blob_sha == task.spec_blob_sha:
+                return sp
+        return None
 
     def _collect_results(self, plan: Plan) -> tuple[int, int]:
         completed = 0
@@ -238,11 +262,14 @@ class Reconciler:
             for task in sp.tasks:
                 if task.status != TaskStatus.IN_PROGRESS or task.agent_handle is None:
                     continue
-                result = self._agent_runtime.poll(task.agent_handle)
+                try:
+                    result = self._agent_runtime.poll(task.agent_handle)
+                except Exception:
+                    continue
                 if result.status == AgentStatus.RUNNING:
                     continue
                 if result.status == AgentStatus.COMPLETE:
-                    if self._merge_task(task):
+                    if self._merge_task(task, sp):
                         task.status = TaskStatus.COMPLETE
                         task.agent_handle = None
                         self._observer.task_completed(
@@ -253,45 +280,33 @@ class Reconciler:
                         )
                         completed += 1
                     else:
-                        task.status = TaskStatus.FAILED
-                        task.agent_handle = None
-                        task.record_event(
-                            reason="TaskFailed",
-                            message="Merge resolution failed",
-                            event_type=EventType.WARNING,
-                            timestamp=datetime.now(timezone.utc),
-                        )
-                        self._observer.task_failed(
-                            task_id=task.id,
-                            spec_path=task.spec_path,
-                            spec_blob_sha=task.spec_blob_sha,
-                            reason="Merge resolution failed",
-                            retry_count=task.retry_count,
-                            cycle=self._cycle,
-                        )
+                        self._mark_task_failed(task, "Merge resolution failed")
                         failed += 1
                 elif result.status == AgentStatus.FAILED:
                     rationale = result.rationale or "Unknown failure"
-                    task.status = TaskStatus.FAILED
-                    task.agent_handle = None
-                    task.record_event(
-                        reason="TaskFailed",
-                        message=rationale,
-                        event_type=EventType.WARNING,
-                        timestamp=datetime.now(timezone.utc),
-                    )
-                    self._observer.task_failed(
-                        task_id=task.id,
-                        spec_path=task.spec_path,
-                        spec_blob_sha=task.spec_blob_sha,
-                        reason=rationale,
-                        retry_count=task.retry_count,
-                        cycle=self._cycle,
-                    )
+                    self._mark_task_failed(task, rationale)
                     failed += 1
         return completed, failed
 
-    def _merge_task(self, task: Task) -> bool:
+    def _mark_task_failed(self, task: Task, reason: str) -> None:
+        task.status = TaskStatus.FAILED
+        task.agent_handle = None
+        task.record_event(
+            reason=EventReason.TASK_FAILED,
+            message=reason,
+            event_type=EventType.WARNING,
+            timestamp=datetime.now(timezone.utc),
+        )
+        self._observer.task_failed(
+            task_id=task.id,
+            spec_path=task.spec_path,
+            spec_blob_sha=task.spec_blob_sha,
+            reason=reason,
+            retry_count=task.retry_count,
+            cycle=self._cycle,
+        )
+
+    def _merge_task(self, task: Task, spec_plan: SpecPlan) -> bool:
         merge_result = self._workspace_manager.merge_task(task.spec_blob_sha, task.id)
         if merge_result.outcome == MergeOutcome.SUCCESS:
             self._observer.task_merge_completed(
@@ -302,14 +317,12 @@ class Reconciler:
         self._observer.task_merge_conflict(
             task_id=task.id, spec_blob_sha=task.spec_blob_sha
         )
-        task_workspace_id = f"task/{task.spec_blob_sha}/{task.id}"
-        delivery_workspace_id = f"delivery/{task.spec_blob_sha}"
         self._observer.merge_resolution_launched(
             task_id=task.id, spec_blob_sha=task.spec_blob_sha
         )
         success = self._agent_runtime.launch_merge_resolution(
-            task_workspace_id,
-            delivery_workspace_id,
+            task.workspace_id or "",
+            spec_plan.delivery_workspace_id or "",
             merge_result.conflict_details or "",
         )
         self._observer.merge_resolution_completed(
