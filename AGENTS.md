@@ -37,7 +37,7 @@ Spec-driven reconciliation engine. Specs declare desired state; code is actual s
 - **Type hints everywhere.** No `Any`. Every function signature, variable where the type is not obvious, and return type must be annotated.
 - **Pydantic** for all data objects. **Pydantic Settings** for configuration.
 - **Enums over magic strings.** Always. No bare string comparisons for state, status, type, or category.
-- **`uv`** for package management.
+- **`uv`** for package management. Use `uv add` etc., NEVER adding packages by hand. Pin all dependencies.
 
 ## Specs
 
