@@ -89,7 +89,7 @@ The probe protocol SHALL define methods for the following observation points. Ea
 
 | Method | When | Key Arguments |
 |---|---|---|
-| spec_divergence_detected | New, modified, or deleted spec found | spec_path: str, blob_sha: str, change_type: str (new, modified, deleted) |
+| spec_divergence_detected | New, modified, or deleted spec found | spec_path: str, blob_sha: str, change_type: ChangeType (new, modified, deleted) |
 | spec_superseded | SpecPlan marked superseded by new SHA | spec_path: str, old_sha: str, new_sha: str |
 
 **Decomposition:**
