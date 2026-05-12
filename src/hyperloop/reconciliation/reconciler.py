@@ -9,7 +9,7 @@ from hyperloop.reconciliation.models.event import Event, EventType
 from hyperloop.reconciliation.models.event_reason import EventReason
 from hyperloop.reconciliation.models.merge_result import MergeOutcome
 from hyperloop.reconciliation.models.plan import Plan
-from hyperloop.reconciliation.models.poll_result import AgentStatus
+from hyperloop.reconciliation.models.poll_result import AgentStatus, AgentVerdict
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
 from hyperloop.reconciliation.models.spec_entry import SpecEntry
@@ -33,6 +33,7 @@ class Reconciler:
         agent_runtime: AgentRuntime,
         workspace_manager: WorkspaceManager,
         max_concurrent_tasks: int = 5,
+        convergence_bound: int = 3,
     ) -> None:
         self._spec_source = spec_source
         self._plan_store = plan_store
@@ -40,6 +41,7 @@ class Reconciler:
         self._agent_runtime = agent_runtime
         self._workspace_manager = workspace_manager
         self._max_concurrent_tasks = max_concurrent_tasks
+        self._convergence_bound = convergence_bound
         self._cycle: int = 0
 
     def run_cycle(self) -> None:
@@ -62,6 +64,8 @@ class Reconciler:
         self._decompose(plan)
         tasks_dispatched = self._dispatch_tasks(plan)
         tasks_completed, tasks_failed = self._collect_results(plan)
+        self._collect_verification_results(plan)
+        self._launch_verification(plan)
 
         self._plan_store.write_plan(plan)
         self._observer.plan_synced(cycle=self._cycle)
@@ -333,6 +337,126 @@ class Reconciler:
                 task_id=task.id, spec_blob_sha=task.spec_blob_sha
             )
         return success
+
+    def _launch_verification(self, plan: Plan) -> None:
+        for sp in plan.spec_plans:
+            if sp.superseded or sp.status != SpecPlanStatus.RECONCILING:
+                continue
+            if not all(t.status == TaskStatus.COMPLETE for t in sp.tasks):
+                continue
+
+            if sp.delivery_workspace_id is None:
+                sp.delivery_workspace_id = (
+                    self._workspace_manager.create_delivery_workspace(sp.blob_sha)
+                )
+
+            workspace_id = self._workspace_manager.create_verification_workspace(
+                sp.blob_sha
+            )
+            spec_content = self._spec_source.read_at(sp.path, sp.blob_sha)
+            handle = self._agent_runtime.launch_verification(
+                spec_content, sp.path, sp.blob_sha, workspace_id
+            )
+            sp.status = SpecPlanStatus.VERIFYING
+            sp.verification_handle = handle
+            self._observer.verification_launched(
+                spec_path=sp.path,
+                spec_blob_sha=sp.blob_sha,
+                cycle=self._cycle,
+            )
+
+    def _collect_verification_results(self, plan: Plan) -> None:
+        for sp in plan.spec_plans:
+            if sp.superseded or sp.status != SpecPlanStatus.VERIFYING:
+                continue
+
+            if sp.verification_handle is None:
+                self._retry_integration(sp)
+                continue
+
+            try:
+                result = self._agent_runtime.poll(sp.verification_handle)
+            except Exception:
+                continue
+            if result.status == AgentStatus.RUNNING:
+                continue
+
+            sp.verification_handle = None
+
+            if result.verdict == AgentVerdict.PASS:
+                rationale = result.rationale or "Verification passed"
+                sp.record_event(
+                    reason=EventReason.VERIFICATION_PASSED,
+                    message=rationale,
+                    event_type=EventType.NORMAL,
+                    timestamp=datetime.now(timezone.utc),
+                )
+                self._observer.verification_passed(
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    rationale=rationale,
+                    cycle=self._cycle,
+                )
+                self._integrate_to_trunk(sp)
+            elif result.verdict == AgentVerdict.FAIL:
+                rationale = result.rationale or "Verification failed"
+                sp.record_event(
+                    reason=EventReason.VERIFICATION_FAILED,
+                    message=rationale,
+                    event_type=EventType.WARNING,
+                    timestamp=datetime.now(timezone.utc),
+                )
+                self._observer.verification_failed(
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    rationale=rationale,
+                    cycle=self._cycle,
+                )
+                self._workspace_manager.cleanup_verification(sp.blob_sha)
+                sp.reconciliation_attempts += 1
+                sp.has_redecomposed = False
+                if sp.reconciliation_attempts >= self._convergence_bound:
+                    sp.status = SpecPlanStatus.FAILED
+                    self._observer.spec_failed(
+                        spec_path=sp.path,
+                        spec_blob_sha=sp.blob_sha,
+                        reason=f"Convergence bound ({self._convergence_bound}) exceeded",
+                        cycle=self._cycle,
+                    )
+                else:
+                    sp.status = SpecPlanStatus.OUT_OF_SYNC
+
+    def _integrate_to_trunk(self, sp: SpecPlan) -> None:
+        try:
+            integration_id = self._workspace_manager.integrate(sp.blob_sha, sp.path)
+            self._observer.trunk_integration_started(
+                spec_path=sp.path,
+                spec_blob_sha=sp.blob_sha,
+                integration_id=integration_id,
+            )
+            sp.status = SpecPlanStatus.SYNCED
+            self._observer.trunk_integration_completed(
+                spec_path=sp.path,
+                spec_blob_sha=sp.blob_sha,
+                integration_id=integration_id,
+            )
+            self._observer.spec_synced(
+                spec_path=sp.path,
+                spec_blob_sha=sp.blob_sha,
+                total_tasks=len(sp.tasks),
+                cycle=self._cycle,
+            )
+        except Exception as exc:
+            self._observer.trunk_integration_failed(
+                spec_path=sp.path,
+                spec_blob_sha=sp.blob_sha,
+                reason=str(exc),
+            )
+
+    def _retry_integration(self, sp: SpecPlan) -> None:
+        has_passed = any(e.reason == EventReason.VERIFICATION_PASSED for e in sp.events)
+        if has_passed:
+            self._integrate_to_trunk(sp)
 
     def _detect_divergence(self, plan: Plan, entries: list[SpecEntry]) -> None:
         source_paths: set[str] = set()

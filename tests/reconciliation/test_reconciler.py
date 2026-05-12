@@ -10,7 +10,11 @@ from hyperloop.reconciliation.models.cancellation_reason import CancellationReas
 from hyperloop.reconciliation.models.event import EventType
 from hyperloop.reconciliation.models.event_reason import EventReason
 from hyperloop.reconciliation.models.merge_result import MergeOutcome, MergeResult
-from hyperloop.reconciliation.models.poll_result import AgentStatus, PollResult
+from hyperloop.reconciliation.models.poll_result import (
+    AgentStatus,
+    AgentVerdict,
+    PollResult,
+)
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
 from hyperloop.reconciliation.models.task_briefing import TaskBriefing
 from hyperloop.reconciliation.models.spec_plan import SpecPlan
@@ -112,8 +116,19 @@ class TestNewSpecDetected:
         reconciler: Reconciler,
         spec_source: FakeSpecSource,
         plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
     ) -> None:
         spec_source.add_spec("users.spec.md", "abc123")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="implement-users",
+                    description="Implement users",
+                    spec_path="users.spec.md",
+                    spec_blob_sha="abc123",
+                ),
+            ]
+        )
 
         reconciler.run_cycle()
 
@@ -162,9 +177,20 @@ class TestModifiedSpecDetected:
         reconciler: Reconciler,
         spec_source: FakeSpecSource,
         plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
     ) -> None:
         plan_store.get_plan().add_spec("auth.spec.md", "abc123")
         spec_source.add_spec("auth.spec.md", "def456")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="update-auth",
+                    description="Update auth",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="def456",
+                ),
+            ]
+        )
 
         reconciler.run_cycle()
 
@@ -861,7 +887,7 @@ class TestDecompositionDispatch:
         auth_task = sp.tasks[0]
         assert auth_task.depends_on == [1]
 
-    def test_zero_tasks_still_transitions_to_reconciling(
+    def test_zero_tasks_transitions_through_reconciling_to_verifying(
         self,
         reconciler: Reconciler,
         spec_source: FakeSpecSource,
@@ -875,7 +901,7 @@ class TestDecompositionDispatch:
 
         plan = plan_store.get_plan()
         sp = next(sp for sp in plan.spec_plans if sp.path == "auth.spec.md")
-        assert sp.status == SpecPlanStatus.RECONCILING
+        assert sp.status == SpecPlanStatus.VERIFYING
 
     def test_reconciling_spec_not_redecomposed(
         self,
@@ -1722,3 +1748,885 @@ class TestMerge:
         reconciler.run_cycle()
 
         assert sp.tasks[0].status == TaskStatus.FAILED
+
+
+def _build_all_tasks_complete_spec_plan(
+    plan_store: FakePlanStore,
+    spec_source: FakeSpecSource,
+    workspace_manager: FakeWorkspaceManager,
+    path: str = "auth.spec.md",
+    blob_sha: str = "abc123",
+    spec_content: str = "# Auth Spec\nRequirements here",
+    task_count: int = 2,
+) -> tuple[SpecPlan, list[Task]]:
+    plan = plan_store.get_plan()
+    sp = plan.add_spec(path, blob_sha)
+    sp.status = SpecPlanStatus.RECONCILING
+    spec_source.add_spec(path, blob_sha, content=spec_content)
+    workspace_manager.create_delivery_workspace(blob_sha)
+    sp.delivery_workspace_id = f"delivery/{blob_sha}"
+
+    tasks: list[Task] = []
+    for i in range(task_count):
+        task_id = plan.next_task_id()
+        tasks.append(
+            Task(
+                id=task_id,
+                spec_path=path,
+                spec_blob_sha=blob_sha,
+                name=f"task-{task_id}",
+                description=f"Task {task_id} description",
+                status=TaskStatus.COMPLETE,
+                workspace_id=f"task/{blob_sha}/{task_id}",
+            )
+        )
+    plan.add_tasks(sp, tasks)
+    return sp, tasks
+
+
+def _build_verifying_spec_plan(
+    plan_store: FakePlanStore,
+    spec_source: FakeSpecSource,
+    workspace_manager: FakeWorkspaceManager,
+    agent_runtime: FakeAgentRuntime,
+    path: str = "auth.spec.md",
+    blob_sha: str = "abc123",
+    spec_content: str = "# Auth Spec\nRequirements here",
+    task_count: int = 2,
+    reconciliation_attempts: int = 0,
+) -> tuple[SpecPlan, AgentHandle]:
+    plan = plan_store.get_plan()
+    sp = plan.add_spec(path, blob_sha)
+    sp.status = SpecPlanStatus.VERIFYING
+    sp.reconciliation_attempts = reconciliation_attempts
+    spec_source.add_spec(path, blob_sha, content=spec_content)
+    workspace_manager.create_delivery_workspace(blob_sha)
+    sp.delivery_workspace_id = f"delivery/{blob_sha}"
+
+    tasks: list[Task] = []
+    for i in range(task_count):
+        task_id = plan.next_task_id()
+        tasks.append(
+            Task(
+                id=task_id,
+                spec_path=path,
+                spec_blob_sha=blob_sha,
+                name=f"task-{task_id}",
+                description=f"Task {task_id} description",
+                status=TaskStatus.COMPLETE,
+                workspace_id=f"task/{blob_sha}/{task_id}",
+            )
+        )
+    plan.add_tasks(sp, tasks)
+    sp.status = SpecPlanStatus.VERIFYING
+
+    verification_handle = AgentHandle(id="verifier-1")
+    sp.verification_handle = verification_handle
+    agent_runtime.set_poll_result(
+        verification_handle, PollResult(status=AgentStatus.RUNNING)
+    )
+
+    return sp, verification_handle
+
+
+class TestVerificationLaunch:
+    def test_all_tasks_complete_launches_verification(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        _build_all_tasks_complete_spec_plan(plan_store, spec_source, workspace_manager)
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.launched_verifications) == 1
+
+    def test_verification_workspace_created(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        _build_all_tasks_complete_spec_plan(plan_store, spec_source, workspace_manager)
+
+        reconciler.run_cycle()
+
+        assert workspace_manager.has_verification_workspace("abc123")
+
+    def test_verification_agent_launched_with_correct_params(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        _build_all_tasks_complete_spec_plan(
+            plan_store,
+            spec_source,
+            workspace_manager,
+            spec_content="# Auth\nMUST verify users",
+        )
+
+        reconciler.run_cycle()
+
+        spec_content, spec_path, blob_sha, workspace_id = (
+            agent_runtime.launched_verifications[0]
+        )
+        assert spec_content == "# Auth\nMUST verify users"
+        assert spec_path == "auth.spec.md"
+        assert blob_sha == "abc123"
+        assert workspace_id == "verification/abc123"
+
+    def test_spec_transitions_to_verifying(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp, _ = _build_all_tasks_complete_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.VERIFYING
+
+    def test_verification_handle_stored(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp, _ = _build_all_tasks_complete_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.verification_handle is not None
+
+    def test_verification_launched_observer_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        _build_all_tasks_complete_spec_plan(plan_store, spec_source, workspace_manager)
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("verification_launched")
+        assert len(events) == 1
+        assert events[0]["spec_path"] == "auth.spec.md"
+        assert events[0]["spec_blob_sha"] == "abc123"
+        assert events[0]["cycle"] == 1
+
+    def test_zero_tasks_triggers_verification(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        _build_all_tasks_complete_spec_plan(
+            plan_store, spec_source, workspace_manager, task_count=0
+        )
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.launched_verifications) == 1
+
+    def test_incomplete_tasks_no_verification(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        plan = plan_store.get_plan()
+        sp = plan.add_spec("auth.spec.md", "abc123")
+        sp.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("auth.spec.md", "abc123")
+        workspace_manager.create_delivery_workspace("abc123")
+        sp.delivery_workspace_id = "delivery/abc123"
+        plan.add_tasks(
+            sp,
+            [
+                Task(
+                    id=plan.next_task_id(),
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    name="t1",
+                    description="d1",
+                    status=TaskStatus.COMPLETE,
+                ),
+                Task(
+                    id=plan.next_task_id(),
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    name="t2",
+                    description="d2",
+                    status=TaskStatus.IN_PROGRESS,
+                    agent_handle=AgentHandle(id="agent-t2"),
+                ),
+            ],
+        )
+        agent_runtime.set_poll_result(
+            AgentHandle(id="agent-t2"), PollResult(status=AgentStatus.RUNNING)
+        )
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.launched_verifications) == 0
+
+    def test_verifying_spec_not_relaunched(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.launched_verifications) == 0
+
+
+class TestVerificationPass:
+    def test_verification_pass_transitions_to_synced(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="All checks pass",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.SYNCED
+
+    def test_verification_passed_event_recorded(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="All checks pass",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        passed_events = [
+            e for e in sp.events if e.reason == EventReason.VERIFICATION_PASSED
+        ]
+        assert len(passed_events) == 1
+
+    def test_verification_pass_integrates_to_trunk(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert len(workspace_manager.integrations) == 1
+        assert workspace_manager.integrations[0] == ("abc123", "auth.spec.md")
+
+    def test_trunk_integration_started_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("trunk_integration_started")
+        assert len(events) == 1
+        assert events[0]["spec_path"] == "auth.spec.md"
+        assert events[0]["spec_blob_sha"] == "abc123"
+
+    def test_trunk_integration_completed_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("trunk_integration_completed")
+        assert len(events) == 1
+
+    def test_verification_passed_observer_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="All checks pass",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("verification_passed")
+        assert len(events) == 1
+        assert events[0]["spec_path"] == "auth.spec.md"
+        assert events[0]["spec_blob_sha"] == "abc123"
+        assert events[0]["rationale"] == "All checks pass"
+        assert events[0]["cycle"] == 1
+
+    def test_spec_synced_observer_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("spec_synced")
+        assert len(events) == 1
+        assert events[0]["spec_path"] == "auth.spec.md"
+        assert events[0]["spec_blob_sha"] == "abc123"
+        assert events[0]["total_tasks"] == 2
+        assert events[0]["cycle"] == 1
+
+    def test_verification_handle_cleared_on_pass(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.verification_handle is None
+
+
+class TestVerificationFail:
+    def test_verification_fail_transitions_to_out_of_sync(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.FAIL,
+                rationale="Missing timeout handling",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+
+    def test_verification_failed_event_recorded_with_rationale(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.FAIL,
+                rationale="Missing timeout handling",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        failed_events = [
+            e for e in sp.events if e.reason == EventReason.VERIFICATION_FAILED
+        ]
+        assert len(failed_events) == 1
+        assert "Missing timeout handling" in failed_events[0].message
+
+    def test_verification_failed_observer_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.FAIL,
+                rationale="Missing timeout handling",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("verification_failed")
+        assert len(events) == 1
+        assert events[0]["spec_path"] == "auth.spec.md"
+        assert events[0]["spec_blob_sha"] == "abc123"
+        assert events[0]["rationale"] == "Missing timeout handling"
+        assert events[0]["cycle"] == 1
+
+    def test_reconciliation_attempts_incremented(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store,
+            spec_source,
+            workspace_manager,
+            agent_runtime,
+            reconciliation_attempts=0,
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.FAIL,
+                rationale="Fail",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.reconciliation_attempts == 1
+
+    def test_verification_handle_cleared_on_fail(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.FAIL,
+                rationale="Fail",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.verification_handle is None
+
+    def test_verification_workspace_cleaned_up_on_fail(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        workspace_manager._verification_workspaces.add("abc123")
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.FAIL,
+                rationale="Fail",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert not workspace_manager.has_verification_workspace("abc123")
+
+    def test_has_redecomposed_reset_on_fail(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        sp.has_redecomposed = True
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.FAIL,
+                rationale="Fail",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.has_redecomposed is False
+
+
+class TestConvergenceBound:
+    def test_verification_fail_at_convergence_bound_transitions_to_failed(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            convergence_bound=3,
+        )
+        sp, handle = _build_verifying_spec_plan(
+            plan_store,
+            spec_source,
+            workspace_manager,
+            agent_runtime,
+            reconciliation_attempts=2,
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.FAIL,
+                rationale="Still failing",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.FAILED
+
+    def test_spec_failed_observer_event(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            convergence_bound=3,
+        )
+        sp, handle = _build_verifying_spec_plan(
+            plan_store,
+            spec_source,
+            workspace_manager,
+            agent_runtime,
+            reconciliation_attempts=2,
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.FAIL,
+                rationale="Still failing",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("spec_failed")
+        assert len(events) == 1
+        assert events[0]["spec_path"] == "auth.spec.md"
+        assert events[0]["spec_blob_sha"] == "abc123"
+
+    def test_under_convergence_bound_transitions_to_out_of_sync(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            convergence_bound=3,
+        )
+        sp, handle = _build_verifying_spec_plan(
+            plan_store,
+            spec_source,
+            workspace_manager,
+            agent_runtime,
+            reconciliation_attempts=1,
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.FAIL,
+                rationale="Fail",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+
+
+class TestIntegrationFailure:
+    def test_integration_failure_fires_trunk_integration_failed_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        workspace_manager._delivery_workspaces.discard("abc123")
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("trunk_integration_failed")
+        assert len(events) == 1
+        assert events[0]["spec_path"] == "auth.spec.md"
+
+    def test_integration_failure_keeps_spec_retryable(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        workspace_manager._delivery_workspaces.discard("abc123")
+
+        reconciler.run_cycle()
+
+        assert sp.status != SpecPlanStatus.SYNCED
+        assert sp.status == SpecPlanStatus.VERIFYING
+
+    def test_integration_failure_clears_verification_handle(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        workspace_manager._delivery_workspaces.discard("abc123")
+
+        reconciler.run_cycle()
+
+        assert sp.verification_handle is None
+
+    def test_integration_retried_on_next_cycle(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        workspace_manager._delivery_workspaces.discard("abc123")
+
+        reconciler.run_cycle()
+
+        workspace_manager._delivery_workspaces.add("abc123")
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.SYNCED
