@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import shutil
 
 import click
 
 from hyperloop.cli.formatters.table import format_table
 from hyperloop.cli.formatters.time import format_relative_time
+from hyperloop.cli.object_ref import ObjectRefPrefix
 from hyperloop.cli.output_format import OutputFormat
 from hyperloop.cli.serializers import (
     completed_count,
@@ -15,15 +15,12 @@ from hyperloop.cli.serializers import (
     spec_plan_to_dict,
     task_to_dict,
 )
+from hyperloop.cli.terminal import terminal_width
 from hyperloop.reconciliation.models.event import Event
 from hyperloop.reconciliation.models.plan import Plan
 from hyperloop.reconciliation.models.spec_plan import SpecPlan
 from hyperloop.reconciliation.models.task import Task
 from hyperloop.reconciliation.ports.plan_store import PlanStore
-
-
-def _terminal_width() -> int:
-    return shutil.get_terminal_size(fallback=(80, 24)).columns
 
 
 @click.group()
@@ -53,7 +50,7 @@ def specs(store: PlanStore, show_all: bool, output_format: str | None) -> None:
 
     headers = ["PATH", "BLOB SHA", "STATUS", "TASKS", "AGE"]
     rows = [_spec_plan_to_row(sp) for sp in spec_plans]
-    click.echo(format_table(headers, rows, max_width=_terminal_width()), nl=False)
+    click.echo(format_table(headers, rows, max_width=terminal_width()), nl=False)
 
 
 def _spec_plan_to_row(sp: SpecPlan) -> list[str]:
@@ -88,7 +85,7 @@ def tasks(store: PlanStore, spec_filter: str | None, output_format: str | None) 
 
     headers = ["ID", "NAME", "SPEC", "STATUS", "RETRIES", "AGE"]
     rows = [_task_to_row(t) for t in all_tasks]
-    click.echo(format_table(headers, rows, max_width=_terminal_width()), nl=False)
+    click.echo(format_table(headers, rows, max_width=terminal_width()), nl=False)
 
 
 def _collect_tasks(plan: Plan, spec_filter: str | None) -> list[Task]:
@@ -131,19 +128,19 @@ def events(store: PlanStore, output_format: str | None) -> None:
 
     headers = ["LAST SEEN", "TYPE", "REASON", "OBJECT", "MESSAGE"]
     rows = [_event_to_row(obj_ref, event) for obj_ref, event in collected]
-    click.echo(format_table(headers, rows, max_width=_terminal_width()), nl=False)
+    click.echo(format_table(headers, rows, max_width=terminal_width()), nl=False)
 
 
 def _collect_all_events(plan: Plan) -> list[tuple[str, Event]]:
     result: list[tuple[str, Event]] = []
     for event in plan.events:
-        result.append(("plan", event))
+        result.append((ObjectRefPrefix.PLAN, event))
     for sp in plan.spec_plans:
-        obj_ref = f"spec/{sp.path}"
+        obj_ref = f"{ObjectRefPrefix.SPEC}/{sp.path}"
         for event in sp.events:
             result.append((obj_ref, event))
         for task in sp.tasks:
-            task_ref = f"task/{task.id}"
+            task_ref = f"{ObjectRefPrefix.TASK}/{task.id}"
             for event in task.events:
                 result.append((task_ref, event))
     return result

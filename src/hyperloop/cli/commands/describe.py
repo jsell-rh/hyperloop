@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 from collections import Counter
 
 import click
@@ -13,15 +12,12 @@ from hyperloop.cli.serializers import (
     spec_plan_to_dict,
     task_to_dict,
 )
+from hyperloop.cli.terminal import terminal_width
 from hyperloop.reconciliation.models.event import Event
 from hyperloop.reconciliation.models.plan import Plan
 from hyperloop.reconciliation.models.spec_plan import SpecPlan
 from hyperloop.reconciliation.models.task import Task, TaskStatus
 from hyperloop.reconciliation.ports.plan_store import PlanStore
-
-
-def _terminal_width() -> int:
-    return shutil.get_terminal_size(fallback=(80, 24)).columns
 
 
 @click.group()
@@ -113,7 +109,7 @@ def _render_spec(sp: SpecPlan) -> None:
     headers = ["ID", "NAME", "STATUS", "RETRIES"]
     rows = [[str(t.id), t.name, t.status.value, str(t.retry_count)] for t in sp.tasks]
     click.echo(
-        _indent(format_table(headers, rows, max_width=_terminal_width())), nl=False
+        _indent(format_table(headers, rows, max_width=terminal_width())), nl=False
     )
     click.echo()
 
@@ -149,7 +145,7 @@ def _render_events(events: list[Event]) -> None:
         for event in events
     ]
     click.echo(
-        _indent(format_table(headers, rows, max_width=_terminal_width())), nl=False
+        _indent(format_table(headers, rows, max_width=terminal_width())), nl=False
     )
 
 
