@@ -4,6 +4,7 @@ import pytest
 
 from hyperloop.reconciliation.models import SpecPlanStatus, Task, TaskStatus
 from hyperloop.reconciliation.models.agent_handle import AgentHandle
+from hyperloop.reconciliation.models.cancellation_reason import CancellationReason
 from hyperloop.reconciliation.models.spec_plan import SpecPlan
 from hyperloop.reconciliation.ports.observer import ChangeType
 from hyperloop.reconciliation.reconciler import Reconciler
@@ -426,7 +427,7 @@ class TestSupersedingCancellation:
         assert len(cancelled) == 2
         task_ids = {c["task_id"] for c in cancelled}
         assert task_ids == {1, 2}
-        assert all(c["reason"] == "superseded" for c in cancelled)
+        assert all(c["reason"] == CancellationReason.SUPERSEDED for c in cancelled)
 
     def test_deleted_spec_cancels_in_progress_task_agents(
         self,

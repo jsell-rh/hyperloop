@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 
+from hyperloop.reconciliation.models.cancellation_reason import CancellationReason
 from hyperloop.reconciliation.models.plan import Plan
 from hyperloop.reconciliation.models.spec_entry import SpecEntry
 from hyperloop.reconciliation.models.spec_plan import SpecPlan, SpecPlanStatus
@@ -105,15 +106,21 @@ class Reconciler:
     def _cancel_superseded(self, spec_plan: SpecPlan) -> None:
         for task in spec_plan.tasks:
             if task.status == TaskStatus.IN_PROGRESS and task.agent_handle is not None:
-                self._agent_runtime.cancel(task.agent_handle)
+                try:
+                    self._agent_runtime.cancel(task.agent_handle)
+                except Exception:
+                    pass
                 self._observer.agent_cancelled(
                     task_id=task.id,
                     spec_path=task.spec_path,
-                    reason="superseded",
+                    reason=CancellationReason.SUPERSEDED,
                 )
 
         if spec_plan.verification_handle is not None:
-            self._agent_runtime.cancel(spec_plan.verification_handle)
+            try:
+                self._agent_runtime.cancel(spec_plan.verification_handle)
+            except Exception:
+                pass
 
         self._workspace_manager.cleanup(spec_plan.blob_sha)
 
