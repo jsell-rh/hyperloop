@@ -6,6 +6,7 @@ from typing import get_type_hints
 from hyperloop.reconciliation.adapters.composite_observer import CompositeObserver
 from hyperloop.reconciliation.adapters.null_probe import NullProbe
 from hyperloop.reconciliation.ports.observer import ChangeType, Observer
+from tests.reconciliation.fakes.fake_observer import FakeObserver
 
 EXPECTED_METHODS: dict[str, dict[str, type]] = {
     "reconciler_started": {"spec_count": int, "cycle": int},
@@ -310,3 +311,65 @@ class TestCompositeObserver:
 
         assert len(r1.calls) == 1
         assert len(r2.calls) == 1
+
+
+class TestFakeObserverRecording:
+    def test_starts_with_no_calls(self) -> None:
+        observer = FakeObserver()
+
+        assert observer.calls == []
+
+    def test_records_method_and_kwargs(self) -> None:
+        observer = FakeObserver()
+
+        observer.reconciler_started(spec_count=5, cycle=1)
+
+        assert len(observer.calls) == 1
+        assert observer.calls[0].method == "reconciler_started"
+        assert observer.calls[0].kwargs == {"spec_count": 5, "cycle": 1}
+
+    def test_records_multiple_calls(self) -> None:
+        observer = FakeObserver()
+
+        observer.reconciler_started(spec_count=5, cycle=1)
+        observer.cycle_started(cycle=1, specs_out_of_sync=2, tasks_in_progress=0)
+
+        assert len(observer.calls) == 2
+
+    def test_calls_for_filters_by_method(self) -> None:
+        observer = FakeObserver()
+
+        observer.reconciler_started(spec_count=5, cycle=1)
+        observer.cycle_started(cycle=1, specs_out_of_sync=2, tasks_in_progress=0)
+        observer.reconciler_started(spec_count=3, cycle=2)
+
+        results = observer.calls_for("reconciler_started")
+
+        assert len(results) == 2
+        assert results[0] == {"spec_count": 5, "cycle": 1}
+        assert results[1] == {"spec_count": 3, "cycle": 2}
+
+    def test_calls_for_returns_empty_when_no_matches(self) -> None:
+        observer = FakeObserver()
+
+        observer.reconciler_started(spec_count=5, cycle=1)
+
+        assert observer.calls_for("cycle_started") == []
+
+
+class TestFakeObserverProtocolCompliance:
+    def test_all_probe_methods_succeed(self) -> None:
+        observer = FakeObserver()
+        for method_name, params in EXPECTED_METHODS.items():
+            kwargs = _build_kwargs(params)
+            getattr(observer, method_name)(**kwargs)
+
+    def test_all_probe_methods_recorded(self) -> None:
+        observer = FakeObserver()
+        for method_name, params in EXPECTED_METHODS.items():
+            kwargs = _build_kwargs(params)
+            getattr(observer, method_name)(**kwargs)
+
+        assert len(observer.calls) == len(EXPECTED_METHODS)
+        called_methods = {c.method for c in observer.calls}
+        assert called_methods == set(EXPECTED_METHODS.keys())

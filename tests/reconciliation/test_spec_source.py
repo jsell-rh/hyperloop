@@ -3,8 +3,11 @@ from __future__ import annotations
 import inspect
 from typing import get_type_hints
 
+import pytest
+
 from hyperloop.reconciliation.models.spec_entry import SpecEntry
 from hyperloop.reconciliation.ports.spec_source import SpecSource
+from tests.reconciliation.fakes.fake_spec_source import FakeSpecSource
 
 
 class TestSpecSourceProtocol:
@@ -60,3 +63,119 @@ class TestSpecSourceProtocol:
 
         source = inspect.getsource(module)
         assert "adapters" not in source
+
+
+class TestFakeSpecSourceSync:
+    def test_sync_increments_counter(self) -> None:
+        source = FakeSpecSource()
+        assert source.sync_count == 0
+
+        source.sync()
+
+        assert source.sync_count == 1
+
+    def test_multiple_syncs(self) -> None:
+        source = FakeSpecSource()
+
+        source.sync()
+        source.sync()
+        source.sync()
+
+        assert source.sync_count == 3
+
+
+class TestFakeSpecSourceListSpecs:
+    def test_empty_by_default(self) -> None:
+        source = FakeSpecSource()
+
+        assert source.list_specs() == []
+
+    def test_returns_added_specs(self) -> None:
+        source = FakeSpecSource()
+        source.add_spec("auth.spec.md", "abc123")
+
+        entries = source.list_specs()
+
+        assert len(entries) == 1
+        assert entries[0] == SpecEntry(path="auth.spec.md", blob_sha="abc123")
+
+    def test_adding_same_path_replaces(self) -> None:
+        source = FakeSpecSource()
+        source.add_spec("auth.spec.md", "abc123")
+        source.add_spec("auth.spec.md", "def456")
+
+        entries = source.list_specs()
+
+        assert len(entries) == 1
+        assert entries[0].blob_sha == "def456"
+
+    def test_remove_spec(self) -> None:
+        source = FakeSpecSource()
+        source.add_spec("auth.spec.md", "abc123")
+
+        source.remove_spec("auth.spec.md")
+
+        assert source.list_specs() == []
+
+    def test_remove_nonexistent_is_noop(self) -> None:
+        source = FakeSpecSource()
+
+        source.remove_spec("nonexistent.spec.md")
+
+        assert source.list_specs() == []
+
+    def test_returns_copy(self) -> None:
+        source = FakeSpecSource()
+        source.add_spec("auth.spec.md", "abc123")
+
+        first = source.list_specs()
+        second = source.list_specs()
+
+        assert first is not second
+
+
+class TestFakeSpecSourceReadAt:
+    def test_returns_content(self) -> None:
+        source = FakeSpecSource()
+        source.add_spec("auth.spec.md", "abc123", content="# Auth Spec")
+
+        content = source.read_at("auth.spec.md", "abc123")
+
+        assert content == "# Auth Spec"
+
+    def test_missing_raises(self) -> None:
+        source = FakeSpecSource()
+
+        with pytest.raises(KeyError):
+            source.read_at("missing.spec.md", "abc123")
+
+    def test_default_content_is_empty(self) -> None:
+        source = FakeSpecSource()
+        source.add_spec("auth.spec.md", "abc123")
+
+        assert source.read_at("auth.spec.md", "abc123") == ""
+
+
+class TestFakeSpecSourceDiff:
+    def test_returns_configured_diff(self) -> None:
+        source = FakeSpecSource()
+        source.set_diff("auth.spec.md", "abc123", "def456", "+ new requirement")
+
+        diff = source.diff("auth.spec.md", "abc123", "def456")
+
+        assert diff == "+ new requirement"
+
+    def test_unconfigured_returns_empty(self) -> None:
+        source = FakeSpecSource()
+
+        diff = source.diff("auth.spec.md", None, "abc123")
+
+        assert diff == ""
+
+    def test_diff_with_none_old_sha(self) -> None:
+        source = FakeSpecSource()
+        source.set_diff("auth.spec.md", None, "abc123", "+ entire file")
+
+        diff = source.diff("auth.spec.md", None, "abc123")
+
+        assert diff == "+ entire file"
