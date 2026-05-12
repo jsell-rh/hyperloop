@@ -4221,9 +4221,10 @@ class TestIntegrationSummary:
         assert spec_content == "# Auth Spec\nRequirements here"
         assert rationale == "All requirements verified"
         assert len(task_summaries) == 2
-        for name, description in task_summaries:
-            assert isinstance(name, str)
-            assert isinstance(description, str)
+        names = {name for name, _ in task_summaries}
+        descriptions = {desc for _, desc in task_summaries}
+        assert names == {"task-1", "task-2"}
+        assert descriptions == {"Task 1 description", "Task 2 description"}
 
     def test_generated_title_and_body_passed_to_integrate(
         self,
@@ -4409,3 +4410,53 @@ class TestIntegrationSummary:
 
         assert sp.status == SpecPlanStatus.SYNCED
         assert len(agent_runtime.compose_summary_calls) == 2
+
+    def test_only_complete_tasks_in_summaries(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        plan = plan_store.get_plan()
+        sp = plan.add_spec("auth.spec.md", "abc123")
+        spec_source.add_spec("auth.spec.md", "abc123", content="spec content")
+        workspace_manager.create_delivery_workspace("abc123")
+        sp.delivery_workspace_id = "delivery/abc123"
+
+        complete_task = Task(
+            id=plan.next_task_id(),
+            spec_path="auth.spec.md",
+            spec_blob_sha="abc123",
+            name="done-task",
+            description="Completed work",
+            status=TaskStatus.COMPLETE,
+        )
+        failed_task = Task(
+            id=plan.next_task_id(),
+            spec_path="auth.spec.md",
+            spec_blob_sha="abc123",
+            name="failed-task",
+            description="Failed work",
+            status=TaskStatus.FAILED,
+        )
+        plan.add_tasks(sp, [complete_task, failed_task])
+        sp.status = SpecPlanStatus.VERIFYING
+
+        verification_handle = AgentHandle(id="verifier-mix")
+        sp.verification_handle = verification_handle
+        agent_runtime.set_poll_result(
+            verification_handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        _, task_summaries, _ = agent_runtime.compose_summary_calls[0]
+        assert len(task_summaries) == 1
+        assert task_summaries[0] == ("done-task", "Completed work")
