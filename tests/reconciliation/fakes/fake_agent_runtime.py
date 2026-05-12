@@ -19,6 +19,7 @@ class FakeAgentRuntime:
         self._next_handle_id: int = 0
         self.launched_tasks: list[TaskBriefing] = []
         self.launched_verifications: list[tuple[str, str, str, str]] = []
+        self.launched_merge_resolutions: list[tuple[str, str, str]] = []
         self.decomposition_calls: list[
             tuple[list[SpecDiff], list[Task], list[Event]]
         ] = []
@@ -75,6 +76,9 @@ class FakeAgentRuntime:
         delivery_workspace_id: str,
         conflict_details: str,
     ) -> bool:
+        self.launched_merge_resolutions.append(
+            (task_workspace_id, delivery_workspace_id, conflict_details)
+        )
         return self._merge_result
 
     def cancel(self, handle: AgentHandle) -> None:

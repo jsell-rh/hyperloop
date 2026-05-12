@@ -475,6 +475,25 @@ class TestFakeTaskLaunchAndPoll:
 
         assert h1 != h2
 
+    def test_records_task_briefing(self) -> None:
+        runtime = FakeAgentRuntime()
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec",
+            spec_path="auth.spec.md",
+            spec_blob_sha="abc123",
+            task_description="implement login",
+            workspace_id="ws-1",
+        )
+
+        runtime.launch_task(briefing)
+
+        assert len(runtime.launched_tasks) == 1
+        assert runtime.launched_tasks[0].spec_content == "# Auth Spec"
+        assert runtime.launched_tasks[0].spec_path == "auth.spec.md"
+        assert runtime.launched_tasks[0].spec_blob_sha == "abc123"
+        assert runtime.launched_tasks[0].task_description == "implement login"
+        assert runtime.launched_tasks[0].workspace_id == "ws-1"
+
 
 class TestFakeVerification:
     def test_launch_returns_handle(self) -> None:
@@ -620,3 +639,19 @@ class TestFakeMergeResolution:
         )
 
         assert result is False
+
+    def test_records_merge_resolution_params(self) -> None:
+        runtime = FakeAgentRuntime()
+
+        runtime.launch_merge_resolution(
+            task_workspace_id="ws-task-1",
+            delivery_workspace_id="ws-delivery",
+            conflict_details="conflicting import",
+        )
+
+        assert len(runtime.launched_merge_resolutions) == 1
+        assert runtime.launched_merge_resolutions[0] == (
+            "ws-task-1",
+            "ws-delivery",
+            "conflicting import",
+        )
