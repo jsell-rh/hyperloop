@@ -823,6 +823,41 @@ class TestProtocolConformance:
         hints = get_type_hints(GitAgentRuntime.detect_orphans)
         assert hints["return"] == list[AgentHandle]
 
+    def test_has_launch_task_method(self) -> None:
+        from typing import get_type_hints
+
+        hints = get_type_hints(GitAgentRuntime.launch_task)
+        assert hints["briefing"] is TaskBriefing
+        assert hints["return"] is AgentHandle
+
+    def test_has_launch_decomposition_method(self) -> None:
+        from typing import get_type_hints
+
+        hints = get_type_hints(GitAgentRuntime.launch_decomposition)
+        assert hints["spec_diffs"] == list[SpecDiff]
+        assert hints["return"] == list[ProposedTask]
+
+    def test_has_launch_verification_method(self) -> None:
+        from typing import get_type_hints
+
+        hints = get_type_hints(GitAgentRuntime.launch_verification)
+        assert hints["spec_content"] is str
+        assert hints["return"] is AgentHandle
+
+    def test_has_launch_merge_resolution_method(self) -> None:
+        from typing import get_type_hints
+
+        hints = get_type_hints(GitAgentRuntime.launch_merge_resolution)
+        assert hints["conflict_details"] is str
+        assert hints["return"] is bool
+
+    def test_has_compose_integration_summary_method(self) -> None:
+        from typing import get_type_hints
+
+        hints = get_type_hints(GitAgentRuntime.compose_integration_summary)
+        assert hints["spec_content"] is str
+        assert hints["return"] is IntegrationSummary
+
     def test_adapter_imports_from_domain(self) -> None:
         import inspect
 
