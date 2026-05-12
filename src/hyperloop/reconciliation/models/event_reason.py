@@ -12,5 +12,4 @@ class EventReason(StrEnum):
     VERIFICATION_PASSED = "VerificationPassed"
     SPEC_SYNCED = "SpecSynced"
     INTEGRATION_FAILED = "IntegrationFailed"
-    TASK_RETRIED = "TaskRetried"
     DEPENDENCY_INVALIDATED = "DependencyInvalidated"

@@ -33,7 +33,7 @@ A SpecPlan SHALL be uniquely identified by the combination of spec path and blob
 | status | Current reconciliation state (OutOfSync, Reconciling, Verifying, Synced, Failed) |
 | superseded | Whether this SpecPlan has been superseded by a newer blob SHA |
 | reconciliation_attempts | Number of times this spec has cycled through verification failure back to OutOfSync |
-| has_redecomposed | Whether re-decomposition has been performed for the current reconciliation attempt |
+| redecomposition_count | Number of re-decompositions performed for the current reconciliation attempt |
 | tasks | Implementation tasks for this spec version |
 | events | Domain events recorded against this spec version |
 
@@ -49,11 +49,11 @@ A SpecPlan SHALL be uniquely identified by the combination of spec path and blob
 - WHEN the spec cycles through Verifying back to OutOfSync (verification failure)
 - THEN reconciliation_attempts SHALL be incremented to 1
 
-#### Scenario: Re-decomposition flag resets on new verification cycle
+#### Scenario: Re-decomposition count resets on new verification cycle
 
-- GIVEN a SpecPlan with has_redecomposed set to true from a prior cycle
+- GIVEN a SpecPlan with redecomposition_count of 1 from a prior cycle
 - WHEN the spec enters a new reconciliation attempt (after verification failure resets it to OutOfSync)
-- THEN has_redecomposed SHALL be reset to false
+- THEN redecomposition_count SHALL be reset to 0
 
 #### Scenario: SpecPlan identity is path plus SHA
 
