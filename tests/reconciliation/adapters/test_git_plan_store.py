@@ -15,6 +15,17 @@ from hyperloop.reconciliation.models import (
     TaskStatus,
 )
 
+PLAN_BRANCH = "hyperloop/plan"
+PLAN_FILE = "plan.json"
+
+
+def _make_store(repo_path: Path) -> GitPlanStore:
+    return GitPlanStore(
+        repo_path,
+        plan_branch=PLAN_BRANCH,
+        plan_file=PLAN_FILE,
+    )
+
 
 def _git(
     repo: Path, *args: str, input: str | None = None
@@ -104,7 +115,7 @@ def _build_populated_plan() -> Plan:
 class TestFirstRun:
     def test_returns_empty_plan(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         plan = store.get_plan()
 
         assert plan.spec_plans == []
@@ -113,21 +124,21 @@ class TestFirstRun:
 
     def test_creates_orphan_branch(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         store.get_plan()
 
-        result = _git(local, "rev-parse", "--verify", "refs/heads/hyperloop/plan")
+        result = _git(local, "rev-parse", "--verify", f"refs/heads/{PLAN_BRANCH}")
         assert result.returncode == 0
 
     def test_orphan_branch_has_no_shared_history_with_trunk(
         self, git_env: tuple[Path, Path]
     ) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         store.get_plan()
 
         result = subprocess.run(
-            ["git", "merge-base", "main", "hyperloop/plan"],
+            ["git", "merge-base", "main", PLAN_BRANCH],
             cwd=local,
             capture_output=True,
             text=True,
@@ -138,18 +149,18 @@ class TestFirstRun:
         self, git_env: tuple[Path, Path]
     ) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         store.get_plan()
 
-        result = _git(local, "ls-tree", "--name-only", "hyperloop/plan")
+        result = _git(local, "ls-tree", "--name-only", PLAN_BRANCH)
         files = result.stdout.strip().split("\n")
-        assert files == ["plan.json"]
+        assert files == [PLAN_FILE]
 
     def test_second_get_plan_returns_same_empty_plan(
         self, git_env: tuple[Path, Path]
     ) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         store.get_plan()
 
         plan2 = store.get_plan()
@@ -160,7 +171,7 @@ class TestFirstRun:
 class TestReadOperations:
     def test_reads_previously_written_plan(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         plan = _build_populated_plan()
         store.write_plan(plan)
 
@@ -171,7 +182,7 @@ class TestReadOperations:
 
     def test_preserves_task_ids_and_status(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         plan = _build_populated_plan()
         store.write_plan(plan)
 
@@ -184,7 +195,7 @@ class TestReadOperations:
 
     def test_preserves_events(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         plan = _build_populated_plan()
         store.write_plan(plan)
 
@@ -194,7 +205,7 @@ class TestReadOperations:
 
     def test_preserves_task_id_counter(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         plan = _build_populated_plan()
         store.write_plan(plan)
 
@@ -203,7 +214,7 @@ class TestReadOperations:
 
     def test_preserves_spec_plan_status(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         plan = _build_populated_plan()
         store.write_plan(plan)
 
@@ -216,14 +227,14 @@ class TestWriteOperations:
         self, git_env: tuple[Path, Path]
     ) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         store.get_plan()
 
         plan = Plan()
         plan.add_spec("auth.spec.md", "abc123")
         store.write_plan(plan)
 
-        result = _git(local, "log", "--oneline", "hyperloop/plan")
+        result = _git(local, "log", "--oneline", PLAN_BRANCH)
         lines = result.stdout.strip().split("\n")
         assert len(lines) == 2
 
@@ -231,7 +242,7 @@ class TestWriteOperations:
         self, git_env: tuple[Path, Path]
     ) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
 
         plan = Plan()
         plan.add_spec("auth.spec.md", "abc123")
@@ -243,11 +254,11 @@ class TestWriteOperations:
         plan.add_spec("orders.spec.md", "ghi012")
         store.write_plan(plan)
 
-        result = _git(local, "log", "--oneline", "hyperloop/plan")
+        result = _git(local, "log", "--oneline", PLAN_BRANCH)
         lines = result.stdout.strip().split("\n")
         assert len(lines) == 3
 
-        result = _git(local, "log", "--format=%H", "hyperloop/plan")
+        result = _git(local, "log", "--format=%H", PLAN_BRANCH)
         shas = result.stdout.strip().split("\n")
         for i in range(len(shas) - 1):
             parent = _git(local, "rev-parse", f"{shas[i]}^").stdout.strip()
@@ -257,7 +268,7 @@ class TestWriteOperations:
         self, git_env: tuple[Path, Path], tmp_path: Path
     ) -> None:
         local, remote = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         plan = _build_populated_plan()
         store.write_plan(plan)
 
@@ -270,7 +281,7 @@ class TestWriteOperations:
         _git(other, "config", "user.name", "Test User")
         _git(other, "config", "user.email", "test@example.com")
 
-        other_store = GitPlanStore(other)
+        other_store = _make_store(other)
         restored = other_store.get_plan()
         assert len(restored.spec_plans) == 2
         assert restored.spec_plans[0].path == "auth.spec.md"
@@ -279,7 +290,7 @@ class TestWriteOperations:
 class TestAtomicWrite:
     def test_all_changes_in_single_commit(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         store.get_plan()
 
         plan = Plan()
@@ -307,7 +318,7 @@ class TestAtomicWrite:
         )
         store.write_plan(plan)
 
-        result = _git(local, "log", "--oneline", "hyperloop/plan")
+        result = _git(local, "log", "--oneline", PLAN_BRANCH)
         lines = result.stdout.strip().split("\n")
         assert len(lines) == 2
 
@@ -315,23 +326,23 @@ class TestAtomicWrite:
         self, git_env: tuple[Path, Path]
     ) -> None:
         local, _ = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         plan = _build_populated_plan()
         store.write_plan(plan)
 
-        result = _git(local, "ls-tree", "--name-only", "hyperloop/plan")
+        result = _git(local, "ls-tree", "--name-only", PLAN_BRANCH)
         files = result.stdout.strip().split("\n")
-        assert files == ["plan.json"]
+        assert files == [PLAN_FILE]
 
 
 class TestConcurrentAccess:
     def test_plan_survives_new_store_instance(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
-        store1 = GitPlanStore(local)
+        store1 = _make_store(local)
         plan = _build_populated_plan()
         store1.write_plan(plan)
 
-        store2 = GitPlanStore(local)
+        store2 = _make_store(local)
         restored = store2.get_plan()
         assert len(restored.spec_plans) == 2
 
@@ -339,7 +350,7 @@ class TestConcurrentAccess:
         self, git_env: tuple[Path, Path], tmp_path: Path
     ) -> None:
         local, remote = git_env
-        store = GitPlanStore(local)
+        store = _make_store(local)
         plan = Plan()
         plan.add_spec("auth.spec.md", "abc123")
         store.write_plan(plan)
@@ -353,13 +364,59 @@ class TestConcurrentAccess:
         _git(other, "config", "user.name", "Test User")
         _git(other, "config", "user.email", "test@example.com")
 
-        other_store = GitPlanStore(other)
+        other_store = _make_store(other)
         plan2 = other_store.get_plan()
         plan2.add_spec("users.spec.md", "xyz789")
         other_store.write_plan(plan2)
 
         refreshed = store.get_plan()
         assert len(refreshed.spec_plans) == 2
+
+    def test_recovers_from_diverged_branch(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, remote = git_env
+        store = _make_store(local)
+        plan = Plan()
+        plan.add_spec("auth.spec.md", "abc123")
+        store.write_plan(plan)
+
+        other = tmp_path / "other"
+        subprocess.run(
+            ["git", "clone", str(remote), str(other)],
+            check=True,
+            capture_output=True,
+        )
+        _git(other, "config", "user.name", "Test User")
+        _git(other, "config", "user.email", "test@example.com")
+
+        other_store = _make_store(other)
+        plan2 = other_store.get_plan()
+        plan2.add_spec("users.spec.md", "xyz789")
+        other_store.write_plan(plan2)
+
+        diverged_json = Plan().model_dump_json(indent=2) + "\n"
+        blob = _git(
+            local, "hash-object", "-w", "--stdin", input=diverged_json
+        ).stdout.strip()
+        tree = _git(
+            local, "mktree", input=f"100644 blob {blob}\t{PLAN_FILE}"
+        ).stdout.strip()
+        parent = _git(local, "rev-parse", PLAN_BRANCH).stdout.strip()
+        diverged_commit = _git(
+            local, "commit-tree", tree, "-p", parent, "-m", "Diverged local"
+        ).stdout.strip()
+        _git(
+            local,
+            "update-ref",
+            f"refs/heads/{PLAN_BRANCH}",
+            diverged_commit,
+        )
+
+        refreshed = store.get_plan()
+        assert len(refreshed.spec_plans) == 2
+        paths = {sp.path for sp in refreshed.spec_plans}
+        assert paths == {"auth.spec.md", "users.spec.md"}
 
 
 class TestProtocolConformance:
