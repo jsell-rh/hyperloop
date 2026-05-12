@@ -362,6 +362,8 @@ def _build_in_progress_spec_plan(
     handle_b = AgentHandle(id="agent-task-2")
     id1 = plan.next_task_id()
     id2 = plan.next_task_id()
+    ws1 = workspace_manager.create_task_workspace(blob_sha, id1, "D1")
+    ws2 = workspace_manager.create_task_workspace(blob_sha, id2, "D2")
     plan.add_tasks(
         sp,
         [
@@ -373,6 +375,7 @@ def _build_in_progress_spec_plan(
                 description="D1",
                 status=TaskStatus.IN_PROGRESS,
                 agent_handle=handle_a,
+                workspace_id=ws1,
             ),
             Task(
                 id=id2,
@@ -382,11 +385,10 @@ def _build_in_progress_spec_plan(
                 description="D2",
                 status=TaskStatus.IN_PROGRESS,
                 agent_handle=handle_b,
+                workspace_id=ws2,
             ),
         ],
     )
-    workspace_manager.create_task_workspace(blob_sha, id1, "D1")
-    workspace_manager.create_task_workspace(blob_sha, id2, "D2")
 
     if agent_runtime is not None:
         agent_runtime.set_poll_result(handle_a, PollResult(status=AgentStatus.RUNNING))
