@@ -80,13 +80,9 @@ class GitWorkspaceManager:
 
         return MergeResult(outcome=MergeOutcome.SUCCESS)
 
-    def integrate(self, blob_sha: str, spec_path: str) -> str:
+    def integrate(self, blob_sha: str, spec_path: str, title: str, body: str) -> str:
         delivery = self._delivery_branch(blob_sha)
         self._push_branch(delivery)
-
-        prefix = self._branch_prefix.rstrip("/")
-        title = f"[{prefix}] {spec_path}"
-        body = f"Spec: {spec_path}\nBlob SHA: {blob_sha}"
 
         result = self._gh(
             "pr",

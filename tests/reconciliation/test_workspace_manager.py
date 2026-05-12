@@ -353,7 +353,9 @@ class TestIntegrate:
         manager = FakeWorkspaceManager()
         manager.create_delivery_workspace("abc123")
 
-        integration_id = manager.integrate("abc123", "specs/auth.spec.md")
+        integration_id = manager.integrate(
+            "abc123", "specs/auth.spec.md", "PR title", "PR body"
+        )
 
         assert isinstance(integration_id, str)
         assert len(integration_id) > 0
@@ -362,17 +364,24 @@ class TestIntegrate:
         manager = FakeWorkspaceManager()
         manager.create_delivery_workspace("abc123")
 
-        manager.integrate("abc123", "specs/auth.spec.md")
+        manager.integrate("abc123", "specs/auth.spec.md", "PR title", "PR body")
 
         assert len(manager.integrations) == 1
-        assert manager.integrations[0] == ("abc123", "specs/auth.spec.md")
+        assert manager.integrations[0] == (
+            "abc123",
+            "specs/auth.spec.md",
+            "PR title",
+            "PR body",
+        )
 
     def test_returns_configured_integration_id(self) -> None:
         manager = FakeWorkspaceManager()
         manager.create_delivery_workspace("abc123")
         manager.set_integration_id("abc123", "https://github.com/org/repo/pull/42")
 
-        integration_id = manager.integrate("abc123", "specs/auth.spec.md")
+        integration_id = manager.integrate(
+            "abc123", "specs/auth.spec.md", "PR title", "PR body"
+        )
 
         assert integration_id == "https://github.com/org/repo/pull/42"
 
@@ -380,7 +389,7 @@ class TestIntegrate:
         manager = FakeWorkspaceManager()
 
         with pytest.raises(ValueError, match="No delivery workspace"):
-            manager.integrate("abc123", "specs/auth.spec.md")
+            manager.integrate("abc123", "specs/auth.spec.md", "PR title", "PR body")
 
 
 class TestCleanup:

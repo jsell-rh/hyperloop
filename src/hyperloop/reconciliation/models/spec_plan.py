@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from hyperloop.reconciliation.models.agent_handle import AgentHandle
 from hyperloop.reconciliation.models.event import Event, EventType, record_event
+from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.task import Task
 
 
@@ -29,6 +30,7 @@ class SpecPlan(BaseModel):
     redecomposition_count: int = 0
     verification_handle: AgentHandle | None = None
     delivery_workspace_id: str | None = None
+    integration_summary: IntegrationSummary | None = None
     tasks: list[Task] = []
     events: list[Event] = []
 

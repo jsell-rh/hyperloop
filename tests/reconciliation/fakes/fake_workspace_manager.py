@@ -14,7 +14,7 @@ class FakeWorkspaceManager:
         self._verification_workspaces: set[str] = set()
         self._merge_results: dict[tuple[str, int], MergeResult] = {}
         self._integration_ids: dict[str, str] = {}
-        self.integrations: list[tuple[str, str]] = []
+        self.integrations: list[tuple[str, str, str, str]] = []
 
     def set_merge_result(
         self, blob_sha: str, task_id: int, result: MergeResult
@@ -58,10 +58,10 @@ class FakeWorkspaceManager:
             self._task_briefings.pop((blob_sha, task_id), None)
         return result
 
-    def integrate(self, blob_sha: str, spec_path: str) -> str:
+    def integrate(self, blob_sha: str, spec_path: str, title: str, body: str) -> str:
         if blob_sha not in self._delivery_workspaces:
             raise ValueError(f"No delivery workspace for blob_sha={blob_sha}")
-        self.integrations.append((blob_sha, spec_path))
+        self.integrations.append((blob_sha, spec_path, title, body))
         return self._integration_ids.get(
             blob_sha, f"https://github.com/example/repo/pull/fake-{blob_sha}"
         )

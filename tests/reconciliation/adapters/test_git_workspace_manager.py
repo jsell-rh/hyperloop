@@ -392,7 +392,9 @@ class TestIntegrate:
         _create_work_commit(local, delivery_branch, "login.py", "def login(): pass")
 
         self._setup_fake_gh(tmp_path)
-        integration_id = manager.integrate(BLOB_SHA, "specs/auth.spec.md")
+        integration_id = manager.integrate(
+            BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+        )
 
         local_head = _git(local, "rev-parse", delivery_branch).stdout.strip()
         remote_head = _git(
@@ -402,7 +404,7 @@ class TestIntegrate:
         assert isinstance(integration_id, str)
         assert len(integration_id) > 0
 
-    def test_pr_references_spec_and_sha(
+    def test_pr_forwards_title_and_body(
         self, git_env: tuple[Path, Path], tmp_path: Path
     ) -> None:
         local, _ = git_env
@@ -410,11 +412,13 @@ class TestIntegrate:
         manager.create_delivery_workspace(BLOB_SHA)
 
         args_file = self._setup_fake_gh(tmp_path)
-        manager.integrate(BLOB_SHA, "specs/auth.spec.md")
+        manager.integrate(
+            BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+        )
 
         captured_args = args_file.read_text()
-        assert "specs/auth.spec.md" in captured_args
-        assert BLOB_SHA in captured_args
+        assert "Implement auth" in captured_args
+        assert "Auth module" in captured_args
 
     def test_pr_targets_trunk(self, git_env: tuple[Path, Path], tmp_path: Path) -> None:
         local, _ = git_env
@@ -422,7 +426,9 @@ class TestIntegrate:
         manager.create_delivery_workspace(BLOB_SHA)
 
         args_file = self._setup_fake_gh(tmp_path)
-        manager.integrate(BLOB_SHA, "specs/auth.spec.md")
+        manager.integrate(
+            BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+        )
 
         captured_args = args_file.read_text()
         assert TRUNK in captured_args
@@ -433,7 +439,9 @@ class TestIntegrate:
         manager.create_delivery_workspace(BLOB_SHA)
 
         self._setup_fake_gh(tmp_path)
-        url = manager.integrate(BLOB_SHA, "specs/auth.spec.md")
+        url = manager.integrate(
+            BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+        )
 
         assert url == "https://github.com/test/repo/pull/1"
 
@@ -650,6 +658,8 @@ class TestProtocolConformance:
         hints = get_type_hints(GitWorkspaceManager.integrate)
         assert hints["blob_sha"] is str
         assert hints["spec_path"] is str
+        assert hints["title"] is str
+        assert hints["body"] is str
         assert hints["return"] is str
 
     def test_has_cleanup(self) -> None:

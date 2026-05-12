@@ -4,6 +4,7 @@ from typing import Protocol
 
 from hyperloop.reconciliation.models.agent_handle import AgentHandle
 from hyperloop.reconciliation.models.event import Event
+from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.poll_result import PollResult
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
@@ -37,6 +38,13 @@ class AgentRuntime(Protocol):
         delivery_workspace_id: str,
         conflict_details: str,
     ) -> bool: ...
+
+    def compose_integration_summary(
+        self,
+        spec_content: str,
+        task_summaries: list[tuple[str, str]],
+        verification_rationale: str,
+    ) -> IntegrationSummary: ...
 
     def cancel(self, handle: AgentHandle) -> None: ...
 

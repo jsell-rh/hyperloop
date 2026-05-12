@@ -498,7 +498,26 @@ class Reconciler:
 
     def _integrate_to_trunk(self, sp: SpecPlan) -> None:
         try:
-            integration_id = self._workspace_manager.integrate(sp.blob_sha, sp.path)
+            if sp.integration_summary is None:
+                spec_content = self._spec_source.read_at(sp.path, sp.blob_sha)
+                task_summaries = [
+                    (t.name, t.description)
+                    for t in sp.tasks
+                    if t.status == TaskStatus.COMPLETE
+                ]
+                rationale = self._get_verification_rationale(sp)
+                sp.integration_summary = (
+                    self._agent_runtime.compose_integration_summary(
+                        spec_content, task_summaries, rationale
+                    )
+                )
+
+            integration_id = self._workspace_manager.integrate(
+                sp.blob_sha,
+                sp.path,
+                sp.integration_summary.title,
+                sp.integration_summary.body,
+            )
             self._observer.trunk_integration_started(
                 spec_path=sp.path,
                 spec_blob_sha=sp.blob_sha,
@@ -539,6 +558,12 @@ class Reconciler:
                     reason=f"Integration retry limit ({self._max_integration_retries}) exceeded",
                     cycle=self._cycle,
                 )
+
+    def _get_verification_rationale(self, sp: SpecPlan) -> str:
+        for event in reversed(sp.events):
+            if event.reason == EventReason.VERIFICATION_PASSED:
+                return event.message
+        return ""
 
     def _retry_integration(self, sp: SpecPlan) -> None:
         has_passed = any(e.reason == EventReason.VERIFICATION_PASSED for e in sp.events)

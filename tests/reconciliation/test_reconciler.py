@@ -9,6 +9,7 @@ from hyperloop.reconciliation.models.agent_handle import AgentHandle
 from hyperloop.reconciliation.models.cancellation_reason import CancellationReason
 from hyperloop.reconciliation.models.event import EventType
 from hyperloop.reconciliation.models.event_reason import EventReason
+from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.merge_result import MergeOutcome, MergeResult
 from hyperloop.reconciliation.models.poll_result import (
     AgentStatus,
@@ -2379,7 +2380,9 @@ class TestVerificationPass:
         reconciler.run_cycle()
 
         assert len(workspace_manager.integrations) == 1
-        assert workspace_manager.integrations[0] == ("abc123", "auth.spec.md")
+        blob_sha, spec_path, _title, _body = workspace_manager.integrations[0]
+        assert blob_sha == "abc123"
+        assert spec_path == "auth.spec.md"
 
     def test_trunk_integration_started_event(
         self,
@@ -4160,3 +4163,249 @@ class TestCrossSpecDependencyInvalidation:
             if t.name == "task-A-v2"
         )
         assert task_a_v2.id in new_tasks[0].depends_on
+
+
+class TestIntegrationSummary:
+    def test_compose_called_before_integrate(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="All checks pass",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.compose_summary_calls) == 1
+        assert len(workspace_manager.integrations) == 1
+
+    def test_compose_receives_correct_context(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store,
+            spec_source,
+            workspace_manager,
+            agent_runtime,
+            spec_content="# Auth Spec\nRequirements here",
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="All requirements verified",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        spec_content, task_summaries, rationale = agent_runtime.compose_summary_calls[0]
+        assert spec_content == "# Auth Spec\nRequirements here"
+        assert rationale == "All requirements verified"
+        assert len(task_summaries) == 2
+        for name, description in task_summaries:
+            assert isinstance(name, str)
+            assert isinstance(description, str)
+
+    def test_generated_title_and_body_passed_to_integrate(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        agent_runtime.set_integration_summary(
+            IntegrationSummary(
+                title="Implement authentication",
+                body="Added auth module with login and logout",
+            )
+        )
+
+        reconciler.run_cycle()
+
+        assert len(workspace_manager.integrations) == 1
+        _, _, title, body = workspace_manager.integrations[0]
+        assert title == "Implement authentication"
+        assert body == "Added auth module with login and logout"
+
+    def test_compose_failure_prevents_integration(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        agent_runtime.set_integration_summary_error(RuntimeError("Agent unavailable"))
+
+        reconciler.run_cycle()
+
+        assert len(workspace_manager.integrations) == 0
+        assert sp.status == SpecPlanStatus.VERIFYING
+
+    def test_compose_failure_fires_trunk_integration_failed(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        agent_runtime.set_integration_summary_error(RuntimeError("Agent unavailable"))
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("trunk_integration_failed")
+        assert len(events) == 1
+
+    def test_compose_failure_increments_integration_attempts(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        agent_runtime.set_integration_summary_error(RuntimeError("Agent unavailable"))
+
+        reconciler.run_cycle()
+
+        assert sp.integration_attempts == 1
+
+    def test_summary_cached_for_integration_retry(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        agent_runtime.set_integration_summary(
+            IntegrationSummary(title="Auth feature", body="Implements auth")
+        )
+        workspace_manager._delivery_workspaces.discard("abc123")
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.VERIFYING
+        assert len(agent_runtime.compose_summary_calls) == 1
+
+        workspace_manager._delivery_workspaces.add("abc123")
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.SYNCED
+        assert len(agent_runtime.compose_summary_calls) == 1
+        _, _, title, body = workspace_manager.integrations[0]
+        assert title == "Auth feature"
+        assert body == "Implements auth"
+
+    def test_compose_retried_after_compose_failure(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        agent_runtime.set_integration_summary_error(RuntimeError("Agent unavailable"))
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.VERIFYING
+        assert len(agent_runtime.compose_summary_calls) == 1
+
+        agent_runtime.set_integration_summary(
+            IntegrationSummary(title="Auth feature", body="Implements auth")
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.SYNCED
+        assert len(agent_runtime.compose_summary_calls) == 2

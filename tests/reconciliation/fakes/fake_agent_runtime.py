@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from hyperloop.reconciliation.models.agent_handle import AgentHandle
 from hyperloop.reconciliation.models.event import Event
+from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.poll_result import AgentStatus, PollResult
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
@@ -16,6 +17,10 @@ class FakeAgentRuntime:
         self._cancelled: set[str] = set()
         self._orphans: list[AgentHandle] = []
         self._merge_result: bool = True
+        self._integration_summary: IntegrationSummary = IntegrationSummary(
+            title="Default title", body="Default body"
+        )
+        self._integration_summary_error: Exception | None = None
         self._next_handle_id: int = 0
         self.launched_tasks: list[TaskBriefing] = []
         self.launched_verifications: list[tuple[str, str, str, str]] = []
@@ -23,6 +28,7 @@ class FakeAgentRuntime:
         self.decomposition_calls: list[
             tuple[list[SpecDiff], list[Task], list[Event]]
         ] = []
+        self.compose_summary_calls: list[tuple[str, list[tuple[str, str]], str]] = []
 
     def set_decomposition_result(self, tasks: list[ProposedTask]) -> None:
         self._decomposition_result = tasks
@@ -32,6 +38,13 @@ class FakeAgentRuntime:
 
     def set_merge_result(self, success: bool) -> None:
         self._merge_result = success
+
+    def set_integration_summary(self, summary: IntegrationSummary) -> None:
+        self._integration_summary = summary
+        self._integration_summary_error = None
+
+    def set_integration_summary_error(self, error: Exception) -> None:
+        self._integration_summary_error = error
 
     def set_orphans(self, orphans: list[AgentHandle]) -> None:
         self._orphans = orphans
@@ -80,6 +93,19 @@ class FakeAgentRuntime:
             (task_workspace_id, delivery_workspace_id, conflict_details)
         )
         return self._merge_result
+
+    def compose_integration_summary(
+        self,
+        spec_content: str,
+        task_summaries: list[tuple[str, str]],
+        verification_rationale: str,
+    ) -> IntegrationSummary:
+        self.compose_summary_calls.append(
+            (spec_content, task_summaries, verification_rationale)
+        )
+        if self._integration_summary_error is not None:
+            raise self._integration_summary_error
+        return self._integration_summary
 
     def cancel(self, handle: AgentHandle) -> None:
         self._cancelled.add(handle.id)

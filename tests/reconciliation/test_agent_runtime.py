@@ -54,6 +54,7 @@ class TestAgentRuntimeProtocol:
             "poll",
             "launch_verification",
             "launch_merge_resolution",
+            "compose_integration_summary",
             "cancel",
             "detect_orphans",
         }
