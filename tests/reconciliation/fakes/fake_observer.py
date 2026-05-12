@@ -250,6 +250,17 @@ class FakeObserver:
             cycle=cycle,
         )
 
+    def verification_launch_failed(
+        self, *, spec_path: str, spec_blob_sha: str, reason: str, cycle: int
+    ) -> None:
+        self._record(
+            "verification_launch_failed",
+            spec_path=spec_path,
+            spec_blob_sha=spec_blob_sha,
+            reason=reason,
+            cycle=cycle,
+        )
+
     def verification_passed(
         self, *, spec_path: str, spec_blob_sha: str, rationale: str, cycle: int
     ) -> None:

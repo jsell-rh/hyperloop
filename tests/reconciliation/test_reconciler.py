@@ -2045,9 +2045,10 @@ class TestVerificationLaunch:
         plan = plan_store.get_plan()
         sp = next(sp for sp in plan.spec_plans if sp.path == "auth.spec.md")
         assert sp.status == SpecPlanStatus.RECONCILING
-        events = observer.calls_for("agent_launch_failed")
+        events = observer.calls_for("verification_launch_failed")
         assert len(events) == 1
-        assert events[0]["role"] == "verification"
+        assert events[0]["spec_path"] == "auth.spec.md"
+        assert events[0]["spec_blob_sha"] == "abc123"
         assert "Verification agent unavailable" in events[0]["reason"]
 
         agent_runtime.launch_verification = original_launch  # type: ignore[assignment]
@@ -2811,9 +2812,11 @@ class TestIntegrationFailure:
 
         reconciler.run_cycle()
         assert sp.status == SpecPlanStatus.VERIFYING
+        assert sp.integration_attempts == 1
 
         reconciler.run_cycle()
         assert sp.status == SpecPlanStatus.FAILED
+        assert sp.integration_attempts == 2
 
     def test_integration_retry_limit_fires_spec_failed_event(
         self,

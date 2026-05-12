@@ -137,6 +137,10 @@ class Observer(Protocol):
         self, *, spec_path: str, spec_blob_sha: str, cycle: int
     ) -> None: ...
 
+    def verification_launch_failed(
+        self, *, spec_path: str, spec_blob_sha: str, reason: str, cycle: int
+    ) -> None: ...
+
     def verification_passed(
         self, *, spec_path: str, spec_blob_sha: str, rationale: str, cycle: int
     ) -> None: ...

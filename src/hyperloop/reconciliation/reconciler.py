@@ -361,9 +361,9 @@ class Reconciler:
                     spec_content, sp.path, sp.blob_sha, workspace_id
                 )
             except Exception as exc:
-                self._observer.agent_launch_failed(
-                    task_id=0,
-                    role="verification",
+                self._observer.verification_launch_failed(
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
                     reason=str(exc),
                     cycle=self._cycle,
                 )

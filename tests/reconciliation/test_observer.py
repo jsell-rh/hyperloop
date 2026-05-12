@@ -95,6 +95,12 @@ EXPECTED_METHODS: dict[str, dict[str, type]] = {
     },
     "trunk_integration_failed": {"spec_path": str, "spec_blob_sha": str, "reason": str},
     "verification_launched": {"spec_path": str, "spec_blob_sha": str, "cycle": int},
+    "verification_launch_failed": {
+        "spec_path": str,
+        "spec_blob_sha": str,
+        "reason": str,
+        "cycle": int,
+    },
     "verification_passed": {
         "spec_path": str,
         "spec_blob_sha": str,
