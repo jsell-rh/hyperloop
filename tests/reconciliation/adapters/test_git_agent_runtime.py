@@ -591,6 +591,25 @@ class TestLaunchTask:
         except RuntimeError as exc:
             assert "Agent start failed" in str(exc)
 
+    def test_unknown_workspace_type_raises_value_error(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        runtime = _make_runtime(local)
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            task_description="Implement auth endpoint",
+            workspace_id=f"unknown/{BLOB_SHA}/5",
+        )
+
+        try:
+            runtime.launch_task(briefing)
+            assert False, "Expected ValueError"
+        except ValueError as exc:
+            assert "Unknown workspace type" in str(exc)
+
 
 class TestLaunchDecomposition:
     def test_returns_proposed_tasks_from_executor(
@@ -726,6 +745,24 @@ class TestLaunchVerification:
 
         assert result.status == AgentStatus.COMPLETE
         assert result.verdict == AgentVerdict.PASS
+
+    def test_executor_failure_propagates(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+
+        executor = FakeAgentExecutor()
+        executor.set_start_verification_error(RuntimeError("Verification start failed"))
+        runtime = _make_runtime(local, executor)
+
+        try:
+            runtime.launch_verification(
+                spec_content="# Auth Spec",
+                spec_path="specs/auth.spec.md",
+                spec_blob_sha=BLOB_SHA,
+                workspace_id=f"verification/{BLOB_SHA}",
+            )
+            assert False, "Expected RuntimeError"
+        except RuntimeError as exc:
+            assert "Verification start failed" in str(exc)
 
 
 class TestLaunchMergeResolution:

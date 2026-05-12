@@ -17,6 +17,7 @@ from hyperloop.reconciliation.models.proposed_task import ProposedTask
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
 from hyperloop.reconciliation.models.task import Task
 from hyperloop.reconciliation.models.task_briefing import TaskBriefing
+from hyperloop.reconciliation.models.workspace_type import WorkspaceType
 
 _TASK_STATUS_RE = re.compile(r"^Task-Status:\s*(Complete|Failed)\s*$", re.MULTILINE)
 _VERIFICATION_STATUS_RE = re.compile(
@@ -158,12 +159,12 @@ class GitAgentRuntime:
         parts = workspace_id.split("/")
         ws_type = parts[0]
         blob_sha = parts[1]
-        if ws_type == "task":
+        if ws_type == WorkspaceType.TASK:
             task_id = parts[2]
             return f"{self._branch_prefix}spec/{blob_sha}/task/{task_id}"
-        if ws_type == "verification":
+        if ws_type == WorkspaceType.VERIFICATION:
             return f"{self._branch_prefix}spec/{blob_sha}/verifier"
-        if ws_type == "delivery":
+        if ws_type == WorkspaceType.DELIVERY:
             return f"{self._branch_prefix}spec/{blob_sha}/delivery"
         raise ValueError(f"Unknown workspace type: {ws_type}")
 
