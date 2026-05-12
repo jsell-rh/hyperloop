@@ -632,11 +632,17 @@ class Reconciler:
                 self._agent_runtime.cancel(task.agent_handle)
             except Exception:
                 pass
+            self._observer.agent_cancelled(
+                task_id=task.id,
+                spec_path=task.spec_path,
+                reason=CancellationReason.DEPENDENCY_INVALIDATED,
+            )
         task.agent_handle = None
         task.status = TaskStatus.FAILED
+        reason = f"Dependency on task {dependency_task_id} is unsatisfiable"
         task.record_event(
             reason=EventReason.DEPENDENCY_INVALIDATED,
-            message=f"Dependency on task {dependency_task_id} is unsatisfiable",
+            message=reason,
             event_type=EventType.WARNING,
             timestamp=datetime.now(timezone.utc),
         )
@@ -644,7 +650,7 @@ class Reconciler:
             task_id=task.id,
             spec_path=task.spec_path,
             dependency_task_id=dependency_task_id,
-            reason=f"Dependency on task {dependency_task_id} is unsatisfiable",
+            reason=reason,
         )
 
     def _find_active_spec_plan(self, plan: Plan, path: str) -> SpecPlan | None:

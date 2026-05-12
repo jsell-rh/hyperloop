@@ -3727,3 +3727,255 @@ class TestCrossSpecDependencyInvalidation:
 
         assert task_b.status == TaskStatus.FAILED
         assert agent_runtime.is_cancelled(handle)
+        cancelled = observer.calls_for("agent_cancelled")
+        dep_cancelled = [
+            c
+            for c in cancelled
+            if c["reason"] == CancellationReason.DEPENDENCY_INVALIDATED
+        ]
+        assert len(dep_cancelled) == 1
+        assert dep_cancelled[0]["task_id"] == task_b.id
+
+    def test_redecomposition_receives_updated_task_state(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=0,
+            max_redecompositions=1,
+        )
+        plan = plan_store.get_plan()
+
+        sp_y = plan.add_spec("spec-y.spec.md", "sha-y1")
+        sp_y.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("spec-y.spec.md", "sha-y1")
+        workspace_manager.create_delivery_workspace("sha-y1")
+        task_a = Task(
+            id=plan.next_task_id(),
+            spec_path="spec-y.spec.md",
+            spec_blob_sha="sha-y1",
+            name="task-A",
+            description="Task A in spec Y",
+            status=TaskStatus.BACKLOG,
+        )
+        plan.add_tasks(sp_y, [task_a])
+
+        sp_x = plan.add_spec("spec-x.spec.md", "sha-x1")
+        sp_x.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("spec-x.spec.md", "sha-x1")
+        workspace_manager.create_delivery_workspace("sha-x1")
+        task_b = Task(
+            id=plan.next_task_id(),
+            spec_path="spec-x.spec.md",
+            spec_blob_sha="sha-x1",
+            name="task-B",
+            description="Task B depends on A",
+            status=TaskStatus.BACKLOG,
+            depends_on=[task_a.id],
+        )
+        plan.add_tasks(sp_x, [task_b])
+
+        spec_source.add_spec("spec-y.spec.md", "sha-y2")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="task-A-v2",
+                    description="New task A for spec Y v2",
+                    spec_path="spec-y.spec.md",
+                    spec_blob_sha="sha-y2",
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        assert sp_x.status == SpecPlanStatus.OUT_OF_SYNC
+
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="task-B-v2",
+                    description="Revised task B",
+                    spec_path="spec-x.spec.md",
+                    spec_blob_sha="sha-x1",
+                    depends_on=["task-A-v2"],
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.decomposition_calls) == 2
+        _, existing_tasks, _ = agent_runtime.decomposition_calls[1]
+        spec_y_tasks = [t for t in existing_tasks if t.spec_path == "spec-y.spec.md"]
+        assert len(spec_y_tasks) > 0
+        assert all(t.spec_blob_sha == "sha-y2" for t in spec_y_tasks)
+
+    def test_multiple_dependents_all_invalidated(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        plan = plan_store.get_plan()
+
+        sp_y = plan.add_spec("spec-y.spec.md", "sha-y1")
+        sp_y.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("spec-y.spec.md", "sha-y1")
+        workspace_manager.create_delivery_workspace("sha-y1")
+        task_a = Task(
+            id=plan.next_task_id(),
+            spec_path="spec-y.spec.md",
+            spec_blob_sha="sha-y1",
+            name="task-A",
+            description="Task A",
+            status=TaskStatus.BACKLOG,
+        )
+        plan.add_tasks(sp_y, [task_a])
+
+        sp_x = plan.add_spec("spec-x.spec.md", "sha-x1")
+        sp_x.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("spec-x.spec.md", "sha-x1")
+        workspace_manager.create_delivery_workspace("sha-x1")
+        task_b1 = Task(
+            id=plan.next_task_id(),
+            spec_path="spec-x.spec.md",
+            spec_blob_sha="sha-x1",
+            name="task-B1",
+            description="First dependent",
+            status=TaskStatus.BACKLOG,
+            depends_on=[task_a.id],
+        )
+        task_b2 = Task(
+            id=plan.next_task_id(),
+            spec_path="spec-x.spec.md",
+            spec_blob_sha="sha-x1",
+            name="task-B2",
+            description="Second dependent",
+            status=TaskStatus.BACKLOG,
+            depends_on=[task_a.id],
+        )
+        plan.add_tasks(sp_x, [task_b1, task_b2])
+
+        spec_source.add_spec("spec-y.spec.md", "sha-y2")
+
+        reconciler.run_cycle()
+
+        assert task_b1.status == TaskStatus.FAILED
+        assert task_b2.status == TaskStatus.FAILED
+        dep_events = observer.calls_for("dependency_invalidated")
+        assert len(dep_events) == 2
+        invalidated_ids = {e["task_id"] for e in dep_events}
+        assert invalidated_ids == {task_b1.id, task_b2.id}
+
+    def test_mixed_deps_invalidated_when_cross_spec_dep_superseded(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        plan = plan_store.get_plan()
+
+        sp_y = plan.add_spec("spec-y.spec.md", "sha-y1")
+        sp_y.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("spec-y.spec.md", "sha-y1")
+        workspace_manager.create_delivery_workspace("sha-y1")
+        task_a = Task(
+            id=plan.next_task_id(),
+            spec_path="spec-y.spec.md",
+            spec_blob_sha="sha-y1",
+            name="task-A",
+            description="Cross-spec task",
+            status=TaskStatus.BACKLOG,
+        )
+        plan.add_tasks(sp_y, [task_a])
+
+        sp_x = plan.add_spec("spec-x.spec.md", "sha-x1")
+        sp_x.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("spec-x.spec.md", "sha-x1")
+        workspace_manager.create_delivery_workspace("sha-x1")
+        task_local = Task(
+            id=plan.next_task_id(),
+            spec_path="spec-x.spec.md",
+            spec_blob_sha="sha-x1",
+            name="task-local",
+            description="Local task",
+            status=TaskStatus.COMPLETE,
+        )
+        task_c = Task(
+            id=plan.next_task_id(),
+            spec_path="spec-x.spec.md",
+            spec_blob_sha="sha-x1",
+            name="task-C",
+            description="Depends on both local and cross-spec",
+            status=TaskStatus.BACKLOG,
+            depends_on=[task_local.id, task_a.id],
+        )
+        plan.add_tasks(sp_x, [task_local, task_c])
+
+        spec_source.add_spec("spec-y.spec.md", "sha-y2")
+
+        reconciler.run_cycle()
+
+        assert task_c.status == TaskStatus.FAILED
+        dep_events = observer.calls_for("dependency_invalidated")
+        assert len(dep_events) == 1
+        assert dep_events[0]["task_id"] == task_c.id
+        assert dep_events[0]["dependency_task_id"] == task_a.id
+
+    def test_failed_spec_with_failed_task_stays_blocked(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        plan = plan_store.get_plan()
+
+        sp_y = plan.add_spec("spec-y.spec.md", "sha-y1")
+        sp_y.status = SpecPlanStatus.FAILED
+        spec_source.add_spec("spec-y.spec.md", "sha-y1")
+        workspace_manager.create_delivery_workspace("sha-y1")
+        task_a = Task(
+            id=plan.next_task_id(),
+            spec_path="spec-y.spec.md",
+            spec_blob_sha="sha-y1",
+            name="task-A",
+            description="Task A in Failed spec",
+            status=TaskStatus.FAILED,
+        )
+        plan.add_tasks(sp_y, [task_a])
+
+        sp_x = plan.add_spec("spec-x.spec.md", "sha-x1")
+        sp_x.status = SpecPlanStatus.RECONCILING
+        spec_source.add_spec("spec-x.spec.md", "sha-x1")
+        workspace_manager.create_delivery_workspace("sha-x1")
+        task_b = Task(
+            id=plan.next_task_id(),
+            spec_path="spec-x.spec.md",
+            spec_blob_sha="sha-x1",
+            name="task-B",
+            description="Depends on task A in Failed spec",
+            status=TaskStatus.BACKLOG,
+            depends_on=[task_a.id],
+        )
+        plan.add_tasks(sp_x, [task_b])
+
+        reconciler.run_cycle()
+
+        assert task_b.status == TaskStatus.BACKLOG
+        assert observer.calls_for("dependency_invalidated") == []
