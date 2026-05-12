@@ -1,0 +1,14 @@
+from __future__ import annotations
+
+import click
+
+from hyperloop.cli.commands.get import get
+
+
+@click.group()
+@click.pass_context
+def cli(ctx: click.Context) -> None:
+    pass
+
+
+cli.add_command(get)
