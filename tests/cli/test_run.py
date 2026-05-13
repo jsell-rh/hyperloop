@@ -5,6 +5,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from hyperloop.cli.app import cli
+from hyperloop.reconciliation.models.configuration import DEFAULT_CONFIG_FILENAME
 from hyperloop.reconciliation.reconciler import Reconciler
 
 
@@ -34,7 +35,7 @@ class TestRunCommand:
         assert "agent executor" in result.output.lower()
 
     def test_run_fails_on_invalid_config(self, tmp_path: Path) -> None:
-        config_file = tmp_path / ".hyperloop.yaml"
+        config_file = tmp_path / DEFAULT_CONFIG_FILENAME
         config_file.write_text("convergence_bound: -1\n")
         runner = CliRunner()
         result = runner.invoke(cli, ["run", "--config", str(config_file)], obj=object())
@@ -46,7 +47,7 @@ class TestRunCommand:
     ) -> None:
         specs_dir = tmp_path / "specs"
         specs_dir.mkdir()
-        config_file = tmp_path / ".hyperloop.yaml"
+        config_file = tmp_path / DEFAULT_CONFIG_FILENAME
         config_file.write_text(f"specs_directory: '{specs_dir}'\n")
         runner = CliRunner()
         result = runner.invoke(cli, ["run", "--config", str(config_file)], obj=object())

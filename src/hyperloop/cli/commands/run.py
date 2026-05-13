@@ -4,7 +4,10 @@ from pathlib import Path
 
 import click
 
-from hyperloop.reconciliation.models.configuration import Configuration
+from hyperloop.reconciliation.models.configuration import (
+    DEFAULT_CONFIG_FILENAME,
+    Configuration,
+)
 from hyperloop.reconciliation.reconciler import Reconciler
 
 
@@ -18,7 +21,7 @@ def run(ctx: click.Context, config_path: str | None) -> None:
         ctx.obj.run()
         return
 
-    path = Path(config_path) if config_path else Path(".hyperloop.yaml")
+    path = Path(config_path) if config_path else Path(DEFAULT_CONFIG_FILENAME)
     try:
         Configuration.from_yaml(path)
     except Exception as exc:

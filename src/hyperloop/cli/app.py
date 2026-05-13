@@ -9,7 +9,10 @@ from hyperloop.cli.commands.describe import describe
 from hyperloop.cli.commands.get import get
 from hyperloop.cli.commands.run import run
 from hyperloop.reconciliation.adapters.git_plan_store import GitPlanStore
-from hyperloop.reconciliation.models.configuration import Configuration
+from hyperloop.reconciliation.models.configuration import (
+    DEFAULT_CONFIG_FILENAME,
+    Configuration,
+)
 
 
 def _find_git_root() -> Path:
@@ -31,7 +34,7 @@ def cli(ctx: click.Context) -> None:
         return
     try:
         repo_path = _find_git_root()
-        config = Configuration.from_yaml(repo_path / ".hyperloop.yaml")
+        config = Configuration.from_yaml(repo_path / DEFAULT_CONFIG_FILENAME)
         ctx.obj = GitPlanStore(
             repo_path=repo_path,
             plan_branch=config.plan_branch,

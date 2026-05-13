@@ -7,6 +7,9 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
+DEFAULT_CONFIG_FILENAME = ".hyperloop.yaml"
+
+
 class Configuration(BaseSettings):
     model_config = {"frozen": True}
 
