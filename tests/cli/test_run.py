@@ -5,74 +5,50 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from hyperloop.cli.app import cli
-from hyperloop.reconciliation.models.configuration import Configuration
+from hyperloop.reconciliation.reconciler import Reconciler
 
 
-class FakeReconciler:
+class FakeReconciler(Reconciler):
     def __init__(self) -> None:
         self.started = False
-        self.config: Configuration | None = None
 
-    def run(self, config: Configuration) -> None:
+    def run(self) -> None:
         self.started = True
-        self.config = config
+
+    def stop(self) -> None:
+        pass
 
 
 class TestRunCommand:
-    def test_run_starts_reconciler(self) -> None:
+    def test_run_starts_injected_reconciler(self) -> None:
         reconciler = FakeReconciler()
         runner = CliRunner()
         result = runner.invoke(cli, ["run"], obj=reconciler)
         assert result.exit_code == 0
         assert reconciler.started is True
 
-    def test_run_loads_default_config(self) -> None:
-        reconciler = FakeReconciler()
+    def test_run_without_reconciler_requires_executor(self) -> None:
         runner = CliRunner()
-        result = runner.invoke(cli, ["run"], obj=reconciler)
-        assert result.exit_code == 0
-        assert reconciler.config is not None
-        assert reconciler.config.convergence_bound == 3
-
-    def test_run_loads_config_from_file(self, tmp_path: Path) -> None:
-        specs_dir = tmp_path / "specs"
-        specs_dir.mkdir()
-        config_file = tmp_path / ".hyperloop.yaml"
-        config_file.write_text(
-            f"convergence_bound: 7\nspecs_directory: '{specs_dir}'\n"
-        )
-        reconciler = FakeReconciler()
-        runner = CliRunner()
-        result = runner.invoke(
-            cli, ["run", "--config", str(config_file)], obj=reconciler
-        )
-        assert result.exit_code == 0
-        assert reconciler.config is not None
-        assert reconciler.config.convergence_bound == 7
+        result = runner.invoke(cli, ["run"], obj=object())
+        assert result.exit_code != 0
+        assert "agent executor" in result.output.lower()
 
     def test_run_fails_on_invalid_config(self, tmp_path: Path) -> None:
         config_file = tmp_path / ".hyperloop.yaml"
         config_file.write_text("convergence_bound: -1\n")
-        reconciler = FakeReconciler()
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["run", "--config", str(config_file)], obj=reconciler
-        )
+        result = runner.invoke(cli, ["run", "--config", str(config_file)], obj=object())
         assert result.exit_code != 0
-        assert reconciler.started is False
+        assert "convergence_bound" in result.output.lower()
 
-    def test_run_with_nonexistent_config_uses_defaults(self) -> None:
-        reconciler = FakeReconciler()
+    def test_run_with_valid_config_still_requires_executor(
+        self, tmp_path: Path
+    ) -> None:
+        specs_dir = tmp_path / "specs"
+        specs_dir.mkdir()
+        config_file = tmp_path / ".hyperloop.yaml"
+        config_file.write_text(f"specs_directory: '{specs_dir}'\n")
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["run", "--config", "/nonexistent/.hyperloop.yaml"], obj=reconciler
-        )
-        assert result.exit_code == 0
-        assert reconciler.config is not None
-        assert reconciler.config.convergence_bound == 3
-
-    def test_run_without_reconciler_errors(self) -> None:
-        runner = CliRunner()
-        result = runner.invoke(cli, ["run"], obj=object())
+        result = runner.invoke(cli, ["run", "--config", str(config_file)], obj=object())
         assert result.exit_code != 0
-        assert "not yet implemented" in result.output
+        assert "agent executor" in result.output.lower()

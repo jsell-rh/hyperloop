@@ -1,15 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol
 
 import click
 
 from hyperloop.reconciliation.models.configuration import Configuration
-
-
-class Reconciler(Protocol):
-    def run(self, config: Configuration) -> None: ...
+from hyperloop.reconciliation.reconciler import Reconciler
 
 
 @click.command()
@@ -18,17 +14,17 @@ class Reconciler(Protocol):
 )
 @click.pass_context
 def run(ctx: click.Context, config_path: str | None) -> None:
+    if isinstance(ctx.obj, Reconciler):
+        ctx.obj.run()
+        return
+
     path = Path(config_path) if config_path else Path(".hyperloop.yaml")
     try:
-        config = Configuration.from_yaml(path)
+        Configuration.from_yaml(path)
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
 
-    reconciler = ctx.obj if _is_reconciler(ctx.obj) else None
-    if reconciler is None:
-        raise click.ClickException("Reconciler is not yet implemented")
-    reconciler.run(config)
-
-
-def _is_reconciler(obj: object) -> bool:
-    return obj is not None and callable(getattr(obj, "run", None))
+    raise click.ClickException(
+        "No agent executor available. "
+        "An AgentExecutor implementation is required to run the reconciler."
+    )
