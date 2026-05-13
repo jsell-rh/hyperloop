@@ -176,8 +176,14 @@ class Reconciler:
         for sp in out_of_sync:
             old_sha = self._find_last_synced_sha(plan, sp.path)
             diff_text = self._spec_source.diff(sp.path, old_sha, sp.blob_sha)
+            spec_content = self._spec_source.read_at(sp.path, sp.blob_sha)
             spec_diffs.append(
-                SpecDiff(spec_path=sp.path, blob_sha=sp.blob_sha, diff_text=diff_text)
+                SpecDiff(
+                    spec_path=sp.path,
+                    blob_sha=sp.blob_sha,
+                    diff_text=diff_text,
+                    spec_content=spec_content,
+                )
             )
 
         existing_tasks = self._collect_all_tasks(plan)

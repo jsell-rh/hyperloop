@@ -712,7 +712,9 @@ class TestDecompositionDispatch:
         spec_source: FakeSpecSource,
         agent_runtime: FakeAgentRuntime,
     ) -> None:
-        spec_source.add_spec("auth.spec.md", "abc123")
+        spec_source.add_spec(
+            "auth.spec.md", "abc123", content="# Auth Spec\nFull content"
+        )
         spec_source.set_diff("auth.spec.md", None, "abc123", "+new spec content")
         agent_runtime.set_decomposition_result([])
 
@@ -724,6 +726,62 @@ class TestDecompositionDispatch:
         assert diffs[0].spec_path == "auth.spec.md"
         assert diffs[0].blob_sha == "abc123"
         assert diffs[0].diff_text == "+new spec content"
+
+    def test_decomposition_receives_spec_content_at_pinned_sha(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec(
+            "auth.spec.md", "abc123", content="# Auth Spec\nFull content at SHA"
+        )
+        agent_runtime.set_decomposition_result([])
+
+        reconciler.run_cycle()
+
+        diffs, _, _ = agent_runtime.decomposition_calls[0]
+        assert diffs[0].spec_content == "# Auth Spec\nFull content at SHA"
+
+    def test_decomposition_receives_spec_content_for_each_spec(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "sha1", content="# Auth Spec")
+        spec_source.add_spec("users.spec.md", "sha2", content="# Users Spec")
+        agent_runtime.set_decomposition_result([])
+
+        reconciler.run_cycle()
+
+        diffs, _, _ = agent_runtime.decomposition_calls[0]
+        contents_by_path = {d.spec_path: d.spec_content for d in diffs}
+        assert contents_by_path["auth.spec.md"] == "# Auth Spec"
+        assert contents_by_path["users.spec.md"] == "# Users Spec"
+
+    def test_decomposition_spec_content_read_at_pinned_sha_not_working_tree(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        plan = plan_store.get_plan()
+        old_sp = plan.add_spec("auth.spec.md", "old_sha")
+        old_sp.status = SpecPlanStatus.SYNCED
+
+        spec_source.add_spec(
+            "auth.spec.md", "new_sha", content="# Auth Spec v2\nUpdated"
+        )
+        spec_source.set_diff("auth.spec.md", "old_sha", "new_sha", "modified diff")
+        agent_runtime.set_decomposition_result([])
+
+        reconciler.run_cycle()
+
+        diffs, _, _ = agent_runtime.decomposition_calls[0]
+        assert diffs[0].blob_sha == "new_sha"
+        assert diffs[0].spec_content == "# Auth Spec v2\nUpdated"
 
     def test_modified_spec_uses_last_synced_sha_for_diff(
         self,

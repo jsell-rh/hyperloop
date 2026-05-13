@@ -7,3 +7,4 @@ class SpecDiff(BaseModel, frozen=True):
     spec_path: str
     blob_sha: str
     diff_text: str
+    spec_content: str

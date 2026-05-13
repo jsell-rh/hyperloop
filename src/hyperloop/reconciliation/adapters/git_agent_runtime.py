@@ -148,7 +148,13 @@ class GitAgentRuntime:
         for diff in spec_diffs:
             sections.append(
                 PromptSection(
-                    heading=f"Spec: {diff.spec_path}",
+                    heading=f"Spec Content: {diff.spec_path}",
+                    content=diff.spec_content,
+                )
+            )
+            sections.append(
+                PromptSection(
+                    heading=f"Spec Diff: {diff.spec_path}",
                     content=diff.diff_text,
                 )
             )

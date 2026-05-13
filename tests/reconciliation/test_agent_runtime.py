@@ -267,13 +267,15 @@ class TestSpecDiff:
             spec_path="auth.spec.md",
             blob_sha="def456",
             diff_text="+ new requirement",
+            spec_content="# Auth Spec\nFull content here.",
         )
         assert diff.spec_path == "auth.spec.md"
         assert diff.blob_sha == "def456"
         assert diff.diff_text == "+ new requirement"
+        assert diff.spec_content == "# Auth Spec\nFull content here."
 
     def test_is_frozen(self) -> None:
-        diff = SpecDiff(spec_path="x", blob_sha="y", diff_text="z")
+        diff = SpecDiff(spec_path="x", blob_sha="y", diff_text="z", spec_content="c")
         try:
             diff.spec_path = "other"  # type: ignore[misc]
             assert False, "should have raised"
@@ -332,7 +334,14 @@ class TestFakeDecomposition:
         ]
         runtime.set_decomposition_result(proposed)
 
-        diffs = [SpecDiff(spec_path="auth.spec.md", blob_sha="abc", diff_text="+new")]
+        diffs = [
+            SpecDiff(
+                spec_path="auth.spec.md",
+                blob_sha="abc",
+                diff_text="+new",
+                spec_content="# Auth",
+            )
+        ]
         result = runtime.launch_decomposition(
             spec_diffs=diffs, existing_tasks=[], events=[]
         )
@@ -343,7 +352,14 @@ class TestFakeDecomposition:
 
     def test_records_decomposition_context(self) -> None:
         runtime = FakeAgentRuntime()
-        diffs = [SpecDiff(spec_path="a.spec.md", blob_sha="sha1", diff_text="diff")]
+        diffs = [
+            SpecDiff(
+                spec_path="a.spec.md",
+                blob_sha="sha1",
+                diff_text="diff",
+                spec_content="# A",
+            )
+        ]
         tasks = [
             Task(
                 id=1,

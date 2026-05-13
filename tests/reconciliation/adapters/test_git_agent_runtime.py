@@ -764,6 +764,7 @@ class TestLaunchDecomposition:
                 spec_path="specs/auth.spec.md",
                 blob_sha=BLOB_SHA,
                 diff_text="+ new requirement",
+                spec_content="# Auth Spec",
             ),
         ]
         result = runtime.launch_decomposition(spec_diffs, [], [])
@@ -780,6 +781,7 @@ class TestLaunchDecomposition:
                 spec_path="specs/auth.spec.md",
                 blob_sha=BLOB_SHA,
                 diff_text="+ new requirement",
+                spec_content="# Auth Spec",
             ),
         ]
         runtime.launch_decomposition(spec_diffs, [], [])
@@ -796,12 +798,77 @@ class TestLaunchDecomposition:
                 spec_path="specs/auth.spec.md",
                 blob_sha=BLOB_SHA,
                 diff_text="+ new requirement",
+                spec_content="# Auth Spec",
             ),
         ]
         runtime.launch_decomposition(spec_diffs, [], [])
 
         assert len(composer.calls) == 1
         assert composer.calls[0].role == AgentRole.DECOMPOSER
+
+    def test_includes_spec_content_section(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha=BLOB_SHA,
+                diff_text="+ new requirement",
+                spec_content="# Auth Spec\nFull content here.",
+            ),
+        ]
+        runtime.launch_decomposition(spec_diffs, [], [])
+
+        sections = composer.calls[0].sections
+        content_sections = [s for s in sections if "Spec Content" in s.heading]
+        assert len(content_sections) == 1
+        assert "Full content here." in content_sections[0].content
+
+    def test_includes_spec_diff_section_separate_from_content(
+        self, tmp_path: Path
+    ) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha=BLOB_SHA,
+                diff_text="+ new requirement",
+                spec_content="# Auth Spec\nFull content.",
+            ),
+        ]
+        runtime.launch_decomposition(spec_diffs, [], [])
+
+        sections = composer.calls[0].sections
+        diff_sections = [s for s in sections if "Spec Diff" in s.heading]
+        assert len(diff_sections) == 1
+        assert "new requirement" in diff_sections[0].content
+
+    def test_includes_spec_content_for_each_spec(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha="sha1",
+                diff_text="+ auth change",
+                spec_content="# Auth Spec",
+            ),
+            SpecDiff(
+                spec_path="specs/users.spec.md",
+                blob_sha="sha2",
+                diff_text="+ users change",
+                spec_content="# Users Spec",
+            ),
+        ]
+        runtime.launch_decomposition(spec_diffs, [], [])
+
+        sections = composer.calls[0].sections
+        content_sections = [s for s in sections if "Spec Content" in s.heading]
+        assert len(content_sections) == 2
 
     def test_includes_spec_diffs_as_sections(self, tmp_path: Path) -> None:
         composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
@@ -812,6 +879,7 @@ class TestLaunchDecomposition:
                 spec_path="specs/auth.spec.md",
                 blob_sha=BLOB_SHA,
                 diff_text="+ new requirement",
+                spec_content="# Auth Spec",
             ),
         ]
         runtime.launch_decomposition(spec_diffs, [], [])
@@ -874,6 +942,7 @@ class TestLaunchDecomposition:
                 spec_path="specs/auth.spec.md",
                 blob_sha=BLOB_SHA,
                 diff_text="+ new requirement",
+                spec_content="# Auth Spec",
             ),
         ]
 
