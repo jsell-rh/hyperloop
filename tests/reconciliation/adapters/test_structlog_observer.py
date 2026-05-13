@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from structlog.testing import capture_logs
 
-from hyperloop.reconciliation.adapters.structlog_observer import StructlogObserver
+import pytest
+
+from hyperloop.reconciliation.adapters.structlog_observer import (
+    StructlogObserver,
+    _WARNING_EVENTS,
+)
 from hyperloop.reconciliation.ports.observer import ChangeType
 from tests.reconciliation.test_observer import EXPECTED_METHODS, _build_kwargs
 
@@ -63,36 +68,30 @@ class TestStructlogObserver:
         entry = cap[0]
         assert entry["change_type"] == ChangeType.MODIFIED
 
-    def test_warning_events_use_warning_level(self) -> None:
+    @pytest.mark.parametrize("method_name", sorted(_WARNING_EVENTS))
+    def test_all_warning_events_use_warning_level(self, method_name: str) -> None:
         observer = StructlogObserver()
+        kwargs = _build_kwargs(EXPECTED_METHODS[method_name])
 
         with capture_logs() as cap:
-            observer.task_failed(
-                task_id=1,
-                spec_path="specs/a.spec.md",
-                spec_blob_sha="abc",
-                reason="TypeError",
-                retry_count=0,
-                cycle=1,
+            getattr(observer, method_name)(**kwargs)
+
+        assert cap[0]["log_level"] == "warning", (
+            f"{method_name} should emit at warning level"
+        )
+
+    def test_non_warning_events_use_info_level(self) -> None:
+        observer = StructlogObserver()
+        info_methods = set(EXPECTED_METHODS) - _WARNING_EVENTS
+
+        for method_name in info_methods:
+            kwargs = _build_kwargs(EXPECTED_METHODS[method_name])
+            with capture_logs() as cap:
+                getattr(observer, method_name)(**kwargs)
+
+            assert cap[0]["log_level"] == "info", (
+                f"{method_name} should emit at info level"
             )
-
-        assert cap[0]["log_level"] == "warning"
-
-    def test_normal_events_use_info_level(self) -> None:
-        observer = StructlogObserver()
-
-        with capture_logs() as cap:
-            observer.reconciler_started(spec_count=3, cycle=1)
-
-        assert cap[0]["log_level"] == "info"
-
-    def test_halted_event_uses_info_level(self) -> None:
-        observer = StructlogObserver()
-
-        with capture_logs() as cap:
-            observer.reconciler_halted(reason="shutdown", total_cycles=5)
-
-        assert cap[0]["log_level"] == "info"
 
     def test_list_kwargs_are_preserved(self) -> None:
         observer = StructlogObserver()

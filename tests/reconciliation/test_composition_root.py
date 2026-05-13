@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from hyperloop.reconciliation.adapters.git_agent_runtime import GitAgentRuntime
 from hyperloop.reconciliation.adapters.git_plan_store import GitPlanStore
 from hyperloop.reconciliation.adapters.git_spec_source import GitSpecSource
@@ -142,8 +144,6 @@ class TestCreateReconciler:
             observer_adapters=["unknown"],
             specs_directory=str(tmp_path / "specs"),
         )
-
-        import pytest
 
         with pytest.raises(ValueError, match="unknown"):
             _create(tmp_path, config=config)
