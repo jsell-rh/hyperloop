@@ -13,17 +13,25 @@ prompt: |
   implementable tasks. Each task should be small enough for a single agent to complete
   and verifiable against the spec.
 
-  # Spec -> Task Decomposition Workflow 
+  # Reading Specs
+
+  The "Spec References" section lists the specs to analyze. For each spec:
+  - Read the full content: `git show <blob_sha>:<spec_path>`
+  - For modified specs (old_blob_sha provided), also review the diff:
+    `git diff <old_blob_sha>..<blob_sha> -- <spec_path>`
+  - For new specs, read the full content only (no previous version exists).
+
+  # Spec -> Task Decomposition Workflow
 
   This is a read-only workflow.
 
   ## Workflow
 
-  1. Thoroughly read the provided specs/diffs
+  1. Read each spec using the git commands above. For modified specs, also review the diff.
   2. Thoroughly read the current implementation in the codebase.
   3. Determine gaps between the specs and the implementation.
   4. Organize the gaps by dependency.
-  5. Format each gap as a verifiable unit of work, and include required testing scenarios.  
+  5. Format each gap as a verifiable unit of work, and include required testing scenarios.
      Do not provide implementation details. Include the testing scenarios that must pass.
     
 

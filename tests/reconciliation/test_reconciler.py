@@ -706,16 +706,13 @@ class TestDecompositionDispatch:
         ids = [t.id for t in sp.tasks]
         assert ids == [1, 2, 3]
 
-    def test_fresh_spec_diff_uses_none_as_old_sha(
+    def test_fresh_spec_has_none_old_blob_sha(
         self,
         reconciler: Reconciler,
         spec_source: FakeSpecSource,
         agent_runtime: FakeAgentRuntime,
     ) -> None:
-        spec_source.add_spec(
-            "auth.spec.md", "abc123", content="# Auth Spec\nFull content"
-        )
-        spec_source.set_diff("auth.spec.md", None, "abc123", "+new spec content")
+        spec_source.add_spec("auth.spec.md", "abc123")
         agent_runtime.set_decomposition_result([])
 
         reconciler.run_cycle()
@@ -725,65 +722,26 @@ class TestDecompositionDispatch:
         assert len(diffs) == 1
         assert diffs[0].spec_path == "auth.spec.md"
         assert diffs[0].blob_sha == "abc123"
-        assert diffs[0].diff_text == "+new spec content"
+        assert diffs[0].old_blob_sha is None
 
-    def test_decomposition_receives_spec_content_at_pinned_sha(
+    def test_decomposition_receives_blob_sha_for_each_spec(
         self,
         reconciler: Reconciler,
         spec_source: FakeSpecSource,
         agent_runtime: FakeAgentRuntime,
     ) -> None:
-        spec_source.add_spec(
-            "auth.spec.md", "abc123", content="# Auth Spec\nFull content at SHA"
-        )
+        spec_source.add_spec("auth.spec.md", "sha1")
+        spec_source.add_spec("users.spec.md", "sha2")
         agent_runtime.set_decomposition_result([])
 
         reconciler.run_cycle()
 
         diffs, _, _ = agent_runtime.decomposition_calls[0]
-        assert diffs[0].spec_content == "# Auth Spec\nFull content at SHA"
+        refs_by_path = {d.spec_path: d.blob_sha for d in diffs}
+        assert refs_by_path["auth.spec.md"] == "sha1"
+        assert refs_by_path["users.spec.md"] == "sha2"
 
-    def test_decomposition_receives_spec_content_for_each_spec(
-        self,
-        reconciler: Reconciler,
-        spec_source: FakeSpecSource,
-        agent_runtime: FakeAgentRuntime,
-    ) -> None:
-        spec_source.add_spec("auth.spec.md", "sha1", content="# Auth Spec")
-        spec_source.add_spec("users.spec.md", "sha2", content="# Users Spec")
-        agent_runtime.set_decomposition_result([])
-
-        reconciler.run_cycle()
-
-        diffs, _, _ = agent_runtime.decomposition_calls[0]
-        contents_by_path = {d.spec_path: d.spec_content for d in diffs}
-        assert contents_by_path["auth.spec.md"] == "# Auth Spec"
-        assert contents_by_path["users.spec.md"] == "# Users Spec"
-
-    def test_decomposition_spec_content_read_at_pinned_sha_not_working_tree(
-        self,
-        reconciler: Reconciler,
-        spec_source: FakeSpecSource,
-        plan_store: FakePlanStore,
-        agent_runtime: FakeAgentRuntime,
-    ) -> None:
-        plan = plan_store.get_plan()
-        old_sp = plan.add_spec("auth.spec.md", "old_sha")
-        old_sp.status = SpecPlanStatus.SYNCED
-
-        spec_source.add_spec(
-            "auth.spec.md", "new_sha", content="# Auth Spec v2\nUpdated"
-        )
-        spec_source.set_diff("auth.spec.md", "old_sha", "new_sha", "modified diff")
-        agent_runtime.set_decomposition_result([])
-
-        reconciler.run_cycle()
-
-        diffs, _, _ = agent_runtime.decomposition_calls[0]
-        assert diffs[0].blob_sha == "new_sha"
-        assert diffs[0].spec_content == "# Auth Spec v2\nUpdated"
-
-    def test_modified_spec_uses_last_synced_sha_for_diff(
+    def test_modified_spec_passes_old_blob_sha(
         self,
         reconciler: Reconciler,
         spec_source: FakeSpecSource,
@@ -795,14 +753,14 @@ class TestDecompositionDispatch:
         old_sp.status = SpecPlanStatus.SYNCED
 
         spec_source.add_spec("auth.spec.md", "new_sha")
-        spec_source.set_diff("auth.spec.md", "old_sha", "new_sha", "modified diff")
         agent_runtime.set_decomposition_result([])
 
         reconciler.run_cycle()
 
         assert len(agent_runtime.decomposition_calls) == 1
         diffs, _, _ = agent_runtime.decomposition_calls[0]
-        assert diffs[0].diff_text == "modified diff"
+        assert diffs[0].blob_sha == "new_sha"
+        assert diffs[0].old_blob_sha == "old_sha"
 
     def test_prior_events_passed_to_decomposition(
         self,

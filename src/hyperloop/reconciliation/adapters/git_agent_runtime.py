@@ -104,6 +104,19 @@ def _format_events(events: list[Event]) -> str:
     return "\n".join(f"[{e.type}] {e.reason}: {e.message}" for e in events)
 
 
+def _format_spec_refs(diffs: list[SpecDiff]) -> str:
+    lines: list[str] = []
+    for diff in diffs:
+        if diff.old_blob_sha is None:
+            lines.append(f"- {diff.spec_path} (new) blob_sha={diff.blob_sha}")
+        else:
+            lines.append(
+                f"- {diff.spec_path} (modified) "
+                f"old_blob_sha={diff.old_blob_sha} blob_sha={diff.blob_sha}"
+            )
+    return "\n".join(lines)
+
+
 def _format_tasks(tasks: list[Task]) -> str:
     return "\n".join(f"- [{t.status}] {t.name}: {t.description}" for t in tasks)
 
@@ -196,19 +209,12 @@ class GitAgentRuntime:
         events: list[Event],
     ) -> list[ProposedTask]:
         sections: list[PromptSection] = []
-        for diff in spec_diffs:
-            sections.append(
-                PromptSection(
-                    heading=f"Spec Content: {diff.spec_path}",
-                    content=diff.spec_content,
-                )
+        sections.append(
+            PromptSection(
+                heading="Spec References",
+                content=_format_spec_refs(spec_diffs),
             )
-            sections.append(
-                PromptSection(
-                    heading=f"Spec Diff: {diff.spec_path}",
-                    content=diff.diff_text,
-                )
-            )
+        )
         if existing_tasks:
             sections.append(
                 PromptSection(

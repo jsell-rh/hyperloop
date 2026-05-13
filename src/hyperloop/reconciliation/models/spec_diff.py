@@ -6,5 +6,4 @@ from pydantic import BaseModel
 class SpecDiff(BaseModel, frozen=True):
     spec_path: str
     blob_sha: str
-    diff_text: str
-    spec_content: str
+    old_blob_sha: str | None
