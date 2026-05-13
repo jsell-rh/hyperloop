@@ -1,5 +1,6 @@
 from hyperloop.reconciliation.models.configuration import Configuration
 from hyperloop.reconciliation.models.event import Event, EventType
+from hyperloop.reconciliation.models.executor_type import ExecutorType
 from hyperloop.reconciliation.models.plan import Plan
 from hyperloop.reconciliation.models.spec_entry import SpecEntry
 from hyperloop.reconciliation.models.spec_plan import SpecPlan, SpecPlanStatus
@@ -9,6 +10,7 @@ __all__ = [
     "Configuration",
     "Event",
     "EventType",
+    "ExecutorType",
     "Plan",
     "SpecEntry",
     "SpecPlan",
