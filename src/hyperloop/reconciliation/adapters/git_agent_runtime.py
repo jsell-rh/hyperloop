@@ -77,12 +77,18 @@ class GitAgentRuntime:
         branch_prefix: str,
         executor: AgentExecutor,
         prompt_composer: PromptComposer,
+        implementation_model: str | None = None,
+        verification_model: str | None = None,
+        decomposition_model: str | None = None,
         remote: str = "origin",
     ) -> None:
         self._repo_path = repo_path
         self._branch_prefix = branch_prefix
         self._executor = executor
         self._prompt_composer = prompt_composer
+        self._implementation_model = implementation_model
+        self._verification_model = verification_model
+        self._decomposition_model = decomposition_model
         self._remote = remote
         self._task_branch_re, self._verifier_branch_re = _build_branch_patterns(
             branch_prefix
@@ -135,7 +141,9 @@ class GitAgentRuntime:
             sections=sections,
             epilogue=_TASK_EPILOGUE,
         )
-        self._executor.start_task_agent(branch=branch, prompt=prompt)
+        self._executor.start_task_agent(
+            branch=branch, prompt=prompt, model=self._implementation_model
+        )
         return AgentHandle(id=branch)
 
     def launch_decomposition(
@@ -176,7 +184,9 @@ class GitAgentRuntime:
             sections=sections,
             epilogue="",
         )
-        return self._executor.run_decomposition(prompt=prompt)
+        return self._executor.run_decomposition(
+            prompt=prompt, model=self._decomposition_model
+        )
 
     def launch_verification(
         self,
@@ -196,7 +206,9 @@ class GitAgentRuntime:
             sections=sections,
             epilogue=_VERIFICATION_EPILOGUE,
         )
-        self._executor.start_verification_agent(branch=branch, prompt=prompt)
+        self._executor.start_verification_agent(
+            branch=branch, prompt=prompt, model=self._verification_model
+        )
         return AgentHandle(id=branch)
 
     def launch_merge_resolution(

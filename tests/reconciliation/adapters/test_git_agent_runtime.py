@@ -1175,6 +1175,166 @@ class TestComposeIntegrationSummary:
             assert "LLM unavailable" in str(exc)
 
 
+class TestModelSelection:
+    def test_launch_task_passes_implementation_model_to_executor(
+        self, tmp_path: Path
+    ) -> None:
+        executor = FakeAgentExecutor()
+        runtime = GitAgentRuntime(
+            tmp_path,
+            branch_prefix=BRANCH_PREFIX,
+            executor=executor,
+            prompt_composer=FakePromptComposer(_ALL_ROLE_TEMPLATES),
+            implementation_model="claude-sonnet",
+        )
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            task_description="Implement auth",
+            workspace_id=f"task/{BLOB_SHA}/5",
+        )
+
+        runtime.launch_task(briefing)
+
+        _, _, model = executor.started_tasks[0]
+        assert model == "claude-sonnet"
+
+    def test_launch_verification_passes_verification_model_to_executor(
+        self, tmp_path: Path
+    ) -> None:
+        executor = FakeAgentExecutor()
+        runtime = GitAgentRuntime(
+            tmp_path,
+            branch_prefix=BRANCH_PREFIX,
+            executor=executor,
+            prompt_composer=FakePromptComposer(_ALL_ROLE_TEMPLATES),
+            verification_model="gemini-pro",
+        )
+
+        runtime.launch_verification(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            workspace_id=f"verification/{BLOB_SHA}",
+        )
+
+        _, _, model = executor.started_verifications[0]
+        assert model == "gemini-pro"
+
+    def test_launch_decomposition_passes_decomposition_model_to_executor(
+        self, tmp_path: Path
+    ) -> None:
+        executor = FakeAgentExecutor()
+        runtime = GitAgentRuntime(
+            tmp_path,
+            branch_prefix=BRANCH_PREFIX,
+            executor=executor,
+            prompt_composer=FakePromptComposer(_ALL_ROLE_TEMPLATES),
+            decomposition_model="claude-opus",
+        )
+
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha=BLOB_SHA,
+                diff_text="+ new requirement",
+                spec_content="# Auth Spec",
+            ),
+        ]
+        runtime.launch_decomposition(spec_diffs, [], [])
+
+        _, model = executor.decomposition_calls[0]
+        assert model == "claude-opus"
+
+    def test_none_model_passes_none_to_executor(self, tmp_path: Path) -> None:
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(tmp_path, executor)
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            task_description="Implement auth",
+            workspace_id=f"task/{BLOB_SHA}/5",
+        )
+
+        runtime.launch_task(briefing)
+
+        _, _, model = executor.started_tasks[0]
+        assert model is None
+
+    def test_different_models_for_implementation_and_verification(
+        self, tmp_path: Path
+    ) -> None:
+        executor = FakeAgentExecutor()
+        runtime = GitAgentRuntime(
+            tmp_path,
+            branch_prefix=BRANCH_PREFIX,
+            executor=executor,
+            prompt_composer=FakePromptComposer(_ALL_ROLE_TEMPLATES),
+            implementation_model="claude-sonnet",
+            verification_model="gemini-pro",
+        )
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            task_description="Implement auth",
+            workspace_id=f"task/{BLOB_SHA}/5",
+        )
+
+        runtime.launch_task(briefing)
+        runtime.launch_verification(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            workspace_id=f"verification/{BLOB_SHA}",
+        )
+
+        _, _, task_model = executor.started_tasks[0]
+        _, _, verify_model = executor.started_verifications[0]
+        assert task_model == "claude-sonnet"
+        assert verify_model == "gemini-pro"
+
+    def test_merge_resolution_passes_none_model(self, tmp_path: Path) -> None:
+        executor = FakeAgentExecutor()
+        runtime = GitAgentRuntime(
+            tmp_path,
+            branch_prefix=BRANCH_PREFIX,
+            executor=executor,
+            prompt_composer=FakePromptComposer(_ALL_ROLE_TEMPLATES),
+            implementation_model="claude-sonnet",
+        )
+
+        runtime.launch_merge_resolution(
+            task_workspace_id=f"task/{BLOB_SHA}/5",
+            delivery_workspace_id=f"delivery/{BLOB_SHA}",
+            conflict_details="Conflict in auth.py",
+        )
+
+        _, _, _, model = executor.merge_calls[0]
+        assert model is None
+
+    def test_compose_summary_passes_none_model(self, tmp_path: Path) -> None:
+        executor = FakeAgentExecutor()
+        runtime = GitAgentRuntime(
+            tmp_path,
+            branch_prefix=BRANCH_PREFIX,
+            executor=executor,
+            prompt_composer=FakePromptComposer(_ALL_ROLE_TEMPLATES),
+            implementation_model="claude-sonnet",
+        )
+
+        runtime.compose_integration_summary(
+            spec_content="# Auth Spec",
+            task_summaries=[("implement-auth", "Added auth endpoint")],
+            verification_rationale="All requirements met",
+        )
+
+        _, model = executor.summary_calls[0]
+        assert model is None
+
+
 class TestProtocolConformance:
     def test_has_poll_method(self) -> None:
         from typing import get_type_hints
