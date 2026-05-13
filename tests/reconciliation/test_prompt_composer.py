@@ -51,15 +51,11 @@ class TestTemplateLoading:
         assert "Implement the task." in result
 
     def test_non_agent_kind_docs_are_skipped(self) -> None:
-        runner = FakeKustomizeBuildRunner()
-        obs = FakeObserver()
         raw_yaml = (
             "kind: Agent\nname: implementer\nprompt: Implement.\nguidelines: []\n"
             "---\n"
             "kind: ConfigMap\nname: settings\ndata: {}\n"
         )
-        runner._templates = []
-        runner.build_count = 0
 
         class DirectRunner:
             def __init__(self, yaml_output: str) -> None:
@@ -68,6 +64,7 @@ class TestTemplateLoading:
             def build(self, path: Path) -> str:
                 return self._yaml
 
+        obs = FakeObserver()
         composer = KustomizePromptComposer(
             overlay_path=Path("/fake"),
             kustomize_runner=DirectRunner(raw_yaml),

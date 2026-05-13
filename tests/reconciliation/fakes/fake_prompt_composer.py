@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from hyperloop.reconciliation.models.agent_template import AgentTemplate
-from hyperloop.reconciliation.models.compose_error import ComposeError
 from hyperloop.reconciliation.models.missing_template_error import MissingTemplateError
 from hyperloop.reconciliation.models.prompt_section import PromptSection
 
@@ -39,7 +38,7 @@ class FakePromptComposer:
         epilogue: str,
     ) -> str:
         if role not in self._templates:
-            raise ComposeError({role})
+            raise MissingTemplateError({role})
         self.calls.append(
             ComposeCall(
                 role=role,

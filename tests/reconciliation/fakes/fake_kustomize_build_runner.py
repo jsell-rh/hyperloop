@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from hyperloop.reconciliation.models.agent_template import AgentTemplate
+from hyperloop.reconciliation.models.template_kind import TemplateKind
 
 
 class FakeKustomizeBuildRunner:
@@ -30,7 +31,7 @@ class FakeKustomizeBuildRunner:
         docs = []
         for template in self._templates:
             doc = {
-                "kind": "Agent",
+                "kind": str(TemplateKind.AGENT),
                 "name": template.name,
                 "prompt": template.prompt,
                 "guidelines": template.guidelines,
