@@ -39,7 +39,7 @@ class Configuration(BaseSettings):
     branch_prefix: str = "hyperloop/"
 
     executor_type: ExecutorType = ExecutorType.CLAUDE_SDK
-    executor_timeout_seconds: int = 300
+    executor_timeout_seconds: int = 2700
     executor_max_retries: int = 3
     repository_url: str | None = None
     project_name: str | None = None

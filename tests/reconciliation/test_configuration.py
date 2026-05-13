@@ -142,13 +142,13 @@ class TestDefaultValues:
         )
         assert config.project_name is None
 
-    def test_executor_timeout_seconds_defaults_to_300(
+    def test_executor_timeout_seconds_defaults_to_2700(
         self, specs_dir: Path, overlay_dir: Path
     ) -> None:
         config = Configuration(
             specs_directory=str(specs_dir), overlay_path=str(overlay_dir)
         )
-        assert config.executor_timeout_seconds == 300
+        assert config.executor_timeout_seconds == 2700
 
     def test_executor_max_retries_defaults_to_3(
         self, specs_dir: Path, overlay_dir: Path

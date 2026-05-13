@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import click
@@ -14,6 +15,41 @@ from hyperloop.reconciliation.models.configuration import (
 from hyperloop.reconciliation.models.executor_type import ExecutorType
 from hyperloop.reconciliation.models.observer_adapter import ObserverAdapter
 from hyperloop.reconciliation.reconciler import Reconciler
+
+
+def _reset_state(repo_path: Path, plan_branch: str, branch_prefix: str) -> None:
+    def _git(*args: str) -> None:
+        subprocess.run(
+            ["git", *args],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    result = subprocess.run(
+        [
+            "git",
+            "for-each-ref",
+            "--format=%(refname:strip=2)",
+            f"refs/heads/{branch_prefix}",
+        ],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    branches = [b for b in result.stdout.strip().splitlines() if b]
+
+    _git("branch", "-D", plan_branch)
+    _git("push", "origin", "--delete", plan_branch)
+
+    for branch in branches:
+        _git("branch", "-D", branch)
+        _git("push", "origin", "--delete", branch)
+
+    count = len(branches) + 1
+    click.echo(f"Reset: deleted {count} branches (plan + {len(branches)} managed)")
 
 
 def _configure_structlog() -> None:
@@ -47,6 +83,19 @@ def _configure_structlog() -> None:
 @click.option(
     "--acpctl-path", default=None, help="Path to acpctl binary (ambient executor)"
 )
+@click.option(
+    "--timeout",
+    "timeout_seconds",
+    type=int,
+    default=None,
+    help="Agent timeout in seconds (overrides config, default 2700)",
+)
+@click.option(
+    "--reset-state",
+    is_flag=True,
+    default=False,
+    help="Delete plan branch and all managed branches before starting",
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -55,6 +104,8 @@ def run(
     repository_url: str | None,
     project_name: str | None,
     acpctl_path: str | None,
+    timeout_seconds: int | None,
+    reset_state: bool,
 ) -> None:
     _configure_structlog()
 
@@ -75,6 +126,9 @@ def run(
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
 
+    if reset_state:
+        _reset_state(repo_path, config.plan_branch, config.branch_prefix)
+
     cli_overrides: dict[str, object] = {}
     if executor_type is not None:
         cli_overrides["executor_type"] = ExecutorType(executor_type)
@@ -84,6 +138,8 @@ def run(
         cli_overrides["project_name"] = project_name
     if acpctl_path is not None:
         cli_overrides["acpctl_path"] = acpctl_path
+    if timeout_seconds is not None:
+        cli_overrides["executor_timeout_seconds"] = timeout_seconds
 
     if ObserverAdapter.STRUCTLOG not in config.observer_adapters:
         cli_overrides["observer_adapters"] = [
