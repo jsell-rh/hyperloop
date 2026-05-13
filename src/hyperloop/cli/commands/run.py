@@ -92,7 +92,12 @@ def run(
         ]
 
     if cli_overrides:
-        config = config.model_copy(update=cli_overrides)
+        try:
+            config = Configuration.model_validate(
+                {**config.model_dump(), **cli_overrides}
+            )
+        except Exception as exc:
+            raise click.ClickException(str(exc)) from exc
 
     factory = ctx.obj if callable(ctx.obj) else create_reconciler
     try:
