@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import tempfile
+
 from hyperloop.reconciliation.models.executor_timeout_error import ExecutorTimeoutError
 from hyperloop.reconciliation.models.platform_session import PlatformSession
 from hyperloop.reconciliation.models.session_status import SessionStatus
@@ -20,25 +23,30 @@ class AcpctlPlatformRunner:
         project: str,
         model: str | None,
     ) -> str:
-        cmd = [
-            self._acpctl_path,
-            "create",
-            "session",
-            "--project-id",
-            project,
-            "--name",
-            name,
-            "--prompt",
-            prompt,
-            "--repo-url",
-            repository_url,
-            "-o",
-            "json",
-        ]
-        if model is not None:
-            cmd.extend(["--model", model])
+        fd, prompt_file = tempfile.mkstemp(suffix=".prompt", text=True)
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(prompt)
 
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            shell_cmd = (
+                '"$0" create session'
+                ' --project-id "$1" --name "$2" --repo-url "$3"'
+                ' --prompt "$(cat "$4")" -o json'
+            )
+            args = [self._acpctl_path, project, name, repository_url, prompt_file]
+            if model is not None:
+                shell_cmd += ' --model "$5"'
+                args.append(model)
+
+            result = subprocess.run(
+                ["sh", "-c", shell_cmd, *args],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        finally:
+            os.unlink(prompt_file)
+
         data = json.loads(result.stdout)
         return data["id"]
 
