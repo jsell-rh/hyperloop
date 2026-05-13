@@ -87,6 +87,21 @@ class TestSubstitutionPlaceholders:
         assert "{spec_ref}" in doc["prompt"]
 
 
+def _make_composer_from_output(raw_yaml: str) -> KustomizePromptComposer:
+    class FixedRunner:
+        def __init__(self, output: str) -> None:
+            self._output = output
+
+        def build(self, path: Path) -> str:
+            return self._output
+
+    return KustomizePromptComposer(
+        overlay_path=BASE_DIR,
+        kustomize_runner=FixedRunner(raw_yaml),
+        observer=FakeObserver(),
+    )
+
+
 class TestKustomizeBuildIntegration:
     @pytest.fixture()
     def kustomize_output(self) -> str:
@@ -107,35 +122,13 @@ class TestKustomizeBuildIntegration:
     def test_composer_validates_with_all_required_roles(
         self, kustomize_output: str
     ) -> None:
-        observer = FakeObserver()
-        raw_output = kustomize_output
-
-        class StaticRunner:
-            def build(self, path: Path) -> str:
-                return raw_output
-
-        composer = KustomizePromptComposer(
-            overlay_path=BASE_DIR,
-            kustomize_runner=StaticRunner(),
-            observer=observer,
-        )
+        composer = _make_composer_from_output(kustomize_output)
         composer.validate(ALL_ROLES)
 
     def test_compose_implementer_resolves_placeholders(
         self, kustomize_output: str
     ) -> None:
-        observer = FakeObserver()
-        raw_output = kustomize_output
-
-        class StaticRunner:
-            def build(self, path: Path) -> str:
-                return raw_output
-
-        composer = KustomizePromptComposer(
-            overlay_path=BASE_DIR,
-            kustomize_runner=StaticRunner(),
-            observer=observer,
-        )
+        composer = _make_composer_from_output(kustomize_output)
         result = composer.compose(
             AgentRole.IMPLEMENTER,
             substitutions={
@@ -153,18 +146,7 @@ class TestKustomizeBuildIntegration:
     def test_compose_verifier_resolves_placeholders(
         self, kustomize_output: str
     ) -> None:
-        observer = FakeObserver()
-        raw_output = kustomize_output
-
-        class StaticRunner:
-            def build(self, path: Path) -> str:
-                return raw_output
-
-        composer = KustomizePromptComposer(
-            overlay_path=BASE_DIR,
-            kustomize_runner=StaticRunner(),
-            observer=observer,
-        )
+        composer = _make_composer_from_output(kustomize_output)
         result = composer.compose(
             AgentRole.VERIFIER,
             substitutions={
@@ -179,18 +161,7 @@ class TestKustomizeBuildIntegration:
     def test_compose_each_role_produces_non_empty_prompt(
         self, kustomize_output: str
     ) -> None:
-        observer = FakeObserver()
-        raw_output = kustomize_output
-
-        class StaticRunner:
-            def build(self, path: Path) -> str:
-                return raw_output
-
-        composer = KustomizePromptComposer(
-            overlay_path=BASE_DIR,
-            kustomize_runner=StaticRunner(),
-            observer=observer,
-        )
+        composer = _make_composer_from_output(kustomize_output)
 
         substitutions: dict[str, dict[str, str]] = {
             AgentRole.IMPLEMENTER: {
