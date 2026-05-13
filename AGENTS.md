@@ -28,6 +28,15 @@ Spec-driven reconciliation engine. Specs declare desired state; code is actual s
 - **Fakes, not mocks.** All test doubles must be behavioral fakes that provide real guarantees about correctness. No `unittest.mock`, no `MagicMock`, no `patch`.
 - Tests must verify behavior, not implementation details.
 
+### Running Tests
+
+```bash
+uv run pytest              # full suite (parallel via pytest-xdist)
+uv run pytest -x           # stop on first failure
+uv run pytest tests/reconciliation/adapters/test_claude_sdk_executor.py  # single file
+uv run pytest -k "test_cancel"  # by name pattern
+```
+
 
 ## Development Workflow
 
