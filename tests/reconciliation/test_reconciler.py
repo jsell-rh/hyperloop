@@ -4712,3 +4712,390 @@ class TestDecompositionFailure:
         cycle_completed = observer.calls_for("cycle_completed")
         assert len(cycle_completed) == 1
         assert cycle_completed[0]["cycle"] == 1
+
+
+class TestCyclicDependencyRejection:
+    def test_self_referencing_dependency_rejected(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="task-a",
+                    description="Self-referencing task",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-a"],
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        sp = plan.spec_plans[0]
+        assert sp.tasks == []
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+
+    def test_direct_cycle_rejected(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="task-a",
+                    description="A depends on B",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-b"],
+                ),
+                ProposedTask(
+                    name="task-b",
+                    description="B depends on A",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-a"],
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        sp = plan.spec_plans[0]
+        assert sp.tasks == []
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+
+    def test_indirect_cycle_rejected(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="task-a",
+                    description="A depends on C",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-c"],
+                ),
+                ProposedTask(
+                    name="task-b",
+                    description="B depends on A",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-a"],
+                ),
+                ProposedTask(
+                    name="task-c",
+                    description="C depends on B",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-b"],
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        sp = plan.spec_plans[0]
+        assert sp.tasks == []
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+
+    def test_cyclic_dependency_records_decomposition_failed_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="task-a",
+                    description="A",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-b"],
+                ),
+                ProposedTask(
+                    name="task-b",
+                    description="B",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-a"],
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        sp = plan_store.get_plan().spec_plans[0]
+        decomp_events = [
+            e for e in sp.events if e.reason == EventReason.DECOMPOSITION_FAILED
+        ]
+        assert len(decomp_events) == 1
+        assert "cyclic" in decomp_events[0].message.lower()
+
+    def test_cyclic_dependency_fires_decomposition_failed_probe(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="task-a",
+                    description="A",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-b"],
+                ),
+                ProposedTask(
+                    name="task-b",
+                    description="B",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-a"],
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        probes = observer.calls_for("decomposition_failed")
+        assert len(probes) == 1
+        assert "cyclic" in probes[0]["reason"].lower()
+
+    def test_valid_dag_accepted(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="task-a",
+                    description="A",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                ),
+                ProposedTask(
+                    name="task-b",
+                    description="B depends on A",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-a"],
+                ),
+                ProposedTask(
+                    name="task-c",
+                    description="C depends on B",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-b"],
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        sp = next(sp for sp in plan.spec_plans if sp.path == "auth.spec.md")
+        assert len(sp.tasks) == 3
+        assert sp.status == SpecPlanStatus.RECONCILING
+
+    def test_independent_tasks_accepted(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="task-a",
+                    description="A",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                ),
+                ProposedTask(
+                    name="task-b",
+                    description="B",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        sp = next(sp for sp in plan.spec_plans if sp.path == "auth.spec.md")
+        assert len(sp.tasks) == 2
+        assert sp.status == SpecPlanStatus.RECONCILING
+
+    def test_diamond_dag_accepted(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="task-a",
+                    description="A (root)",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                ),
+                ProposedTask(
+                    name="task-b",
+                    description="B depends on A",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-a"],
+                ),
+                ProposedTask(
+                    name="task-c",
+                    description="C depends on A",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-a"],
+                ),
+                ProposedTask(
+                    name="task-d",
+                    description="D depends on B and C",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-b", "task-c"],
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        sp = next(sp for sp in plan.spec_plans if sp.path == "auth.spec.md")
+        assert len(sp.tasks) == 4
+        assert sp.status == SpecPlanStatus.RECONCILING
+        task_d = next(t for t in sp.tasks if t.name == "task-d")
+        task_b = next(t for t in sp.tasks if t.name == "task-b")
+        task_c = next(t for t in sp.tasks if t.name == "task-c")
+        assert set(task_d.depends_on) == {task_b.id, task_c.id}
+
+    def test_cyclic_dependency_increments_reconciliation_attempts(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="task-a",
+                    description="A",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-a"],
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        sp = plan_store.get_plan().spec_plans[0]
+        assert sp.reconciliation_attempts == 1
+
+    def test_no_task_created_events_on_cycle(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="task-a",
+                    description="A",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-b"],
+                ),
+                ProposedTask(
+                    name="task-b",
+                    description="B",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="abc123",
+                    depends_on=["task-a"],
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        assert observer.calls_for("task_created") == []
+
+    def test_cross_spec_cycle_rejected(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "aaa")
+        spec_source.add_spec("users.spec.md", "bbb")
+        agent_runtime.set_decomposition_result(
+            [
+                ProposedTask(
+                    name="task-auth",
+                    description="Auth depends on users task",
+                    spec_path="auth.spec.md",
+                    spec_blob_sha="aaa",
+                    depends_on=["task-users"],
+                ),
+                ProposedTask(
+                    name="task-users",
+                    description="Users depends on auth task",
+                    spec_path="users.spec.md",
+                    spec_blob_sha="bbb",
+                    depends_on=["task-auth"],
+                ),
+            ]
+        )
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        for sp in plan.spec_plans:
+            assert sp.tasks == []
+            assert sp.status == SpecPlanStatus.OUT_OF_SYNC

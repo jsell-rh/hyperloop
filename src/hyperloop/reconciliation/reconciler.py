@@ -5,6 +5,9 @@ import time
 from datetime import datetime, timezone
 
 from hyperloop.reconciliation.models.cancellation_reason import CancellationReason
+from hyperloop.reconciliation.models.cyclic_dependency_error import (
+    CyclicDependencyError,
+)
 from hyperloop.reconciliation.models.event import Event, EventType
 from hyperloop.reconciliation.models.event_reason import EventReason
 from hyperloop.reconciliation.models.halt_reason import HaltReason
@@ -188,7 +191,11 @@ class Reconciler:
             self._handle_decomposition_failure(out_of_sync, str(exc))
             return
 
-        tasks_created = self._materialize_tasks(plan, out_of_sync, proposed)
+        try:
+            tasks_created = self._materialize_tasks(plan, out_of_sync, proposed)
+        except CyclicDependencyError as exc:
+            self._handle_decomposition_failure(out_of_sync, str(exc))
+            return
 
         duration = time.monotonic() - start
         self._observer.decomposition_completed(
@@ -272,6 +279,9 @@ class Reconciler:
                 if dep_name in name_to_id
             ]
 
+        new_task_ids = {task.id for task, _ in tasks_with_proposed}
+        self._validate_no_cycles(tasks_with_proposed, new_task_ids)
+
         tasks_by_key: dict[tuple[str, str], list[Task]] = {}
         for task, _ in tasks_with_proposed:
             key = (task.spec_path, task.spec_blob_sha)
@@ -291,6 +301,46 @@ class Reconciler:
                 )
 
         return len(tasks_with_proposed)
+
+    @staticmethod
+    def _validate_no_cycles(
+        tasks_with_proposed: list[tuple[Task, ProposedTask]],
+        new_task_ids: set[int],
+    ) -> None:
+        adjacency: dict[int, list[int]] = {}
+        id_to_name: dict[int, str] = {}
+        for task, _ in tasks_with_proposed:
+            id_to_name[task.id] = task.name
+            adjacency[task.id] = [dep for dep in task.depends_on if dep in new_task_ids]
+
+        visited: set[int] = set()
+        in_stack: set[int] = set()
+
+        for start in adjacency:
+            if start in visited:
+                continue
+            stack: list[tuple[int, int]] = [(start, 0)]
+            path: list[int] = []
+            while stack:
+                node, idx = stack[-1]
+                if node not in in_stack:
+                    in_stack.add(node)
+                    path.append(node)
+                neighbors = adjacency[node]
+                if idx < len(neighbors):
+                    stack[-1] = (node, idx + 1)
+                    neighbor = neighbors[idx]
+                    if neighbor in in_stack:
+                        cycle_start = path.index(neighbor)
+                        cycle = path[cycle_start:] + [neighbor]
+                        raise CyclicDependencyError([id_to_name[cid] for cid in cycle])
+                    if neighbor not in visited:
+                        stack.append((neighbor, 0))
+                else:
+                    stack.pop()
+                    in_stack.discard(node)
+                    path.pop()
+                    visited.add(node)
 
     def _dispatch_tasks(self, plan: Plan) -> int:
         in_progress_count = self._count_in_progress(plan)
