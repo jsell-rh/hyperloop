@@ -24,15 +24,16 @@ from hyperloop.reconciliation.adapters.subprocess_kustomize_build_runner import 
 )
 from hyperloop.reconciliation.models.configuration import Configuration
 from hyperloop.reconciliation.models.executor_type import ExecutorType
+from hyperloop.reconciliation.models.observer_adapter import ObserverAdapter
 from hyperloop.reconciliation.reconciler import Reconciler
 
 
-_OBSERVER_REGISTRY: dict[str, type[Observer]] = {
-    "structlog": StructlogObserver,
+_OBSERVER_REGISTRY: dict[ObserverAdapter, type[Observer]] = {
+    ObserverAdapter.STRUCTLOG: StructlogObserver,
 }
 
 
-def _build_observer(adapter_names: list[str]) -> Observer:
+def _build_observer(adapter_names: list[ObserverAdapter]) -> Observer:
     if not adapter_names:
         return NullProbe()
 

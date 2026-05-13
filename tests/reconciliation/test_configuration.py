@@ -7,6 +7,7 @@ import yaml
 
 from hyperloop.reconciliation.models import Configuration
 from hyperloop.reconciliation.models.executor_type import ExecutorType
+from hyperloop.reconciliation.models.observer_adapter import ObserverAdapter
 
 
 @pytest.fixture()
@@ -272,7 +273,7 @@ class TestImmutability:
     def test_cannot_modify_observer_adapters(self, specs_dir: Path) -> None:
         config = Configuration(specs_directory=str(specs_dir))
         with pytest.raises(ValueError):
-            config.observer_adapters = ["structlog"]  # type: ignore[misc]
+            config.observer_adapters = [ObserverAdapter.STRUCTLOG]  # type: ignore[misc]
 
     def test_cannot_modify_executor_type(self, specs_dir: Path) -> None:
         config = Configuration(specs_directory=str(specs_dir))

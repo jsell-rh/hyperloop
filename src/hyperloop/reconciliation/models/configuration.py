@@ -7,6 +7,7 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 from hyperloop.reconciliation.models.executor_type import ExecutorType
+from hyperloop.reconciliation.models.observer_adapter import ObserverAdapter
 
 
 DEFAULT_CONFIG_FILENAME = ".hyperloop.yaml"
@@ -30,7 +31,7 @@ class Configuration(BaseSettings):
     specs_directory: str = "specs/"
     overlay_path: str = ".hyperloop/agents"
 
-    observer_adapters: list[str] = []
+    observer_adapters: list[ObserverAdapter] = []
 
     plan_branch: str = "hyperloop/plan"
     plan_file: str = "plan.json"

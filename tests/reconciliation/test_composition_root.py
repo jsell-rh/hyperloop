@@ -18,6 +18,7 @@ from hyperloop.reconciliation.adapters.structlog_observer import StructlogObserv
 from hyperloop.reconciliation.composition_root import build_executor, create_reconciler
 from hyperloop.reconciliation.models.configuration import Configuration
 from hyperloop.reconciliation.models.executor_type import ExecutorType
+from hyperloop.reconciliation.models.observer_adapter import ObserverAdapter
 from hyperloop.reconciliation.reconciler import Reconciler
 
 from .fakes.fake_agent_executor import FakeAgentExecutor
@@ -121,7 +122,7 @@ class TestCreateReconciler:
     def test_structlog_observer_adapter(self, tmp_path: Path) -> None:
         (tmp_path / "specs").mkdir()
         config = Configuration(
-            observer_adapters=["structlog"],
+            observer_adapters=[ObserverAdapter.STRUCTLOG],
             specs_directory=str(tmp_path / "specs"),
         )
 
@@ -132,7 +133,7 @@ class TestCreateReconciler:
     def test_multiple_observer_adapters_uses_composite(self, tmp_path: Path) -> None:
         (tmp_path / "specs").mkdir()
         config = Configuration(
-            observer_adapters=["structlog", "structlog"],
+            observer_adapters=[ObserverAdapter.STRUCTLOG, ObserverAdapter.STRUCTLOG],
             specs_directory=str(tmp_path / "specs"),
         )
 
@@ -142,18 +143,16 @@ class TestCreateReconciler:
 
     def test_unknown_observer_adapter_raises(self, tmp_path: Path) -> None:
         (tmp_path / "specs").mkdir()
-        config = Configuration(
-            observer_adapters=["unknown"],
-            specs_directory=str(tmp_path / "specs"),
-        )
-
-        with pytest.raises(ValueError, match="unknown"):
-            _create(tmp_path, config=config)
+        with pytest.raises(ValueError):
+            Configuration(
+                observer_adapters=["unknown"],  # type: ignore[list-item]
+                specs_directory=str(tmp_path / "specs"),
+            )
 
     def test_observer_shared_with_prompt_composer(self, tmp_path: Path) -> None:
         (tmp_path / "specs").mkdir()
         config = Configuration(
-            observer_adapters=["structlog"],
+            observer_adapters=[ObserverAdapter.STRUCTLOG],
             specs_directory=str(tmp_path / "specs"),
         )
 
