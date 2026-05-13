@@ -79,7 +79,11 @@ class ClaudeSDKRunner:
             )
             result_text = ""
             try:
+                if on_msg is not None:
+                    on_msg("progress", branch, "Starting SDK session")
                 async with ClaudeSDKClient(options=options) as client:
+                    if on_msg is not None:
+                        on_msg("progress", branch, "Session ready, sending prompt")
                     await client.query(prompt)
                     async for message in client.receive_response():
                         if on_msg is not None:
@@ -110,7 +114,11 @@ class ClaudeSDKRunner:
         branch = cwd.name
 
         async def _run(client: ClaudeSDKClient) -> None:
+            if on_msg is not None:
+                on_msg("progress", branch, "Starting SDK session")
             async with client:
+                if on_msg is not None:
+                    on_msg("progress", branch, "Session ready, sending prompt")
                 await client.query(prompt)
                 async for message in client.receive_response():
                     if on_msg is not None:
