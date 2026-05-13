@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from hyperloop.reconciliation.adapters.claude_sdk_executor import ClaudeSDKExecutor
 from hyperloop.reconciliation.adapters.git_agent_runtime import GitAgentRuntime
 from hyperloop.reconciliation.adapters.git_plan_store import GitPlanStore
 from hyperloop.reconciliation.adapters.git_spec_source import GitSpecSource
@@ -14,8 +15,9 @@ from hyperloop.reconciliation.adapters.kustomize_prompt_composer import (
 from hyperloop.reconciliation.adapters.composite_observer import CompositeObserver
 from hyperloop.reconciliation.adapters.null_probe import NullProbe
 from hyperloop.reconciliation.adapters.structlog_observer import StructlogObserver
-from hyperloop.reconciliation.composition_root import create_reconciler
+from hyperloop.reconciliation.composition_root import build_executor, create_reconciler
 from hyperloop.reconciliation.models.configuration import Configuration
+from hyperloop.reconciliation.models.executor_type import ExecutorType
 from hyperloop.reconciliation.reconciler import Reconciler
 
 from .fakes.fake_agent_executor import FakeAgentExecutor
@@ -285,3 +287,101 @@ class TestCreateReconciler:
         assert agent_runtime._implementation_model is None
         assert agent_runtime._verification_model is None
         assert agent_runtime._decomposition_model is None
+
+
+class TestBuildExecutor:
+    def test_claude_sdk_returns_claude_sdk_executor(self, tmp_path: Path) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(
+            executor_type=ExecutorType.CLAUDE_SDK,
+            specs_directory=str(tmp_path / "specs"),
+        )
+
+        executor = build_executor(config, tmp_path)
+
+        assert isinstance(executor, ClaudeSDKExecutor)
+
+    def test_default_config_returns_claude_sdk_executor(self, tmp_path: Path) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(specs_directory=str(tmp_path / "specs"))
+
+        executor = build_executor(config, tmp_path)
+
+        assert isinstance(executor, ClaudeSDKExecutor)
+
+    def test_claude_sdk_uses_timeout_from_config(self, tmp_path: Path) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(
+            executor_timeout_seconds=600,
+            specs_directory=str(tmp_path / "specs"),
+        )
+
+        executor = build_executor(config, tmp_path)
+
+        assert isinstance(executor, ClaudeSDKExecutor)
+        assert executor._timeout_seconds == 600
+
+    def test_claude_sdk_uses_max_retries_from_config(self, tmp_path: Path) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(
+            executor_max_retries=5,
+            specs_directory=str(tmp_path / "specs"),
+        )
+
+        executor = build_executor(config, tmp_path)
+
+        assert isinstance(executor, ClaudeSDKExecutor)
+        assert executor._max_retries == 5
+
+    def test_claude_sdk_uses_branch_prefix_from_config(self, tmp_path: Path) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(
+            branch_prefix="custom/",
+            specs_directory=str(tmp_path / "specs"),
+        )
+
+        executor = build_executor(config, tmp_path)
+
+        assert isinstance(executor, ClaudeSDKExecutor)
+        assert executor._branch_prefix == "custom/"
+
+    def test_ambient_executor_raises_not_implemented(self, tmp_path: Path) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(
+            executor_type=ExecutorType.AMBIENT,
+            repository_url="https://github.com/org/repo.git",
+            project_identifier="my-project",
+            specs_directory=str(tmp_path / "specs"),
+        )
+
+        with pytest.raises(NotImplementedError, match="ambient"):
+            build_executor(config, tmp_path)
+
+    def test_create_reconciler_builds_executor_from_config(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(specs_directory=str(tmp_path / "specs"))
+        runner = FakeKustomizeBuildRunner()
+
+        reconciler = create_reconciler(config, tmp_path, kustomize_runner=runner)
+
+        agent_runtime = reconciler._agent_runtime
+        assert isinstance(agent_runtime, GitAgentRuntime)
+        assert isinstance(agent_runtime._executor, ClaudeSDKExecutor)
+
+    def test_create_reconciler_uses_injected_executor_over_config(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(specs_directory=str(tmp_path / "specs"))
+        executor = FakeAgentExecutor()
+        runner = FakeKustomizeBuildRunner()
+
+        reconciler = create_reconciler(
+            config, tmp_path, executor=executor, kustomize_runner=runner
+        )
+
+        agent_runtime = reconciler._agent_runtime
+        assert isinstance(agent_runtime, GitAgentRuntime)
+        assert agent_runtime._executor is executor

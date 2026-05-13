@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from hyperloop.reconciliation.adapters.agent_executor import AgentExecutor
+from hyperloop.reconciliation.adapters.claude_sdk_executor import ClaudeSDKExecutor
+from hyperloop.reconciliation.adapters.claude_sdk_runner import ClaudeSDKRunner
 from hyperloop.reconciliation.adapters.git_agent_runtime import GitAgentRuntime
 from hyperloop.reconciliation.adapters.git_plan_store import GitPlanStore
 from hyperloop.reconciliation.adapters.git_spec_source import GitSpecSource
@@ -21,6 +23,7 @@ from hyperloop.reconciliation.adapters.subprocess_kustomize_build_runner import 
     SubprocessKustomizeBuildRunner,
 )
 from hyperloop.reconciliation.models.configuration import Configuration
+from hyperloop.reconciliation.models.executor_type import ExecutorType
 from hyperloop.reconciliation.reconciler import Reconciler
 
 
@@ -48,13 +51,31 @@ def _build_observer(adapter_names: list[str]) -> Observer:
     return CompositeObserver(adapters)
 
 
+def build_executor(config: Configuration, repo_path: Path) -> AgentExecutor:
+    if config.executor_type == ExecutorType.CLAUDE_SDK:
+        return ClaudeSDKExecutor(
+            repo_path,
+            sdk_runner=ClaudeSDKRunner(),
+            timeout_seconds=config.executor_timeout_seconds,
+            max_retries=config.executor_max_retries,
+            branch_prefix=config.branch_prefix,
+        )
+    if config.executor_type == ExecutorType.AMBIENT:
+        raise NotImplementedError(
+            "The ambient executor is not yet implemented. "
+            "Use executor_type 'claude-sdk' instead."
+        )
+    raise ValueError(f"Unknown executor_type: {config.executor_type!r}")
+
+
 def create_reconciler(
     config: Configuration,
     repo_path: Path,
     *,
-    executor: AgentExecutor,
+    executor: AgentExecutor | None = None,
     kustomize_runner: KustomizeBuildRunner | None = None,
 ) -> Reconciler:
+    resolved_executor = executor or build_executor(config, repo_path)
     observer = _build_observer(config.observer_adapters)
 
     runner = kustomize_runner or SubprocessKustomizeBuildRunner()
@@ -86,7 +107,7 @@ def create_reconciler(
     agent_runtime = GitAgentRuntime(
         repo_path=repo_path,
         branch_prefix=config.branch_prefix,
-        executor=executor,
+        executor=resolved_executor,
         prompt_composer=prompt_composer,
         implementation_model=config.implementation_model,
         verification_model=config.verification_model,
