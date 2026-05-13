@@ -6,6 +6,7 @@ import pytest
 import yaml
 
 from hyperloop.reconciliation.models import Configuration
+from hyperloop.reconciliation.models.executor_type import ExecutorType
 
 
 @pytest.fixture()
@@ -69,6 +70,18 @@ class TestDefaultValues:
         assert config.implementation_model is None
         assert config.verification_model is None
         assert config.decomposition_model is None
+
+    def test_executor_type_defaults_to_claude_sdk(self, specs_dir: Path) -> None:
+        config = Configuration(specs_directory=str(specs_dir))
+        assert config.executor_type == ExecutorType.CLAUDE_SDK
+
+    def test_repository_url_defaults_to_none(self, specs_dir: Path) -> None:
+        config = Configuration(specs_directory=str(specs_dir))
+        assert config.repository_url is None
+
+    def test_project_identifier_defaults_to_none(self, specs_dir: Path) -> None:
+        config = Configuration(specs_directory=str(specs_dir))
+        assert config.project_identifier is None
 
 
 class TestValidation:
@@ -150,6 +163,99 @@ class TestValidation:
         assert config.max_concurrent_tasks == 10
         assert config.implementation_model == "claude-sonnet"
         assert config.verification_model == "gemini-pro"
+
+
+class TestExecutorConfiguration:
+    def test_claude_sdk_executor_type_accepted(self, specs_dir: Path) -> None:
+        config = Configuration(
+            executor_type=ExecutorType.CLAUDE_SDK,
+            specs_directory=str(specs_dir),
+        )
+        assert config.executor_type == ExecutorType.CLAUDE_SDK
+
+    def test_ambient_executor_type_accepted_with_required_fields(
+        self, specs_dir: Path
+    ) -> None:
+        config = Configuration(
+            executor_type=ExecutorType.AMBIENT,
+            repository_url="https://github.com/org/repo.git",
+            project_identifier="my-project",
+            specs_directory=str(specs_dir),
+        )
+        assert config.executor_type == ExecutorType.AMBIENT
+        assert config.repository_url == "https://github.com/org/repo.git"
+        assert config.project_identifier == "my-project"
+
+    def test_ambient_without_repository_url_rejected(self, specs_dir: Path) -> None:
+        with pytest.raises(ValueError, match="repository_url"):
+            Configuration(
+                executor_type=ExecutorType.AMBIENT,
+                project_identifier="my-project",
+                specs_directory=str(specs_dir),
+            )
+
+    def test_ambient_without_project_identifier_rejected(self, specs_dir: Path) -> None:
+        with pytest.raises(ValueError, match="project_identifier"):
+            Configuration(
+                executor_type=ExecutorType.AMBIENT,
+                repository_url="https://github.com/org/repo.git",
+                specs_directory=str(specs_dir),
+            )
+
+    def test_ambient_without_both_fields_rejected(self, specs_dir: Path) -> None:
+        with pytest.raises(ValueError, match="repository_url"):
+            Configuration(
+                executor_type=ExecutorType.AMBIENT,
+                specs_directory=str(specs_dir),
+            )
+
+    def test_claude_sdk_ignores_ambient_fields(self, specs_dir: Path) -> None:
+        config = Configuration(
+            executor_type=ExecutorType.CLAUDE_SDK,
+            repository_url="https://github.com/org/repo.git",
+            project_identifier="my-project",
+            specs_directory=str(specs_dir),
+        )
+        assert config.executor_type == ExecutorType.CLAUDE_SDK
+
+    def test_unknown_executor_type_rejected(self, specs_dir: Path) -> None:
+        with pytest.raises(ValueError):
+            Configuration(
+                executor_type="unknown",  # type: ignore[arg-type]
+                specs_directory=str(specs_dir),
+            )
+
+    def test_executor_type_from_string_in_yaml(
+        self, specs_dir: Path, tmp_path: Path
+    ) -> None:
+        config_file = tmp_path / "hyperloop.yaml"
+        _write_yaml(
+            config_file,
+            {
+                "executor_type": "claude-sdk",
+                "specs_directory": str(specs_dir),
+            },
+        )
+        config = Configuration.from_yaml(config_file)
+        assert config.executor_type == ExecutorType.CLAUDE_SDK
+
+    def test_ambient_from_yaml_with_required_fields(
+        self, specs_dir: Path, tmp_path: Path
+    ) -> None:
+        config_file = tmp_path / "hyperloop.yaml"
+        _write_yaml(
+            config_file,
+            {
+                "executor_type": "ambient",
+                "repository_url": "https://github.com/org/repo.git",
+                "project_identifier": "my-project",
+                "specs_directory": str(specs_dir),
+            },
+        )
+        config = Configuration.from_yaml(config_file)
+        assert config.executor_type == ExecutorType.AMBIENT
+        assert config.repository_url == "https://github.com/org/repo.git"
+        assert config.project_identifier == "my-project"
 
 
 class TestImmutability:

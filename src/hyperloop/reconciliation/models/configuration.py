@@ -3,8 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
+
+from hyperloop.reconciliation.models.executor_type import ExecutorType
 
 
 DEFAULT_CONFIG_FILENAME = ".hyperloop.yaml"
@@ -35,8 +37,11 @@ class Configuration(BaseSettings):
     trunk_branch: str = "main"
     branch_prefix: str = "hyperloop/"
 
+    executor_type: ExecutorType = ExecutorType.CLAUDE_SDK
     executor_timeout_seconds: int = 300
     executor_max_retries: int = 3
+    repository_url: str | None = None
+    project_identifier: str | None = None
 
     @field_validator("convergence_bound")
     @classmethod
@@ -102,6 +107,19 @@ class Configuration(BaseSettings):
                 f"specs_directory '{v}' does not exist or is not a directory"
             )
         return v
+
+    @model_validator(mode="after")
+    def ambient_requires_url_and_project(self) -> Configuration:
+        if self.executor_type == ExecutorType.AMBIENT:
+            if self.repository_url is None:
+                raise ValueError(
+                    "repository_url is required when executor_type is 'ambient'"
+                )
+            if self.project_identifier is None:
+                raise ValueError(
+                    "project_identifier is required when executor_type is 'ambient'"
+                )
+        return self
 
     @classmethod
     def from_yaml(cls, path: Path) -> Configuration:
