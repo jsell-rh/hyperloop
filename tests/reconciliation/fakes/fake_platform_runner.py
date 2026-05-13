@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 from hyperloop.reconciliation.models.platform_session import PlatformSession
+from hyperloop.reconciliation.models.session_status import SessionStatus
 
 
 class FakePlatformRunner:
@@ -75,3 +76,8 @@ class FakePlatformRunner:
             PlatformSession(session_id=sid, name=name)
             for sid, name in self._running_sessions.items()
         ]
+
+    def get_session_status(self, session_id: str) -> SessionStatus:
+        if session_id in self._running_sessions:
+            return SessionStatus.RUNNING
+        return SessionStatus.STOPPED

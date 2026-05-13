@@ -4,6 +4,7 @@ import json
 import subprocess
 from hyperloop.reconciliation.models.executor_timeout_error import ExecutorTimeoutError
 from hyperloop.reconciliation.models.platform_session import PlatformSession
+from hyperloop.reconciliation.models.session_status import SessionStatus
 
 
 class AcpctlPlatformRunner:
@@ -91,6 +92,22 @@ class AcpctlPlatformRunner:
             PlatformSession(session_id=item["id"], name=item.get("name", ""))
             for item in data.get("items", [])
         ]
+
+    def get_session_status(self, session_id: str) -> SessionStatus:
+        result = subprocess.run(
+            [self._acpctl_path, "get", "session", session_id, "-o", "json"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return SessionStatus.UNKNOWN
+        data = json.loads(result.stdout)
+        raw_status = data.get("status", "").lower()
+        try:
+            return SessionStatus(raw_status)
+        except ValueError:
+            return SessionStatus.UNKNOWN
 
 
 def _extract_result(event_stream: str) -> str:

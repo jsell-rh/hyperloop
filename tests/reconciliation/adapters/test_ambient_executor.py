@@ -437,6 +437,50 @@ class TestRetryLogic:
         assert len(runner.wait_calls) == 1
 
 
+class TestHealthMonitoring:
+    def test_check_health_detects_stopped_session(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, _ = git_env
+        runner = FakePlatformRunner()
+        executor = _make_executor(repo, runner)
+        _create_branch(repo, TASK_BRANCH)
+        executor.start_task_agent(branch=TASK_BRANCH, prompt="Work")
+
+        session_id = executor._sessions[TASK_BRANCH]
+        runner._running_sessions.pop(session_id)
+
+        terminated = executor.check_health()
+
+        assert TASK_BRANCH in terminated
+        assert TASK_BRANCH not in executor._sessions
+
+    def test_check_health_keeps_running_sessions(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, _ = git_env
+        runner = FakePlatformRunner()
+        executor = _make_executor(repo, runner)
+        _create_branch(repo, TASK_BRANCH)
+        executor.start_task_agent(branch=TASK_BRANCH, prompt="Work")
+
+        terminated = executor.check_health()
+
+        assert terminated == []
+        assert TASK_BRANCH in executor._sessions
+
+    def test_check_health_returns_empty_when_no_sessions(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, _ = git_env
+        runner = FakePlatformRunner()
+        executor = _make_executor(repo, runner)
+
+        terminated = executor.check_health()
+
+        assert terminated == []
+
+
 class TestProcessExitCleanup:
     def test_cleanup_stops_all_tracked_sessions(
         self, git_env: tuple[Path, Path]
@@ -526,7 +570,7 @@ class TestSessionNamingConvention:
 
         name = executor._session_name("custom/prefix/task/1")
 
-        assert name.startswith("custom--prefix--")
+        assert name.startswith("custom%2Fprefix-")
 
 
 class TestBranchPushRetry:

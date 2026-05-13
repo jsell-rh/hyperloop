@@ -12,18 +12,38 @@ from hyperloop.reconciliation.adapters.platform_runner import PlatformRunner
 from hyperloop.reconciliation.models.executor_timeout_error import ExecutorTimeoutError
 from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
+from hyperloop.reconciliation.models.session_status import SessionStatus
+
+
+_ENCODE_MAP: dict[str, str] = {
+    "%": "%25",
+    "/": "%2F",
+}
 
 
 def _encode_branch(branch: str) -> str:
-    return branch.replace("/", "--")
+    return "".join(_ENCODE_MAP.get(ch, ch) for ch in branch)
 
 
 def _decode_branch(encoded: str) -> str:
-    return encoded.replace("--", "/")
+    result: list[str] = []
+    i = 0
+    while i < len(encoded):
+        if encoded[i] == "%" and i + 2 < len(encoded):
+            hex_chars = encoded[i + 1 : i + 3]
+            try:
+                result.append(chr(int(hex_chars, 16)))
+                i += 3
+                continue
+            except ValueError:
+                pass
+        result.append(encoded[i])
+        i += 1
+    return "".join(result)
 
 
 def _derive_session_prefix(branch_prefix: str) -> str:
-    return _encode_branch(branch_prefix.rstrip("/")) + "--"
+    return _encode_branch(branch_prefix.rstrip("/")) + "-"
 
 
 class AmbientExecutor:
@@ -85,6 +105,15 @@ class AmbientExecutor:
         result_text = self._run_sync(prompt=prompt, model=model)
         raw = json.loads(result_text)
         return IntegrationSummary(**raw)
+
+    def check_health(self) -> list[str]:
+        terminated: list[str] = []
+        for branch, session_id in list(self._sessions.items()):
+            status = self._platform_runner.get_session_status(session_id)
+            if status in (SessionStatus.STOPPED, SessionStatus.FAILED):
+                self._sessions.pop(branch, None)
+                terminated.append(branch)
+        return terminated
 
     def cancel(self, *, branch: str) -> None:
         session_id = self._sessions.pop(branch, None)
