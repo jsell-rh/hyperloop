@@ -1,30 +1,16 @@
 from __future__ import annotations
 
-import subprocess
-from pathlib import Path
-
 import click
 
 from hyperloop.cli.commands.describe import describe
 from hyperloop.cli.commands.get import get
 from hyperloop.cli.commands.run import run
+from hyperloop.cli.git import find_git_root
 from hyperloop.reconciliation.adapters.git_plan_store import GitPlanStore
 from hyperloop.reconciliation.models.configuration import (
     DEFAULT_CONFIG_FILENAME,
     Configuration,
 )
-
-
-def _find_git_root() -> Path:
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise click.ClickException("Not a git repository")
-    return Path(result.stdout.strip())
 
 
 @click.group()
@@ -33,7 +19,7 @@ def cli(ctx: click.Context) -> None:
     if ctx.obj is not None:
         return
     try:
-        repo_path = _find_git_root()
+        repo_path = find_git_root()
         config = Configuration.from_yaml(repo_path / DEFAULT_CONFIG_FILENAME)
         ctx.obj = GitPlanStore(
             repo_path=repo_path,

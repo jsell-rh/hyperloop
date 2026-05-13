@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import click
 import structlog
 
+from hyperloop.cli.git import find_git_root
 from hyperloop.reconciliation.composition_root import create_reconciler
 from hyperloop.reconciliation.models.configuration import (
     DEFAULT_CONFIG_FILENAME,
@@ -26,18 +26,6 @@ def _configure_structlog() -> None:
     )
 
 
-def _find_git_root() -> Path:
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise click.ClickException("Not a git repository")
-    return Path(result.stdout.strip())
-
-
 @click.command()
 @click.option(
     "--config", "config_path", default=None, help="Path to configuration file"
@@ -51,7 +39,7 @@ def run(ctx: click.Context, config_path: str | None) -> None:
         return
 
     try:
-        repo_path = _find_git_root()
+        repo_path = find_git_root()
     except click.ClickException:
         raise
     except Exception as exc:

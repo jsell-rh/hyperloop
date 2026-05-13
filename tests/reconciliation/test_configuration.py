@@ -274,6 +274,11 @@ class TestImmutability:
         with pytest.raises(ValueError):
             config.observer_adapters = ["structlog"]  # type: ignore[misc]
 
+    def test_cannot_modify_executor_type(self, specs_dir: Path) -> None:
+        config = Configuration(specs_directory=str(specs_dir))
+        with pytest.raises(ValueError):
+            config.executor_type = ExecutorType.AMBIENT  # type: ignore[misc]
+
 
 class TestYamlLoading:
     def test_load_from_yaml_with_all_fields(self, tmp_path: Path) -> None:
