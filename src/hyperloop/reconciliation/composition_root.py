@@ -61,6 +61,9 @@ def create_reconciler(
         branch_prefix=config.branch_prefix,
         executor=executor,
         prompt_composer=prompt_composer,
+        implementation_model=config.implementation_model,
+        verification_model=config.verification_model,
+        decomposition_model=config.decomposition_model,
     )
 
     return Reconciler(

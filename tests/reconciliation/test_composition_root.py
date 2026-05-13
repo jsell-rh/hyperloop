@@ -210,3 +210,29 @@ class TestCreateReconciler:
         composer = reconciler._agent_runtime._prompt_composer
         assert isinstance(composer, KustomizePromptComposer)
         assert composer._runner is runner
+
+    def test_wires_model_config_into_agent_runtime(self, tmp_path: Path) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(
+            implementation_model="claude-sonnet",
+            verification_model="gemini-pro",
+            decomposition_model="claude-opus",
+            specs_directory=str(tmp_path / "specs"),
+        )
+
+        reconciler = _create(tmp_path, config=config)
+
+        agent_runtime = reconciler._agent_runtime
+        assert isinstance(agent_runtime, GitAgentRuntime)
+        assert agent_runtime._implementation_model == "claude-sonnet"
+        assert agent_runtime._verification_model == "gemini-pro"
+        assert agent_runtime._decomposition_model == "claude-opus"
+
+    def test_none_models_wired_by_default(self, tmp_path: Path) -> None:
+        reconciler = _create(tmp_path)
+
+        agent_runtime = reconciler._agent_runtime
+        assert isinstance(agent_runtime, GitAgentRuntime)
+        assert agent_runtime._implementation_model is None
+        assert agent_runtime._verification_model is None
+        assert agent_runtime._decomposition_model is None
