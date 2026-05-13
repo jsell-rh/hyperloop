@@ -234,6 +234,7 @@ class GitAgentRuntime:
             task_branch=task_branch,
             delivery_branch=delivery_branch,
             prompt=prompt,
+            model=None,
         )
 
     def compose_integration_summary(
@@ -260,7 +261,7 @@ class GitAgentRuntime:
             sections=sections,
             epilogue="",
         )
-        return self._executor.compose_summary(prompt=prompt)
+        return self._executor.compose_summary(prompt=prompt, model=None)
 
     def cancel(self, handle: AgentHandle) -> None:
         self._git(
