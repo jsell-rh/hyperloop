@@ -82,12 +82,12 @@ class Reconciler:
 
     def _recover(self) -> None:
         plan = self._plan_store.get_plan()
-        orphans = self._agent_runtime.detect_orphans()
+        stale = self._agent_runtime.detect_stale()
 
-        if not orphans:
+        if not stale:
             return
 
-        self._observer.crash_recovery_started(orphaned_agent_count=len(orphans))
+        self._observer.crash_recovery_started(stale_agent_count=len(stale))
 
         handle_to_task: dict[str, tuple[int, str]] = {}
         for sp in plan.spec_plans:
@@ -95,10 +95,10 @@ class Reconciler:
                 if task.agent_handle is not None:
                     handle_to_task[task.agent_handle.id] = (task.id, task.spec_path)
 
-        for handle in orphans:
+        for handle in stale:
             if handle.id in handle_to_task:
                 task_id, spec_path = handle_to_task[handle.id]
-                self._observer.agent_orphan_detected(
+                self._observer.stale_agent_detected(
                     task_id=task_id, spec_path=spec_path
                 )
             try:

@@ -127,10 +127,10 @@ The AgentRuntime port SHALL manage agent lifecycle for decomposition, implementa
 - THEN the agent is terminated
 - AND its resources are cleaned up
 
-#### Scenario: Detect orphaned agents
+#### Scenario: Detect stale agents
 
 - GIVEN the system crashed and restarted
-- WHEN detect_orphans is called
+- WHEN detect_stale is called
 - THEN it returns handles for any agents that were running before the crash
 - AND these handles can be cancelled to clean up
 

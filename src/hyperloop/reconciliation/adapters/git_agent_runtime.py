@@ -104,10 +104,10 @@ class GitAgentRuntime:
 
         return self._parse_signal(message)
 
-    def detect_orphans(self) -> list[AgentHandle]:
+    def detect_stale(self) -> list[AgentHandle]:
         self._fetch_all_managed_branches()
         branches = self._list_remote_managed_branches()
-        orphans: list[AgentHandle] = []
+        stale: list[AgentHandle] = []
 
         for branch in branches:
             if not (
@@ -120,9 +120,9 @@ class GitAgentRuntime:
             is_empty = self._is_empty_commit_remote(branch)
 
             if not is_empty or not self._has_signal(message):
-                orphans.append(AgentHandle(id=branch))
+                stale.append(AgentHandle(id=branch))
 
-        return orphans
+        return stale
 
     def launch_task(self, briefing: TaskBriefing) -> AgentHandle:
         branch = self._workspace_to_branch(briefing.workspace_id)

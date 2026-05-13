@@ -144,14 +144,14 @@ The probe protocol SHALL define methods for the following observation points. Ea
 | Method | When | Key Arguments |
 |---|---|---|
 | agent_cancelled | Agent cancelled (superseding, deletion) | task_id: int, spec_path: str, reason: str |
-| agent_orphan_detected | Orphaned agent found after crash | task_id: int, spec_path: str |
+| stale_agent_detected | Stale agent found after crash | task_id: int, spec_path: str |
 | agent_launch_failed | Agent runtime failed to launch | task_id: int, role: str, reason: str, cycle: int |
 
 **Recovery:**
 
 | Method | When | Key Arguments |
 |---|---|---|
-| crash_recovery_started | Reconciler recovering from crash | orphaned_agent_count: int |
+| crash_recovery_started | Reconciler recovering from crash | stale_agent_count: int |
 
 **Prompt Composition:**
 

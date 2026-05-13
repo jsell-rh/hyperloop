@@ -168,7 +168,7 @@ class NullProbe:
     def agent_cancelled(self, *, task_id: int, spec_path: str, reason: str) -> None:
         pass
 
-    def agent_orphan_detected(self, *, task_id: int, spec_path: str) -> None:
+    def stale_agent_detected(self, *, task_id: int, spec_path: str) -> None:
         pass
 
     def agent_launch_failed(
@@ -176,7 +176,7 @@ class NullProbe:
     ) -> None:
         pass
 
-    def crash_recovery_started(self, *, orphaned_agent_count: int) -> None:
+    def crash_recovery_started(self, *, stale_agent_count: int) -> None:
         pass
 
     def composer_rebuilt(self, *, template_count: int) -> None:

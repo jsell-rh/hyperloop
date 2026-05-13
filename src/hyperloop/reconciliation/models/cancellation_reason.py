@@ -7,4 +7,4 @@ class CancellationReason(StrEnum):
     SUPERSEDED = "superseded"
     DEPENDENCY_INVALIDATED = "dependency_invalidated"
     REDECOMPOSITION = "redecomposition"
-    ORPHANED = "orphaned"
+    STALE = "stale"

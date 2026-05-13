@@ -16,7 +16,7 @@ class FakeAgentRuntime:
         self._decomposition_error: Exception | None = None
         self._poll_results: dict[str, PollResult] = {}
         self._cancelled: set[str] = set()
-        self._orphans: list[AgentHandle] = []
+        self._stale: list[AgentHandle] = []
         self._merge_result: bool = True
         self._integration_summary: IntegrationSummary = IntegrationSummary(
             title="Default title", body="Default body"
@@ -51,8 +51,8 @@ class FakeAgentRuntime:
     def set_integration_summary_error(self, error: Exception) -> None:
         self._integration_summary_error = error
 
-    def set_orphans(self, orphans: list[AgentHandle]) -> None:
-        self._orphans = orphans
+    def set_stale(self, stale: list[AgentHandle]) -> None:
+        self._stale = stale
 
     def launch_decomposition(
         self,
@@ -121,5 +121,5 @@ class FakeAgentRuntime:
     def is_cancelled(self, handle: AgentHandle) -> bool:
         return handle.id in self._cancelled
 
-    def detect_orphans(self) -> list[AgentHandle]:
-        return self._orphans
+    def detect_stale(self) -> list[AgentHandle]:
+        return self._stale

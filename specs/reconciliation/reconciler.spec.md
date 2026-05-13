@@ -257,15 +257,15 @@ The reconciler SHALL run as a single instance per repository. It is not designed
 
 ### Requirement: Crash Recovery
 
-The reconciler SHALL be resumable after a crash. On restart, it reads the persisted Plan, detects orphaned agents, cancels them, and resumes the reconciliation cycle from the persisted state.
+The reconciler SHALL be resumable after a crash. On restart, it reads the persisted Plan, detects stale agents, cancels them, and resumes the reconciliation cycle from the persisted state.
 
 #### Scenario: Restart after crash
 
 - GIVEN the reconciler crashes while tasks are InProgress
 - WHEN the reconciler restarts
 - THEN it reads the Plan from the PlanStore
-- AND detects orphaned agents via the AgentRuntime port
-- AND cancels orphaned agents
+- AND detects stale agents via the AgentRuntime port
+- AND cancels stale agents
 - AND resumes the reconciliation cycle
 
 #### Scenario: Idempotent cycles

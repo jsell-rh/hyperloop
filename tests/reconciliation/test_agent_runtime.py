@@ -37,8 +37,8 @@ class TestAgentRuntimeProtocol:
     def test_defines_cancel(self) -> None:
         assert hasattr(AgentRuntime, "cancel")
 
-    def test_defines_detect_orphans(self) -> None:
-        assert hasattr(AgentRuntime, "detect_orphans")
+    def test_defines_detect_stale(self) -> None:
+        assert hasattr(AgentRuntime, "detect_stale")
 
     def test_no_extra_methods(self) -> None:
         methods = {
@@ -56,7 +56,7 @@ class TestAgentRuntimeProtocol:
             "launch_merge_resolution",
             "compose_integration_summary",
             "cancel",
-            "detect_orphans",
+            "detect_stale",
         }
 
     def test_launch_decomposition_accepts_spec_diffs(self) -> None:
@@ -135,8 +135,8 @@ class TestAgentRuntimeProtocol:
         hints = get_type_hints(AgentRuntime.cancel)
         assert hints["return"] is type(None)
 
-    def test_detect_orphans_returns_list_of_handles(self) -> None:
-        hints = get_type_hints(AgentRuntime.detect_orphans)
+    def test_detect_stale_returns_list_of_handles(self) -> None:
+        hints = get_type_hints(AgentRuntime.detect_stale)
         assert hints["return"] == list[AgentHandle]
 
     def test_port_imports_only_domain_types(self) -> None:
@@ -602,34 +602,34 @@ class TestFakeCancellation:
             pass
 
 
-class TestFakeOrphanDetection:
-    def test_no_orphans(self) -> None:
+class TestFakeStaleDetection:
+    def test_no_stale(self) -> None:
         runtime = FakeAgentRuntime()
 
-        orphans = runtime.detect_orphans()
+        stale = runtime.detect_stale()
 
-        assert orphans == []
+        assert stale == []
 
-    def test_returns_configured_orphans(self) -> None:
+    def test_returns_configured_stale(self) -> None:
         runtime = FakeAgentRuntime()
-        orphan_handles = [AgentHandle(id="orphan-1"), AgentHandle(id="orphan-2")]
-        runtime.set_orphans(orphan_handles)
+        stale_handles = [AgentHandle(id="stale-1"), AgentHandle(id="stale-2")]
+        runtime.set_stale(stale_handles)
 
-        orphans = runtime.detect_orphans()
+        stale = runtime.detect_stale()
 
-        assert orphans == orphan_handles
-        assert len(orphans) == 2
+        assert stale == stale_handles
+        assert len(stale) == 2
 
-    def test_orphans_can_be_cancelled(self) -> None:
+    def test_stale_can_be_cancelled(self) -> None:
         runtime = FakeAgentRuntime()
-        orphan = AgentHandle(id="orphan-1")
-        runtime.set_orphans([orphan])
+        stale_handle = AgentHandle(id="stale-1")
+        runtime.set_stale([stale_handle])
 
-        orphans = runtime.detect_orphans()
-        for handle in orphans:
+        stale = runtime.detect_stale()
+        for handle in stale:
             runtime.cancel(handle)
 
-        assert runtime.is_cancelled(orphan)
+        assert runtime.is_cancelled(stale_handle)
 
 
 class TestFakeMergeResolution:

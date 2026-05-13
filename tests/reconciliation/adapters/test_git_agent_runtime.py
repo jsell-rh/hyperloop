@@ -271,7 +271,7 @@ class TestPollFetchesRemote:
         assert result.status == AgentStatus.COMPLETE
 
 
-class TestDetectOrphans:
+class TestDetectStale:
     def test_finds_task_branches_without_completion_signal(
         self, git_env: tuple[Path, Path]
     ) -> None:
@@ -288,11 +288,11 @@ class TestDetectOrphans:
         _push_branch(local, branch_6)
 
         runtime = _make_runtime(local)
-        orphans = runtime.detect_orphans()
+        stale = runtime.detect_stale()
 
-        orphan_ids = {h.id for h in orphans}
-        assert branch_5 in orphan_ids
-        assert branch_6 in orphan_ids
+        stale_ids = {h.id for h in stale}
+        assert branch_5 in stale_ids
+        assert branch_6 in stale_ids
 
     def test_excludes_branches_with_complete_signal(
         self, git_env: tuple[Path, Path]
@@ -311,11 +311,11 @@ class TestDetectOrphans:
         _push_branch(local, branch_6)
 
         runtime = _make_runtime(local)
-        orphans = runtime.detect_orphans()
+        stale = runtime.detect_stale()
 
-        orphan_ids = {h.id for h in orphans}
-        assert branch_5 not in orphan_ids
-        assert branch_6 in orphan_ids
+        stale_ids = {h.id for h in stale}
+        assert branch_5 not in stale_ids
+        assert branch_6 in stale_ids
 
     def test_excludes_branches_with_failed_signal(
         self, git_env: tuple[Path, Path]
@@ -335,11 +335,11 @@ class TestDetectOrphans:
         _push_branch(local, branch_6)
 
         runtime = _make_runtime(local)
-        orphans = runtime.detect_orphans()
+        stale = runtime.detect_stale()
 
-        orphan_ids = {h.id for h in orphans}
-        assert branch_5 not in orphan_ids
-        assert branch_6 in orphan_ids
+        stale_ids = {h.id for h in stale}
+        assert branch_5 not in stale_ids
+        assert branch_6 in stale_ids
 
     def test_finds_verifier_branches_without_signal(
         self, git_env: tuple[Path, Path]
@@ -350,18 +350,18 @@ class TestDetectOrphans:
         _push_branch(local, VERIFIER_BRANCH)
 
         runtime = _make_runtime(local)
-        orphans = runtime.detect_orphans()
+        stale = runtime.detect_stale()
 
-        orphan_ids = {h.id for h in orphans}
-        assert VERIFIER_BRANCH in orphan_ids
+        stale_ids = {h.id for h in stale}
+        assert VERIFIER_BRANCH in stale_ids
 
     def test_returns_empty_when_no_hyperloop_branches(
         self, git_env: tuple[Path, Path]
     ) -> None:
         local, _ = git_env
         runtime = _make_runtime(local)
-        orphans = runtime.detect_orphans()
-        assert orphans == []
+        stale = runtime.detect_stale()
+        assert stale == []
 
     def test_ignores_delivery_branches(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
@@ -370,10 +370,10 @@ class TestDetectOrphans:
         _push_branch(local, delivery_branch)
 
         runtime = _make_runtime(local)
-        orphans = runtime.detect_orphans()
+        stale = runtime.detect_stale()
 
-        orphan_ids = {h.id for h in orphans}
-        assert delivery_branch not in orphan_ids
+        stale_ids = {h.id for h in stale}
+        assert delivery_branch not in stale_ids
 
     def test_ignores_plan_branch(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
@@ -381,10 +381,10 @@ class TestDetectOrphans:
         _push_branch(local, "hyperloop/plan")
 
         runtime = _make_runtime(local)
-        orphans = runtime.detect_orphans()
-        assert orphans == []
+        stale = runtime.detect_stale()
+        assert stale == []
 
-    def test_detects_orphans_pushed_by_other_clone(
+    def test_detects_stale_pushed_by_other_clone(
         self, git_env: tuple[Path, Path], tmp_path: Path
     ) -> None:
         local, remote = git_env
@@ -402,10 +402,10 @@ class TestDetectOrphans:
         _push_branch(agent_clone, TASK_BRANCH)
 
         runtime = _make_runtime(local)
-        orphans = runtime.detect_orphans()
+        stale = runtime.detect_stale()
 
-        orphan_ids = {h.id for h in orphans}
-        assert TASK_BRANCH in orphan_ids
+        stale_ids = {h.id for h in stale}
+        assert TASK_BRANCH in stale_ids
 
 
 class TestCancel:
@@ -475,7 +475,7 @@ class TestCustomBranchPrefix:
 
         assert result.status == AgentStatus.COMPLETE
 
-    def test_detect_orphans_uses_configured_prefix(
+    def test_detect_stale_uses_configured_prefix(
         self, git_env: tuple[Path, Path]
     ) -> None:
         local, _ = git_env
@@ -493,12 +493,12 @@ class TestCustomBranchPrefix:
             prompt_composer=FakePromptComposer(_ALL_ROLE_TEMPLATES),
             remote="origin",
         )
-        orphans = runtime.detect_orphans()
+        stale = runtime.detect_stale()
 
-        orphan_ids = {h.id for h in orphans}
-        assert branch in orphan_ids
+        stale_ids = {h.id for h in stale}
+        assert branch in stale_ids
 
-    def test_detect_orphans_ignores_other_prefixes(
+    def test_detect_stale_ignores_other_prefixes(
         self, git_env: tuple[Path, Path]
     ) -> None:
         local, _ = git_env
@@ -514,9 +514,9 @@ class TestCustomBranchPrefix:
             prompt_composer=FakePromptComposer(_ALL_ROLE_TEMPLATES),
             remote="origin",
         )
-        orphans = runtime.detect_orphans()
+        stale = runtime.detect_stale()
 
-        assert orphans == []
+        assert stale == []
 
 
 class TestLaunchTask:
@@ -1350,10 +1350,10 @@ class TestProtocolConformance:
         assert hints["handle"] is AgentHandle
         assert hints["return"] is type(None)
 
-    def test_has_detect_orphans_method(self) -> None:
+    def test_has_detect_stale_method(self) -> None:
         from typing import get_type_hints
 
-        hints = get_type_hints(GitAgentRuntime.detect_orphans)
+        hints = get_type_hints(GitAgentRuntime.detect_stale)
         assert hints["return"] == list[AgentHandle]
 
     def test_has_launch_task_method(self) -> None:

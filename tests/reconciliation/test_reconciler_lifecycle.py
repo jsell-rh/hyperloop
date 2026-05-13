@@ -80,7 +80,7 @@ def _make_reconciler(
 
 
 class TestCrashRecovery:
-    def test_no_orphans_skips_recovery_probes(
+    def test_no_stale_skips_recovery_probes(
         self,
         spec_source: AutoStopSpecSource,
         plan_store: FakePlanStore,
@@ -96,7 +96,7 @@ class TestCrashRecovery:
 
         assert observer.calls_for("crash_recovery_started") == []
 
-    def test_detects_and_cancels_orphaned_agents(
+    def test_detects_and_cancels_stale_agents(
         self,
         spec_source: AutoStopSpecSource,
         plan_store: FakePlanStore,
@@ -104,15 +104,15 @@ class TestCrashRecovery:
         agent_runtime: FakeAgentRuntime,
         workspace_manager: FakeWorkspaceManager,
     ) -> None:
-        orphan_handle = AgentHandle(id="orphan-1")
-        agent_runtime.set_orphans([orphan_handle])
+        stale_handle = AgentHandle(id="stale-1")
+        agent_runtime.set_stale([stale_handle])
 
         reconciler = _make_reconciler(
             spec_source, plan_store, observer, agent_runtime, workspace_manager
         )
         reconciler.run()
 
-        assert agent_runtime.is_cancelled(orphan_handle)
+        assert agent_runtime.is_cancelled(stale_handle)
 
     def test_emits_crash_recovery_started_probe(
         self,
@@ -122,9 +122,7 @@ class TestCrashRecovery:
         agent_runtime: FakeAgentRuntime,
         workspace_manager: FakeWorkspaceManager,
     ) -> None:
-        agent_runtime.set_orphans(
-            [AgentHandle(id="orphan-1"), AgentHandle(id="orphan-2")]
-        )
+        agent_runtime.set_stale([AgentHandle(id="stale-1"), AgentHandle(id="stale-2")])
 
         reconciler = _make_reconciler(
             spec_source, plan_store, observer, agent_runtime, workspace_manager
@@ -133,9 +131,9 @@ class TestCrashRecovery:
 
         recovery_calls = observer.calls_for("crash_recovery_started")
         assert len(recovery_calls) == 1
-        assert recovery_calls[0]["orphaned_agent_count"] == 2
+        assert recovery_calls[0]["stale_agent_count"] == 2
 
-    def test_emits_agent_orphan_detected_for_matching_tasks(
+    def test_emits_stale_agent_detected_for_matching_tasks(
         self,
         spec_source: AutoStopSpecSource,
         plan_store: FakePlanStore,
@@ -143,8 +141,8 @@ class TestCrashRecovery:
         agent_runtime: FakeAgentRuntime,
         workspace_manager: FakeWorkspaceManager,
     ) -> None:
-        orphan_handle = AgentHandle(id="orphan-task-agent")
-        agent_runtime.set_orphans([orphan_handle])
+        stale_handle = AgentHandle(id="stale-task-agent")
+        agent_runtime.set_stale([stale_handle])
 
         plan = Plan()
         sp = plan.add_spec("auth.spec.md", "abc123")
@@ -155,7 +153,7 @@ class TestCrashRecovery:
             name="Implement auth",
             description="Add auth module",
             status=TaskStatus.IN_PROGRESS,
-            agent_handle=orphan_handle,
+            agent_handle=stale_handle,
         )
         plan.add_tasks(sp, [task])
         plan_store = FakePlanStore(plan)
@@ -166,10 +164,10 @@ class TestCrashRecovery:
         )
         reconciler.run()
 
-        orphan_calls = observer.calls_for("agent_orphan_detected")
-        assert len(orphan_calls) == 1
-        assert orphan_calls[0]["task_id"] == 1
-        assert orphan_calls[0]["spec_path"] == "auth.spec.md"
+        stale_calls = observer.calls_for("stale_agent_detected")
+        assert len(stale_calls) == 1
+        assert stale_calls[0]["task_id"] == 1
+        assert stale_calls[0]["spec_path"] == "auth.spec.md"
 
     def test_resets_in_progress_tasks_to_backlog(
         self,
@@ -178,8 +176,8 @@ class TestCrashRecovery:
         agent_runtime: FakeAgentRuntime,
         workspace_manager: FakeWorkspaceManager,
     ) -> None:
-        orphan_handle = AgentHandle(id="orphan-agent")
-        agent_runtime.set_orphans([orphan_handle])
+        stale_handle = AgentHandle(id="stale-agent")
+        agent_runtime.set_stale([stale_handle])
 
         plan = Plan()
         sp = plan.add_spec("auth.spec.md", "abc123")
@@ -190,7 +188,7 @@ class TestCrashRecovery:
             name="Implement auth",
             description="Add auth module",
             status=TaskStatus.IN_PROGRESS,
-            agent_handle=orphan_handle,
+            agent_handle=stale_handle,
         )
         plan.add_tasks(sp, [task])
         plan_store = FakePlanStore(plan)
@@ -212,7 +210,7 @@ class TestCrashRecovery:
         workspace_manager: FakeWorkspaceManager,
     ) -> None:
         verification_handle = AgentHandle(id="verify-agent")
-        agent_runtime.set_orphans([verification_handle])
+        agent_runtime.set_stale([verification_handle])
 
         plan = Plan()
         sp = plan.add_spec("auth.spec.md", "abc123")
@@ -237,7 +235,7 @@ class TestCrashRecovery:
         agent_runtime: FakeAgentRuntime,
         workspace_manager: FakeWorkspaceManager,
     ) -> None:
-        agent_runtime.set_orphans([AgentHandle(id="orphan-1")])
+        agent_runtime.set_stale([AgentHandle(id="stale-1")])
 
         plan = Plan()
         sp = plan.add_spec("auth.spec.md", "abc123")
@@ -248,7 +246,7 @@ class TestCrashRecovery:
             name="Implement auth",
             description="Add auth module",
             status=TaskStatus.IN_PROGRESS,
-            agent_handle=AgentHandle(id="orphan-1"),
+            agent_handle=AgentHandle(id="stale-1"),
         )
         plan.add_tasks(sp, [task])
         plan_store = FakePlanStore(plan)
@@ -262,7 +260,7 @@ class TestCrashRecovery:
         # write_plan called during recovery + once per cycle
         assert plan_store.write_count >= 2
 
-    def test_orphan_without_matching_task_is_cancelled(
+    def test_stale_without_matching_task_is_cancelled(
         self,
         spec_source: AutoStopSpecSource,
         plan_store: FakePlanStore,
@@ -270,18 +268,18 @@ class TestCrashRecovery:
         agent_runtime: FakeAgentRuntime,
         workspace_manager: FakeWorkspaceManager,
     ) -> None:
-        orphan_handle = AgentHandle(id="unknown-agent")
-        agent_runtime.set_orphans([orphan_handle])
+        stale_handle = AgentHandle(id="unknown-agent")
+        agent_runtime.set_stale([stale_handle])
 
         reconciler = _make_reconciler(
             spec_source, plan_store, observer, agent_runtime, workspace_manager
         )
         reconciler.run()
 
-        assert agent_runtime.is_cancelled(orphan_handle)
-        assert observer.calls_for("agent_orphan_detected") == []
+        assert agent_runtime.is_cancelled(stale_handle)
+        assert observer.calls_for("stale_agent_detected") == []
 
-    def test_mixed_orphans_matching_and_non_matching(
+    def test_mixed_stale_matching_and_non_matching(
         self,
         spec_source: AutoStopSpecSource,
         observer: FakeObserver,
@@ -290,7 +288,7 @@ class TestCrashRecovery:
     ) -> None:
         matching_handle = AgentHandle(id="task-agent")
         non_matching_handle = AgentHandle(id="stale-agent")
-        agent_runtime.set_orphans([matching_handle, non_matching_handle])
+        agent_runtime.set_stale([matching_handle, non_matching_handle])
 
         plan = Plan()
         sp = plan.add_spec("auth.spec.md", "abc123")
@@ -315,12 +313,12 @@ class TestCrashRecovery:
         assert agent_runtime.is_cancelled(matching_handle)
         assert agent_runtime.is_cancelled(non_matching_handle)
 
-        orphan_calls = observer.calls_for("agent_orphan_detected")
-        assert len(orphan_calls) == 1
-        assert orphan_calls[0]["task_id"] == 1
+        stale_calls = observer.calls_for("stale_agent_detected")
+        assert len(stale_calls) == 1
+        assert stale_calls[0]["task_id"] == 1
 
         recovery_calls = observer.calls_for("crash_recovery_started")
-        assert recovery_calls[0]["orphaned_agent_count"] == 2
+        assert recovery_calls[0]["stale_agent_count"] == 2
 
     def test_cancel_exception_during_recovery_is_swallowed(
         self,
@@ -329,7 +327,7 @@ class TestCrashRecovery:
         observer: FakeObserver,
         workspace_manager: FakeWorkspaceManager,
     ) -> None:
-        orphan_handle = AgentHandle(id="broken-agent")
+        stale_handle = AgentHandle(id="broken-agent")
 
         class FailingCancelRuntime(FakeAgentRuntime):
             def cancel(self, handle: AgentHandle) -> None:
@@ -338,7 +336,7 @@ class TestCrashRecovery:
                 super().cancel(handle)
 
         agent_runtime = FailingCancelRuntime()
-        agent_runtime.set_orphans([orphan_handle])
+        agent_runtime.set_stale([stale_handle])
 
         reconciler = _make_reconciler(
             spec_source, plan_store, observer, agent_runtime, workspace_manager

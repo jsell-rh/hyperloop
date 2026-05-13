@@ -314,8 +314,8 @@ class CompositeObserver:
             "agent_cancelled", task_id=task_id, spec_path=spec_path, reason=reason
         )
 
-    def agent_orphan_detected(self, *, task_id: int, spec_path: str) -> None:
-        self._fan_out("agent_orphan_detected", task_id=task_id, spec_path=spec_path)
+    def stale_agent_detected(self, *, task_id: int, spec_path: str) -> None:
+        self._fan_out("stale_agent_detected", task_id=task_id, spec_path=spec_path)
 
     def agent_launch_failed(
         self, *, task_id: int, role: str, reason: str, cycle: int
@@ -328,10 +328,8 @@ class CompositeObserver:
             cycle=cycle,
         )
 
-    def crash_recovery_started(self, *, orphaned_agent_count: int) -> None:
-        self._fan_out(
-            "crash_recovery_started", orphaned_agent_count=orphaned_agent_count
-        )
+    def crash_recovery_started(self, *, stale_agent_count: int) -> None:
+        self._fan_out("crash_recovery_started", stale_agent_count=stale_agent_count)
 
     def composer_rebuilt(self, *, template_count: int) -> None:
         self._fan_out("composer_rebuilt", template_count=template_count)

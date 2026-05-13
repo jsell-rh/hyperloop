@@ -167,7 +167,7 @@ class Observer(Protocol):
 
     def agent_cancelled(self, *, task_id: int, spec_path: str, reason: str) -> None: ...
 
-    def agent_orphan_detected(self, *, task_id: int, spec_path: str) -> None: ...
+    def stale_agent_detected(self, *, task_id: int, spec_path: str) -> None: ...
 
     def agent_launch_failed(
         self, *, task_id: int, role: str, reason: str, cycle: int
@@ -175,7 +175,7 @@ class Observer(Protocol):
 
     # Recovery
 
-    def crash_recovery_started(self, *, orphaned_agent_count: int) -> None: ...
+    def crash_recovery_started(self, *, stale_agent_count: int) -> None: ...
 
     # Prompt Composition
 

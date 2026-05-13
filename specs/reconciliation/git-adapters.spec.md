@@ -252,23 +252,23 @@ The AgentRuntime git adapter SHALL implement poll by fetching the remote branch 
 - AND returns (Complete, verdict=Fail, rationale)
 - AND it does NOT return Failed — the agent completed successfully, it just found misalignment
 
-### Requirement: Orphan Detection via Branch State
+### Requirement: Stale Branch Detection
 
-The AgentRuntime git adapter SHALL detect orphaned agents after a crash by scanning for task and verification branches that have no completion signal.
+The AgentRuntime git adapter SHALL detect stale agent branches after a crash by scanning for task and verification branches that have no completion signal.
 
-#### Scenario: Detect orphaned task agent
+#### Scenario: Detect stale task agent branch
 
 - GIVEN the reconciler crashed while task 5 was InProgress on branch `hyperloop/spec/abc123/task/5`
-- WHEN detect_orphans is called
+- WHEN detect_stale is called
 - THEN the adapter scans for branches matching `hyperloop/spec/*/task/*`
 - AND for each, checks whether the latest commit matches the completion signal format
 - AND returns handles for branches with no completion signal (agents still running or crashed)
 - AND the reconciler cross-references these handles against InProgress tasks in the Plan to filter out stale branches from prior runs
 
-#### Scenario: Detect orphaned verification agent
+#### Scenario: Detect stale verification agent branch
 
 - GIVEN the reconciler crashed while verification was running on `hyperloop/spec/abc123/verifier`
-- WHEN detect_orphans is called
+- WHEN detect_stale is called
 - THEN the adapter detects the verifier branch with no completion signal
 - AND returns a handle for it
 
