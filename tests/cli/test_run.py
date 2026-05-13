@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import structlog
@@ -10,6 +11,7 @@ from click.testing import CliRunner
 from hyperloop.cli.app import cli
 from hyperloop.reconciliation.adapters.structlog_observer import StructlogObserver
 from hyperloop.reconciliation.models.configuration import DEFAULT_CONFIG_FILENAME
+from hyperloop.reconciliation.models.halt_reason import HaltReason
 from hyperloop.reconciliation.ports.observer import Observer
 from hyperloop.reconciliation.reconciler import Reconciler
 
@@ -32,15 +34,15 @@ class FakeStreamingReconciler(Reconciler):
     def run(self) -> None:
         self._observer.reconciler_started(spec_count=2, cycle=0)
         self._observer.cycle_started(cycle=1, specs_out_of_sync=1, tasks_in_progress=0)
-        self._observer.reconciler_halted(reason="shutdown", total_cycles=1)
+        self._observer.reconciler_halted(reason=HaltReason.SHUTDOWN, total_cycles=1)
 
     def stop(self) -> None:
         pass
 
 
 @pytest.fixture(autouse=True)
-def _reset_structlog() -> None:
-    yield  # type: ignore[misc]
+def _reset_structlog() -> Iterator[None]:
+    yield
     structlog.reset_defaults()
 
 
@@ -114,7 +116,7 @@ class TestRunStreamsEvents:
         assert started["cycle"] == 0
 
         halted = next(e for e in events if e["event"] == "reconciler_halted")
-        assert halted["reason"] == "shutdown"
+        assert halted["reason"] == HaltReason.SHUTDOWN
         assert halted["total_cycles"] == 1
 
     def test_events_include_log_level(self) -> None:
