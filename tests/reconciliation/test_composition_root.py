@@ -8,6 +8,9 @@ from hyperloop.reconciliation.adapters.ambient_executor import AmbientExecutor
 from hyperloop.reconciliation.adapters.claude_sdk_executor import ClaudeSDKExecutor
 from hyperloop.reconciliation.adapters.git_agent_runtime import GitAgentRuntime
 from hyperloop.reconciliation.adapters.git_plan_store import GitPlanStore
+from hyperloop.reconciliation.models.agent_role import AgentRole
+from hyperloop.reconciliation.models.agent_template import AgentTemplate
+from hyperloop.reconciliation.models.missing_template_error import MissingTemplateError
 from hyperloop.reconciliation.adapters.git_spec_source import GitSpecSource
 from hyperloop.reconciliation.adapters.git_workspace_manager import GitWorkspaceManager
 from hyperloop.reconciliation.adapters.kustomize_prompt_composer import (
@@ -24,6 +27,13 @@ from hyperloop.reconciliation.reconciler import Reconciler
 
 from .fakes.fake_agent_executor import FakeAgentExecutor
 from .fakes.fake_kustomize_build_runner import FakeKustomizeBuildRunner
+
+
+def _all_role_templates() -> list[AgentTemplate]:
+    return [
+        AgentTemplate(name=role.value, prompt=f"{role.value} prompt.", guidelines=[])
+        for role in AgentRole
+    ]
 
 
 def _setup_dirs(tmp_path: Path) -> None:
@@ -53,7 +63,7 @@ def _create(
         cfg,
         tmp_path,
         executor=executor or FakeAgentExecutor(),
-        kustomize_runner=runner or FakeKustomizeBuildRunner(),
+        kustomize_runner=runner or FakeKustomizeBuildRunner(_all_role_templates()),
     )
 
 
@@ -224,7 +234,7 @@ class TestCreateReconciler:
         assert composer._observer is reconciler._observer
 
     def test_prompt_composer_receives_kustomize_runner(self, tmp_path: Path) -> None:
-        runner = FakeKustomizeBuildRunner()
+        runner = FakeKustomizeBuildRunner(_all_role_templates())
 
         reconciler = _create(tmp_path, runner=runner)
 
@@ -315,7 +325,7 @@ class TestBuildExecutor:
         self, tmp_path: Path
     ) -> None:
         config = _default_config(tmp_path)
-        runner = FakeKustomizeBuildRunner()
+        runner = FakeKustomizeBuildRunner(_all_role_templates())
 
         reconciler = create_reconciler(config, tmp_path, kustomize_runner=runner)
 
@@ -328,7 +338,7 @@ class TestBuildExecutor:
     ) -> None:
         config = _default_config(tmp_path)
         executor = FakeAgentExecutor()
-        runner = FakeKustomizeBuildRunner()
+        runner = FakeKustomizeBuildRunner(_all_role_templates())
 
         reconciler = create_reconciler(
             config, tmp_path, executor=executor, kustomize_runner=runner
@@ -337,3 +347,45 @@ class TestBuildExecutor:
         agent_runtime = reconciler._agent_runtime
         assert isinstance(agent_runtime, GitAgentRuntime)
         assert agent_runtime._executor is executor
+
+
+class TestValidationAtStartup:
+    def test_missing_role_prevents_startup(self, tmp_path: Path) -> None:
+        templates = [
+            AgentTemplate(name="implementer", prompt="Implement.", guidelines=[]),
+        ]
+        runner = FakeKustomizeBuildRunner(templates)
+
+        with pytest.raises(MissingTemplateError) as exc_info:
+            _create(tmp_path, runner=runner)
+
+        assert "verifier" in str(exc_info.value)
+
+    def test_all_roles_present_allows_startup(self, tmp_path: Path) -> None:
+        runner = FakeKustomizeBuildRunner(_all_role_templates())
+
+        result = _create(tmp_path, runner=runner)
+
+        assert isinstance(result, Reconciler)
+
+    def test_error_lists_all_missing_roles(self, tmp_path: Path) -> None:
+        runner = FakeKustomizeBuildRunner([])
+
+        with pytest.raises(MissingTemplateError) as exc_info:
+            _create(tmp_path, runner=runner)
+
+        error_msg = str(exc_info.value)
+        for role in AgentRole:
+            assert role.value in error_msg
+
+    def test_extra_templates_do_not_cause_failure(self, tmp_path: Path) -> None:
+        templates = _all_role_templates() + [
+            AgentTemplate(
+                name="experimental-reviewer", prompt="Review.", guidelines=[]
+            ),
+        ]
+        runner = FakeKustomizeBuildRunner(templates)
+
+        result = _create(tmp_path, runner=runner)
+
+        assert isinstance(result, Reconciler)

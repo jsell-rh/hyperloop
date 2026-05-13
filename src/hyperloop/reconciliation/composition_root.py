@@ -27,6 +27,7 @@ from hyperloop.reconciliation.ports.observer import Observer
 from hyperloop.reconciliation.adapters.subprocess_kustomize_build_runner import (
     SubprocessKustomizeBuildRunner,
 )
+from hyperloop.reconciliation.models.agent_role import AgentRole
 from hyperloop.reconciliation.models.configuration import Configuration
 from hyperloop.reconciliation.models.executor_type import ExecutorType
 from hyperloop.reconciliation.models.observer_adapter import ObserverAdapter
@@ -121,6 +122,7 @@ def create_reconciler(
         kustomize_runner=runner,
         observer=observer,
     )
+    prompt_composer.validate({role.value for role in AgentRole})
 
     plan_store = GitPlanStore(
         repo_path=repo_path,
