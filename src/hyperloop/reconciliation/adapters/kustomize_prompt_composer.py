@@ -56,7 +56,7 @@ class KustomizePromptComposer:
             parts.append(f"## {section.heading}\n\n{section.content}")
 
         if epilogue:
-            parts.append(f"## Epilogue\n\n{epilogue}")
+            parts.append(f"## Critical Operating Instructions\n\n{epilogue}")
 
         return "\n\n".join(parts)
 

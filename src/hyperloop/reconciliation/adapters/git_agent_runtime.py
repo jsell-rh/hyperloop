@@ -47,8 +47,15 @@ _VERIFICATION_EPILOGUE = (
     f"Verification-Status: {AgentVerdict.FAIL}"
 )
 
-_DECOMPOSITION_EPILOGUE = (
-    "Signal completion by creating an empty commit.\n\n"
+_SYNC_PREAMBLE = (
+    "CRITICAL: Your ONLY output mechanism is an empty git commit. "
+    "Text you write to the conversation is NOT captured. "
+    "You MUST run `git commit --allow-empty -m '<message>'` with "
+    "your result as the commit message. If you do not create this "
+    "commit, your work is lost.\n\n"
+)
+
+_DECOMPOSITION_EPILOGUE = _SYNC_PREAMBLE + (
     "Your commit message MUST contain a JSON array inside a fenced code block.\n"
     "Each element represents a task with these fields:\n"
     '- "name": short task identifier\n'
@@ -56,34 +63,31 @@ _DECOMPOSITION_EPILOGUE = (
     '- "spec_path": path to the spec file this task satisfies\n'
     '- "spec_blob_sha": the blob SHA of the spec\n'
     '- "depends_on": list of task names this task depends on (empty if none)\n\n'
-    "Example commit message:\n\n"
-    "Decomposed 2 specs into 3 tasks\n\n"
+    "Example:\n"
+    "git commit --allow-empty -m 'Decomposed 2 specs into 3 tasks\n\n"
     "```json\n"
     '[{"name": "add-auth-middleware", "description": "Implement JWT validation", '
     '"spec_path": "specs/auth.spec.md", "spec_blob_sha": "abc123", '
     '"depends_on": []}]\n'
-    "```"
+    "```'"
 )
 
-_MERGE_RESOLUTION_EPILOGUE = (
-    "Signal completion by creating an empty commit.\n\n"
+_MERGE_RESOLUTION_EPILOGUE = _SYNC_PREAMBLE + (
     "Your commit message MUST contain the result as JSON in a fenced code block.\n\n"
-    "On success:\n"
+    "Example:\n"
+    "git commit --allow-empty -m 'Merge resolved\n\n"
     "```json\n"
     '{"resolved": true}\n'
-    "```\n\n"
-    "On failure:\n"
-    "```json\n"
-    '{"resolved": false}\n'
-    "```"
+    "```'"
 )
 
-_SUMMARY_EPILOGUE = (
-    "Signal completion by creating an empty commit.\n\n"
+_SUMMARY_EPILOGUE = _SYNC_PREAMBLE + (
     "Your commit message MUST contain the summary as JSON in a fenced code block.\n\n"
+    "Example:\n"
+    "git commit --allow-empty -m 'Integration summary\n\n"
     "```json\n"
     '{"title": "PR title (concise)", "body": "PR description"}\n'
-    "```"
+    "```'"
 )
 
 

@@ -6,13 +6,13 @@ name: decomposer
 prompt: |
   You are the decomposer agent for Hyperloop.
 
+  IMPORTANT: You MUST signal your result by creating an empty git commit. Your text
+  output is NOT read — only the commit message matters. Follow the Epilogue exactly.
+
   Analyze the spec changes provided and decompose them into discrete, independently
   implementable tasks. Each task should be small enough for a single agent to complete
   and verifiable against the spec.
 
   Order tasks so that dependencies are respected — a task must not depend on work
   from a task that comes after it. Identify explicit blocking relationships.
-
-  Produce a structured plan with numbered tasks, each containing a clear description
-  of what to implement and which spec requirements it satisfies.
 guidelines: []

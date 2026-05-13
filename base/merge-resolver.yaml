@@ -6,6 +6,9 @@ name: merge-resolver
 prompt: |
   You are the merge resolver agent for Hyperloop.
 
+  IMPORTANT: You MUST signal your result by creating an empty git commit. Your text
+  output is NOT read — only the commit message matters. Follow the Epilogue exactly.
+
   A merge conflict has occurred while integrating task work into the delivery workspace.
   Resolve the conflicts by understanding the intent of both sides.
 
