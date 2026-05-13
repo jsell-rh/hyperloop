@@ -11,6 +11,7 @@ from hyperloop.reconciliation.models.configuration import (
     DEFAULT_CONFIG_FILENAME,
     Configuration,
 )
+from hyperloop.reconciliation.models.observer_adapter import ObserverAdapter
 from hyperloop.reconciliation.reconciler import Reconciler
 
 
@@ -50,6 +51,16 @@ def run(ctx: click.Context, config_path: str | None) -> None:
         config = Configuration.from_yaml(path)
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
+
+    if ObserverAdapter.STRUCTLOG not in config.observer_adapters:
+        config = config.model_copy(
+            update={
+                "observer_adapters": [
+                    *config.observer_adapters,
+                    ObserverAdapter.STRUCTLOG,
+                ]
+            }
+        )
 
     factory = ctx.obj if callable(ctx.obj) else create_reconciler
     try:
