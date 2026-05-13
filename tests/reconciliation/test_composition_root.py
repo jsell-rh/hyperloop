@@ -6,21 +6,38 @@ from hyperloop.reconciliation.adapters.git_agent_runtime import GitAgentRuntime
 from hyperloop.reconciliation.adapters.git_plan_store import GitPlanStore
 from hyperloop.reconciliation.adapters.git_spec_source import GitSpecSource
 from hyperloop.reconciliation.adapters.git_workspace_manager import GitWorkspaceManager
+from hyperloop.reconciliation.adapters.kustomize_prompt_composer import (
+    KustomizePromptComposer,
+)
 from hyperloop.reconciliation.adapters.null_probe import NullProbe
 from hyperloop.reconciliation.composition_root import create_reconciler
 from hyperloop.reconciliation.models.configuration import Configuration
 from hyperloop.reconciliation.reconciler import Reconciler
 
 from .fakes.fake_agent_executor import FakeAgentExecutor
+from .fakes.fake_kustomize_build_runner import FakeKustomizeBuildRunner
+
+
+def _create(
+    tmp_path: Path,
+    *,
+    config: Configuration | None = None,
+    executor: FakeAgentExecutor | None = None,
+    runner: FakeKustomizeBuildRunner | None = None,
+) -> Reconciler:
+    (tmp_path / "specs").mkdir(exist_ok=True)
+    cfg = config or Configuration(specs_directory=str(tmp_path / "specs"))
+    return create_reconciler(
+        cfg,
+        tmp_path,
+        executor=executor or FakeAgentExecutor(),
+        kustomize_runner=runner or FakeKustomizeBuildRunner(),
+    )
 
 
 class TestCreateReconciler:
     def test_returns_reconciler(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(specs_directory=str(tmp_path / "specs"))
-        executor = FakeAgentExecutor()
-
-        result = create_reconciler(config, tmp_path, executor=executor)
+        result = _create(tmp_path)
 
         assert isinstance(result, Reconciler)
 
@@ -30,9 +47,8 @@ class TestCreateReconciler:
             convergence_bound=5,
             specs_directory=str(tmp_path / "specs"),
         )
-        executor = FakeAgentExecutor()
 
-        reconciler = create_reconciler(config, tmp_path, executor=executor)
+        reconciler = _create(tmp_path, config=config)
 
         assert reconciler._convergence_bound == 5
 
@@ -42,9 +58,8 @@ class TestCreateReconciler:
             max_task_retries=2,
             specs_directory=str(tmp_path / "specs"),
         )
-        executor = FakeAgentExecutor()
 
-        reconciler = create_reconciler(config, tmp_path, executor=executor)
+        reconciler = _create(tmp_path, config=config)
 
         assert reconciler._max_task_retries == 2
 
@@ -54,9 +69,8 @@ class TestCreateReconciler:
             max_concurrent_tasks=3,
             specs_directory=str(tmp_path / "specs"),
         )
-        executor = FakeAgentExecutor()
 
-        reconciler = create_reconciler(config, tmp_path, executor=executor)
+        reconciler = _create(tmp_path, config=config)
 
         assert reconciler._max_concurrent_tasks == 3
 
@@ -66,9 +80,8 @@ class TestCreateReconciler:
             cycle_interval_seconds=60,
             specs_directory=str(tmp_path / "specs"),
         )
-        executor = FakeAgentExecutor()
 
-        reconciler = create_reconciler(config, tmp_path, executor=executor)
+        reconciler = _create(tmp_path, config=config)
 
         assert reconciler._cycle_interval_seconds == 60
 
@@ -78,9 +91,8 @@ class TestCreateReconciler:
             max_integration_retries=5,
             specs_directory=str(tmp_path / "specs"),
         )
-        executor = FakeAgentExecutor()
 
-        reconciler = create_reconciler(config, tmp_path, executor=executor)
+        reconciler = _create(tmp_path, config=config)
 
         assert reconciler._max_integration_retries == 5
 
@@ -90,18 +102,13 @@ class TestCreateReconciler:
             max_redecompositions=2,
             specs_directory=str(tmp_path / "specs"),
         )
-        executor = FakeAgentExecutor()
 
-        reconciler = create_reconciler(config, tmp_path, executor=executor)
+        reconciler = _create(tmp_path, config=config)
 
         assert reconciler._max_redecompositions == 2
 
     def test_observer_defaults_to_null_probe(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(specs_directory=str(tmp_path / "specs"))
-        executor = FakeAgentExecutor()
-
-        reconciler = create_reconciler(config, tmp_path, executor=executor)
+        reconciler = _create(tmp_path)
 
         assert isinstance(reconciler._observer, NullProbe)
 
@@ -112,9 +119,8 @@ class TestCreateReconciler:
             plan_file="state.json",
             specs_directory=str(tmp_path / "specs"),
         )
-        executor = FakeAgentExecutor()
 
-        reconciler = create_reconciler(config, tmp_path, executor=executor)
+        reconciler = _create(tmp_path, config=config)
 
         plan_store = reconciler._plan_store
         assert isinstance(plan_store, GitPlanStore)
@@ -128,9 +134,8 @@ class TestCreateReconciler:
             trunk_branch="develop",
             specs_directory=str(tmp_path / "specs"),
         )
-        executor = FakeAgentExecutor()
 
-        reconciler = create_reconciler(config, tmp_path, executor=executor)
+        reconciler = _create(tmp_path, config=config)
 
         spec_source = reconciler._spec_source
         assert isinstance(spec_source, GitSpecSource)
@@ -145,9 +150,8 @@ class TestCreateReconciler:
             branch_prefix="custom/",
             specs_directory=str(tmp_path / "specs"),
         )
-        executor = FakeAgentExecutor()
 
-        reconciler = create_reconciler(config, tmp_path, executor=executor)
+        reconciler = _create(tmp_path, config=config)
 
         workspace_manager = reconciler._workspace_manager
         assert isinstance(workspace_manager, GitWorkspaceManager)
@@ -163,10 +167,46 @@ class TestCreateReconciler:
         )
         executor = FakeAgentExecutor()
 
-        reconciler = create_reconciler(config, tmp_path, executor=executor)
+        reconciler = _create(tmp_path, config=config, executor=executor)
 
         agent_runtime = reconciler._agent_runtime
         assert isinstance(agent_runtime, GitAgentRuntime)
         assert agent_runtime._repo_path == tmp_path
         assert agent_runtime._branch_prefix == "custom/"
         assert agent_runtime._executor is executor
+
+    def test_wires_prompt_composer_into_agent_runtime(self, tmp_path: Path) -> None:
+        reconciler = _create(tmp_path)
+
+        agent_runtime = reconciler._agent_runtime
+        assert isinstance(agent_runtime, GitAgentRuntime)
+        assert isinstance(agent_runtime._prompt_composer, KustomizePromptComposer)
+
+    def test_prompt_composer_uses_config_overlay_path(self, tmp_path: Path) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(
+            overlay_path=".custom/agents",
+            specs_directory=str(tmp_path / "specs"),
+        )
+
+        reconciler = _create(tmp_path, config=config)
+
+        composer = reconciler._agent_runtime._prompt_composer
+        assert isinstance(composer, KustomizePromptComposer)
+        assert composer._overlay_path == tmp_path / ".custom/agents"
+
+    def test_prompt_composer_receives_observer(self, tmp_path: Path) -> None:
+        reconciler = _create(tmp_path)
+
+        composer = reconciler._agent_runtime._prompt_composer
+        assert isinstance(composer, KustomizePromptComposer)
+        assert composer._observer is reconciler._observer
+
+    def test_prompt_composer_receives_kustomize_runner(self, tmp_path: Path) -> None:
+        runner = FakeKustomizeBuildRunner()
+
+        reconciler = _create(tmp_path, runner=runner)
+
+        composer = reconciler._agent_runtime._prompt_composer
+        assert isinstance(composer, KustomizePromptComposer)
+        assert composer._runner is runner

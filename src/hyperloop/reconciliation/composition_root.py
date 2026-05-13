@@ -7,7 +7,16 @@ from hyperloop.reconciliation.adapters.git_agent_runtime import GitAgentRuntime
 from hyperloop.reconciliation.adapters.git_plan_store import GitPlanStore
 from hyperloop.reconciliation.adapters.git_spec_source import GitSpecSource
 from hyperloop.reconciliation.adapters.git_workspace_manager import GitWorkspaceManager
+from hyperloop.reconciliation.adapters.kustomize_build_runner import (
+    KustomizeBuildRunner,
+)
+from hyperloop.reconciliation.adapters.kustomize_prompt_composer import (
+    KustomizePromptComposer,
+)
 from hyperloop.reconciliation.adapters.null_probe import NullProbe
+from hyperloop.reconciliation.adapters.subprocess_kustomize_build_runner import (
+    SubprocessKustomizeBuildRunner,
+)
 from hyperloop.reconciliation.models.configuration import Configuration
 from hyperloop.reconciliation.reconciler import Reconciler
 
@@ -17,8 +26,17 @@ def create_reconciler(
     repo_path: Path,
     *,
     executor: AgentExecutor,
+    kustomize_runner: KustomizeBuildRunner | None = None,
 ) -> Reconciler:
     observer = NullProbe()
+
+    runner = kustomize_runner or SubprocessKustomizeBuildRunner()
+
+    prompt_composer = KustomizePromptComposer(
+        overlay_path=repo_path / config.overlay_path,
+        kustomize_runner=runner,
+        observer=observer,
+    )
 
     plan_store = GitPlanStore(
         repo_path=repo_path,
@@ -42,6 +60,7 @@ def create_reconciler(
         repo_path=repo_path,
         branch_prefix=config.branch_prefix,
         executor=executor,
+        prompt_composer=prompt_composer,
     )
 
     return Reconciler(

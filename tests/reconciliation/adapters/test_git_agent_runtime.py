@@ -3,19 +3,41 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from hyperloop.reconciliation.adapters.git_agent_runtime import GitAgentRuntime
+from hyperloop.reconciliation.adapters.git_agent_runtime import (
+    GitAgentRuntime,
+    _TASK_EPILOGUE,
+    _VERIFICATION_EPILOGUE,
+)
 from hyperloop.reconciliation.models.agent_handle import AgentHandle
+from hyperloop.reconciliation.models.agent_role import AgentRole
+from hyperloop.reconciliation.models.agent_template import AgentTemplate
+from hyperloop.reconciliation.models.event import Event, EventType
+from hyperloop.reconciliation.models.event_reason import EventReason
+from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.poll_result import (
     AgentStatus,
     AgentVerdict,
     PollResult,
 )
-from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
+from hyperloop.reconciliation.models.task import Task
 from hyperloop.reconciliation.models.task_briefing import TaskBriefing
 
 from tests.reconciliation.fakes.fake_agent_executor import FakeAgentExecutor
+from tests.reconciliation.fakes.fake_prompt_composer import FakePromptComposer
+
+_ALL_ROLE_TEMPLATES = [
+    AgentTemplate(name=AgentRole.IMPLEMENTER, prompt="Implement.", guidelines=[]),
+    AgentTemplate(name=AgentRole.VERIFIER, prompt="Verify.", guidelines=[]),
+    AgentTemplate(name=AgentRole.DECOMPOSER, prompt="Decompose.", guidelines=[]),
+    AgentTemplate(
+        name=AgentRole.MERGE_RESOLVER, prompt="Resolve merge.", guidelines=[]
+    ),
+    AgentTemplate(
+        name=AgentRole.INTEGRATION_SUMMARIZER, prompt="Summarize.", guidelines=[]
+    ),
+]
 
 
 def _git(
@@ -63,11 +85,13 @@ VERIFIER_BRANCH = f"{BRANCH_PREFIX}spec/{BLOB_SHA}/verifier"
 def _make_runtime(
     repo_path: Path,
     executor: FakeAgentExecutor | None = None,
+    composer: FakePromptComposer | None = None,
 ) -> GitAgentRuntime:
     return GitAgentRuntime(
         repo_path,
         branch_prefix=BRANCH_PREFIX,
         executor=executor or FakeAgentExecutor(),
+        prompt_composer=composer or FakePromptComposer(_ALL_ROLE_TEMPLATES),
         remote="origin",
     )
 
@@ -441,7 +465,11 @@ class TestCustomBranchPrefix:
         _push_branch(local, branch)
 
         runtime = GitAgentRuntime(
-            local, branch_prefix=prefix, executor=FakeAgentExecutor(), remote="origin"
+            local,
+            branch_prefix=prefix,
+            executor=FakeAgentExecutor(),
+            prompt_composer=FakePromptComposer(_ALL_ROLE_TEMPLATES),
+            remote="origin",
         )
         result = runtime.poll(AgentHandle(id=branch))
 
@@ -459,7 +487,11 @@ class TestCustomBranchPrefix:
         _push_branch(local, branch)
 
         runtime = GitAgentRuntime(
-            local, branch_prefix=prefix, executor=FakeAgentExecutor(), remote="origin"
+            local,
+            branch_prefix=prefix,
+            executor=FakeAgentExecutor(),
+            prompt_composer=FakePromptComposer(_ALL_ROLE_TEMPLATES),
+            remote="origin",
         )
         orphans = runtime.detect_orphans()
 
@@ -479,6 +511,7 @@ class TestCustomBranchPrefix:
             local,
             branch_prefix="other/",
             executor=FakeAgentExecutor(),
+            prompt_composer=FakePromptComposer(_ALL_ROLE_TEMPLATES),
             remote="origin",
         )
         orphans = runtime.detect_orphans()
@@ -505,7 +538,7 @@ class TestLaunchTask:
 
         assert handle.id == TASK_BRANCH
 
-    def test_delegates_to_executor_with_branch_and_briefing(
+    def test_passes_composed_prompt_to_executor(
         self, git_env: tuple[Path, Path]
     ) -> None:
         local, _ = git_env
@@ -524,9 +557,103 @@ class TestLaunchTask:
         runtime.launch_task(briefing)
 
         assert len(executor.started_tasks) == 1
-        branch, received_briefing = executor.started_tasks[0]
+        branch, prompt = executor.started_tasks[0]
         assert branch == TASK_BRANCH
-        assert received_briefing is briefing
+        assert isinstance(prompt, str)
+
+    def test_composes_prompt_for_implementer_role(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(tmp_path, executor, composer)
+
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            task_description="Implement auth endpoint",
+            workspace_id=f"task/{BLOB_SHA}/5",
+        )
+
+        runtime.launch_task(briefing)
+
+        assert len(composer.calls) == 1
+        call = composer.calls[0]
+        assert call.role == AgentRole.IMPLEMENTER
+        assert call.substitutions["task_id"] == "5"
+        assert call.substitutions["spec_ref"] == f"specs/auth.spec.md@{BLOB_SHA}"
+        assert call.epilogue == _TASK_EPILOGUE
+
+    def test_includes_spec_content_section(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec\nRequirements here.",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            task_description="Implement auth",
+            workspace_id=f"task/{BLOB_SHA}/5",
+        )
+
+        runtime.launch_task(briefing)
+
+        call = composer.calls[0]
+        spec_sections = [s for s in call.sections if s.heading == "Spec"]
+        assert len(spec_sections) == 1
+        assert "Auth Spec" in spec_sections[0].content
+
+    def test_includes_events_section_when_retrying(self, tmp_path: Path) -> None:
+        from datetime import datetime, timezone
+
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        now = datetime.now(timezone.utc)
+        events = [
+            Event(
+                type=EventType.WARNING,
+                reason=EventReason.TASK_FAILED,
+                message="Tests did not pass",
+                first_timestamp=now,
+                last_timestamp=now,
+            )
+        ]
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            task_description="Implement auth",
+            events=events,
+            workspace_id=f"task/{BLOB_SHA}/5",
+        )
+
+        runtime.launch_task(briefing)
+
+        call = composer.calls[0]
+        event_sections = [s for s in call.sections if s.heading == "Events"]
+        assert len(event_sections) == 1
+        assert "Tests did not pass" in event_sections[0].content
+
+    def test_no_events_section_on_first_attempt(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        briefing = TaskBriefing(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            task_description="Implement auth",
+            workspace_id=f"task/{BLOB_SHA}/5",
+        )
+
+        runtime.launch_task(briefing)
+
+        call = composer.calls[0]
+        event_sections = [s for s in call.sections if s.heading == "Events"]
+        assert len(event_sections) == 0
 
     def test_handle_is_pollable(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
@@ -556,7 +683,11 @@ class TestLaunchTask:
 
         executor = FakeAgentExecutor()
         runtime = GitAgentRuntime(
-            local, branch_prefix=prefix, executor=executor, remote="origin"
+            local,
+            branch_prefix=prefix,
+            executor=executor,
+            prompt_composer=FakePromptComposer(_ALL_ROLE_TEMPLATES),
+            remote="origin",
         )
         briefing = TaskBriefing(
             spec_content="# Auth Spec",
@@ -639,12 +770,10 @@ class TestLaunchDecomposition:
 
         assert result == expected
 
-    def test_passes_all_parameters_to_executor(
-        self, git_env: tuple[Path, Path]
-    ) -> None:
-        local, _ = git_env
+    def test_passes_composed_prompt_to_executor(self, tmp_path: Path) -> None:
         executor = FakeAgentExecutor()
-        runtime = _make_runtime(local, executor)
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, executor, composer)
 
         spec_diffs = [
             SpecDiff(
@@ -656,12 +785,60 @@ class TestLaunchDecomposition:
         runtime.launch_decomposition(spec_diffs, [], [])
 
         assert len(executor.decomposition_calls) == 1
-        received_diffs, received_tasks, received_events = executor.decomposition_calls[
-            0
+        assert isinstance(executor.decomposition_calls[0], str)
+
+    def test_composes_prompt_for_decomposer_role(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha=BLOB_SHA,
+                diff_text="+ new requirement",
+            ),
         ]
-        assert received_diffs == spec_diffs
-        assert received_tasks == []
-        assert received_events == []
+        runtime.launch_decomposition(spec_diffs, [], [])
+
+        assert len(composer.calls) == 1
+        assert composer.calls[0].role == AgentRole.DECOMPOSER
+
+    def test_includes_spec_diffs_as_sections(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha=BLOB_SHA,
+                diff_text="+ new requirement",
+            ),
+        ]
+        runtime.launch_decomposition(spec_diffs, [], [])
+
+        sections = composer.calls[0].sections
+        assert any("auth.spec.md" in s.heading for s in sections)
+        assert any("new requirement" in s.content for s in sections)
+
+    def test_includes_existing_tasks_section(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        tasks = [
+            Task(
+                id=1,
+                spec_path="specs/auth.spec.md",
+                spec_blob_sha=BLOB_SHA,
+                name="implement-auth",
+                description="Add auth endpoint",
+            ),
+        ]
+        runtime.launch_decomposition([], tasks, [])
+
+        sections = composer.calls[0].sections
+        task_sections = [s for s in sections if s.heading == "Existing Tasks"]
+        assert len(task_sections) == 1
+        assert "implement-auth" in task_sections[0].content
 
     def test_executor_failure_propagates(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
@@ -703,7 +880,9 @@ class TestLaunchVerification:
 
         assert handle.id == VERIFIER_BRANCH
 
-    def test_delegates_to_executor(self, git_env: tuple[Path, Path]) -> None:
+    def test_passes_composed_prompt_to_executor(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
         local, _ = git_env
         _create_branch_from(local, VERIFIER_BRANCH, "main")
 
@@ -718,11 +897,42 @@ class TestLaunchVerification:
         )
 
         assert len(executor.started_verifications) == 1
-        branch, content, path, sha = executor.started_verifications[0]
+        branch, prompt = executor.started_verifications[0]
         assert branch == VERIFIER_BRANCH
-        assert content == "# Auth Spec"
-        assert path == "specs/auth.spec.md"
-        assert sha == BLOB_SHA
+        assert isinstance(prompt, str)
+
+    def test_composes_prompt_for_verifier_role(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        runtime.launch_verification(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            workspace_id=f"verification/{BLOB_SHA}",
+        )
+
+        assert len(composer.calls) == 1
+        call = composer.calls[0]
+        assert call.role == AgentRole.VERIFIER
+        assert call.substitutions["spec_ref"] == f"specs/auth.spec.md@{BLOB_SHA}"
+        assert call.epilogue == _VERIFICATION_EPILOGUE
+
+    def test_includes_spec_content_section(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        runtime.launch_verification(
+            spec_content="# Auth Spec\nRequirements here.",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            workspace_id=f"verification/{BLOB_SHA}",
+        )
+
+        sections = composer.calls[0].sections
+        spec_sections = [s for s in sections if s.heading == "Spec"]
+        assert len(spec_sections) == 1
+        assert "Auth Spec" in spec_sections[0].content
 
     def test_handle_is_pollable(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
@@ -766,12 +976,10 @@ class TestLaunchVerification:
 
 
 class TestLaunchMergeResolution:
-    def test_delegates_to_executor_with_branch_names(
-        self, git_env: tuple[Path, Path]
-    ) -> None:
-        local, _ = git_env
+    def test_passes_composed_prompt_to_executor(self, tmp_path: Path) -> None:
         executor = FakeAgentExecutor()
-        runtime = _make_runtime(local, executor)
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, executor, composer)
 
         result = runtime.launch_merge_resolution(
             task_workspace_id=f"task/{BLOB_SHA}/5",
@@ -781,16 +989,34 @@ class TestLaunchMergeResolution:
 
         assert result is True
         assert len(executor.merge_calls) == 1
-        task_br, delivery_br, details = executor.merge_calls[0]
+        task_br, delivery_br, prompt = executor.merge_calls[0]
         assert task_br == TASK_BRANCH
         assert delivery_br == f"{BRANCH_PREFIX}spec/{BLOB_SHA}/delivery"
-        assert details == "Conflict in auth.py"
+        assert isinstance(prompt, str)
 
-    def test_returns_false_on_failure(self, git_env: tuple[Path, Path]) -> None:
-        local, _ = git_env
+    def test_composes_prompt_for_merge_resolver_role(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        runtime.launch_merge_resolution(
+            task_workspace_id=f"task/{BLOB_SHA}/5",
+            delivery_workspace_id=f"delivery/{BLOB_SHA}",
+            conflict_details="Conflict in auth.py",
+        )
+
+        assert len(composer.calls) == 1
+        call = composer.calls[0]
+        assert call.role == AgentRole.MERGE_RESOLVER
+        conflict_sections = [
+            s for s in call.sections if s.heading == "Conflict Details"
+        ]
+        assert len(conflict_sections) == 1
+        assert "Conflict in auth.py" in conflict_sections[0].content
+
+    def test_returns_false_on_failure(self, tmp_path: Path) -> None:
         executor = FakeAgentExecutor()
         executor.set_merge_result(False)
-        runtime = _make_runtime(local, executor)
+        runtime = _make_runtime(tmp_path, executor)
 
         result = runtime.launch_merge_resolution(
             task_workspace_id=f"task/{BLOB_SHA}/5",
@@ -802,12 +1028,12 @@ class TestLaunchMergeResolution:
 
 
 class TestComposeIntegrationSummary:
-    def test_delegates_to_executor(self, git_env: tuple[Path, Path]) -> None:
-        local, _ = git_env
+    def test_passes_composed_prompt_to_executor(self, tmp_path: Path) -> None:
         expected = IntegrationSummary(title="Add auth", body="Implements auth spec")
         executor = FakeAgentExecutor()
         executor.set_integration_summary(expected)
-        runtime = _make_runtime(local, executor)
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, executor, composer)
 
         result = runtime.compose_integration_summary(
             spec_content="# Auth Spec",
@@ -817,16 +1043,32 @@ class TestComposeIntegrationSummary:
 
         assert result == expected
         assert len(executor.summary_calls) == 1
-        content, summaries, rationale = executor.summary_calls[0]
-        assert content == "# Auth Spec"
-        assert summaries == [("implement-auth", "Added auth endpoint")]
-        assert rationale == "All requirements met"
+        assert isinstance(executor.summary_calls[0], str)
 
-    def test_executor_failure_propagates(self, git_env: tuple[Path, Path]) -> None:
-        local, _ = git_env
+    def test_composes_prompt_for_integration_summarizer_role(
+        self, tmp_path: Path
+    ) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        runtime.compose_integration_summary(
+            spec_content="# Auth Spec",
+            task_summaries=[("implement-auth", "Added auth endpoint")],
+            verification_rationale="All requirements met",
+        )
+
+        assert len(composer.calls) == 1
+        call = composer.calls[0]
+        assert call.role == AgentRole.INTEGRATION_SUMMARIZER
+        headings = {s.heading for s in call.sections}
+        assert "Spec" in headings
+        assert "Completed Tasks" in headings
+        assert "Verification Rationale" in headings
+
+    def test_executor_failure_propagates(self, tmp_path: Path) -> None:
         executor = FakeAgentExecutor()
         executor.set_integration_summary_error(RuntimeError("LLM unavailable"))
-        runtime = _make_runtime(local, executor)
+        runtime = _make_runtime(tmp_path, executor)
 
         try:
             runtime.compose_integration_summary(

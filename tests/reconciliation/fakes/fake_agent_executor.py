@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-from hyperloop.reconciliation.models.event import Event
 from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
-from hyperloop.reconciliation.models.spec_diff import SpecDiff
-from hyperloop.reconciliation.models.task import Task
-from hyperloop.reconciliation.models.task_briefing import TaskBriefing
 
 
 class FakeAgentExecutor:
@@ -19,13 +15,11 @@ class FakeAgentExecutor:
             title="Default title", body="Default body"
         )
         self._integration_summary_error: Exception | None = None
-        self.started_tasks: list[tuple[str, TaskBriefing]] = []
-        self.started_verifications: list[tuple[str, str, str, str]] = []
-        self.decomposition_calls: list[
-            tuple[list[SpecDiff], list[Task], list[Event]]
-        ] = []
+        self.started_tasks: list[tuple[str, str]] = []
+        self.started_verifications: list[tuple[str, str]] = []
+        self.decomposition_calls: list[str] = []
         self.merge_calls: list[tuple[str, str, str]] = []
-        self.summary_calls: list[tuple[str, list[tuple[str, str]], str]] = []
+        self.summary_calls: list[str] = []
 
     def set_decomposition_result(self, tasks: list[ProposedTask]) -> None:
         self._decomposition_result = tasks
@@ -50,33 +44,18 @@ class FakeAgentExecutor:
     def set_start_verification_error(self, error: Exception) -> None:
         self._start_verification_error = error
 
-    def start_task_agent(self, *, branch: str, briefing: TaskBriefing) -> None:
+    def start_task_agent(self, *, branch: str, prompt: str) -> None:
         if self._start_task_error is not None:
             raise self._start_task_error
-        self.started_tasks.append((branch, briefing))
+        self.started_tasks.append((branch, prompt))
 
-    def start_verification_agent(
-        self,
-        *,
-        branch: str,
-        spec_content: str,
-        spec_path: str,
-        spec_blob_sha: str,
-    ) -> None:
+    def start_verification_agent(self, *, branch: str, prompt: str) -> None:
         if self._start_verification_error is not None:
             raise self._start_verification_error
-        self.started_verifications.append(
-            (branch, spec_content, spec_path, spec_blob_sha)
-        )
+        self.started_verifications.append((branch, prompt))
 
-    def run_decomposition(
-        self,
-        *,
-        spec_diffs: list[SpecDiff],
-        existing_tasks: list[Task],
-        events: list[Event],
-    ) -> list[ProposedTask]:
-        self.decomposition_calls.append((spec_diffs, existing_tasks, events))
+    def run_decomposition(self, *, prompt: str) -> list[ProposedTask]:
+        self.decomposition_calls.append(prompt)
         if self._decomposition_error is not None:
             raise self._decomposition_error
         return self._decomposition_result
@@ -86,21 +65,13 @@ class FakeAgentExecutor:
         *,
         task_branch: str,
         delivery_branch: str,
-        conflict_details: str,
+        prompt: str,
     ) -> bool:
-        self.merge_calls.append((task_branch, delivery_branch, conflict_details))
+        self.merge_calls.append((task_branch, delivery_branch, prompt))
         return self._merge_result
 
-    def compose_summary(
-        self,
-        *,
-        spec_content: str,
-        task_summaries: list[tuple[str, str]],
-        verification_rationale: str,
-    ) -> IntegrationSummary:
-        self.summary_calls.append(
-            (spec_content, task_summaries, verification_rationale)
-        )
+    def compose_summary(self, *, prompt: str) -> IntegrationSummary:
+        self.summary_calls.append(prompt)
         if self._integration_summary_error is not None:
             raise self._integration_summary_error
         return self._integration_summary

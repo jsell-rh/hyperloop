@@ -6,6 +6,7 @@ from pathlib import Path
 
 from hyperloop.reconciliation.adapters.agent_executor import AgentExecutor
 from hyperloop.reconciliation.models.agent_handle import AgentHandle
+from hyperloop.reconciliation.models.agent_role import AgentRole
 from hyperloop.reconciliation.models.event import Event
 from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.poll_result import (
@@ -14,14 +15,36 @@ from hyperloop.reconciliation.models.poll_result import (
     PollResult,
 )
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
+from hyperloop.reconciliation.models.prompt_section import PromptSection
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
 from hyperloop.reconciliation.models.task import Task
 from hyperloop.reconciliation.models.task_briefing import TaskBriefing
 from hyperloop.reconciliation.models.workspace_type import WorkspaceType
+from hyperloop.reconciliation.ports.prompt_composer import PromptComposer
 
 _TASK_STATUS_RE = re.compile(r"^Task-Status:\s*(Complete|Failed)\s*$", re.MULTILINE)
 _VERIFICATION_STATUS_RE = re.compile(
     r"^Verification-Status:\s*(Pass|Fail)\s*$", re.MULTILINE
+)
+
+_TASK_EPILOGUE = (
+    "Signal completion by creating an empty commit.\n\n"
+    "On success:\n"
+    "<Summary of work performed>\n\n"
+    "Task-Status: Complete\n\n"
+    "On failure:\n"
+    "<Rationale for failure>\n\n"
+    "Task-Status: Failed"
+)
+
+_VERIFICATION_EPILOGUE = (
+    "Signal completion by creating an empty commit.\n\n"
+    "On alignment:\n"
+    "<Assessment rationale>\n\n"
+    "Verification-Status: Pass\n\n"
+    "On misalignment:\n"
+    "<Detailed rationale>\n\n"
+    "Verification-Status: Fail"
 )
 
 
@@ -34,6 +57,18 @@ def _build_branch_patterns(
     return task_pattern, verifier_pattern
 
 
+def _format_events(events: list[Event]) -> str:
+    return "\n".join(f"[{e.type}] {e.reason}: {e.message}" for e in events)
+
+
+def _format_tasks(tasks: list[Task]) -> str:
+    return "\n".join(f"- [{t.status}] {t.name}: {t.description}" for t in tasks)
+
+
+def _format_task_summaries(summaries: list[tuple[str, str]]) -> str:
+    return "\n".join(f"- {name}: {desc}" for name, desc in summaries)
+
+
 class GitAgentRuntime:
     def __init__(
         self,
@@ -41,11 +76,13 @@ class GitAgentRuntime:
         *,
         branch_prefix: str,
         executor: AgentExecutor,
+        prompt_composer: PromptComposer,
         remote: str = "origin",
     ) -> None:
         self._repo_path = repo_path
         self._branch_prefix = branch_prefix
         self._executor = executor
+        self._prompt_composer = prompt_composer
         self._remote = remote
         self._task_branch_re, self._verifier_branch_re = _build_branch_patterns(
             branch_prefix
@@ -83,7 +120,22 @@ class GitAgentRuntime:
 
     def launch_task(self, briefing: TaskBriefing) -> AgentHandle:
         branch = self._workspace_to_branch(briefing.workspace_id)
-        self._executor.start_task_agent(branch=branch, briefing=briefing)
+        task_id = briefing.workspace_id.split("/")[2]
+        spec_ref = f"{briefing.spec_path}@{briefing.spec_blob_sha}"
+
+        sections = [PromptSection(heading="Spec", content=briefing.spec_content)]
+        if briefing.events:
+            sections.append(
+                PromptSection(heading="Events", content=_format_events(briefing.events))
+            )
+
+        prompt = self._prompt_composer.compose(
+            AgentRole.IMPLEMENTER,
+            substitutions={"task_id": task_id, "spec_ref": spec_ref},
+            sections=sections,
+            epilogue=_TASK_EPILOGUE,
+        )
+        self._executor.start_task_agent(branch=branch, prompt=prompt)
         return AgentHandle(id=branch)
 
     def launch_decomposition(
@@ -92,11 +144,33 @@ class GitAgentRuntime:
         existing_tasks: list[Task],
         events: list[Event],
     ) -> list[ProposedTask]:
-        return self._executor.run_decomposition(
-            spec_diffs=spec_diffs,
-            existing_tasks=existing_tasks,
-            events=events,
+        sections: list[PromptSection] = []
+        for diff in spec_diffs:
+            sections.append(
+                PromptSection(
+                    heading=f"Spec: {diff.spec_path}",
+                    content=diff.diff_text,
+                )
+            )
+        if existing_tasks:
+            sections.append(
+                PromptSection(
+                    heading="Existing Tasks",
+                    content=_format_tasks(existing_tasks),
+                )
+            )
+        if events:
+            sections.append(
+                PromptSection(heading="Events", content=_format_events(events))
+            )
+
+        prompt = self._prompt_composer.compose(
+            AgentRole.DECOMPOSER,
+            substitutions={},
+            sections=sections,
+            epilogue="",
         )
+        return self._executor.run_decomposition(prompt=prompt)
 
     def launch_verification(
         self,
@@ -106,12 +180,17 @@ class GitAgentRuntime:
         workspace_id: str,
     ) -> AgentHandle:
         branch = self._workspace_to_branch(workspace_id)
-        self._executor.start_verification_agent(
-            branch=branch,
-            spec_content=spec_content,
-            spec_path=spec_path,
-            spec_blob_sha=spec_blob_sha,
+        spec_ref = f"{spec_path}@{spec_blob_sha}"
+
+        sections = [PromptSection(heading="Spec", content=spec_content)]
+
+        prompt = self._prompt_composer.compose(
+            AgentRole.VERIFIER,
+            substitutions={"spec_ref": spec_ref},
+            sections=sections,
+            epilogue=_VERIFICATION_EPILOGUE,
         )
+        self._executor.start_verification_agent(branch=branch, prompt=prompt)
         return AgentHandle(id=branch)
 
     def launch_merge_resolution(
@@ -122,10 +201,21 @@ class GitAgentRuntime:
     ) -> bool:
         task_branch = self._workspace_to_branch(task_workspace_id)
         delivery_branch = self._workspace_to_branch(delivery_workspace_id)
+
+        sections = [
+            PromptSection(heading="Conflict Details", content=conflict_details),
+        ]
+
+        prompt = self._prompt_composer.compose(
+            AgentRole.MERGE_RESOLVER,
+            substitutions={},
+            sections=sections,
+            epilogue="",
+        )
         return self._executor.resolve_merge(
             task_branch=task_branch,
             delivery_branch=delivery_branch,
-            conflict_details=conflict_details,
+            prompt=prompt,
         )
 
     def compose_integration_summary(
@@ -134,11 +224,25 @@ class GitAgentRuntime:
         task_summaries: list[tuple[str, str]],
         verification_rationale: str,
     ) -> IntegrationSummary:
-        return self._executor.compose_summary(
-            spec_content=spec_content,
-            task_summaries=task_summaries,
-            verification_rationale=verification_rationale,
+        sections = [
+            PromptSection(heading="Spec", content=spec_content),
+            PromptSection(
+                heading="Completed Tasks",
+                content=_format_task_summaries(task_summaries),
+            ),
+            PromptSection(
+                heading="Verification Rationale",
+                content=verification_rationale,
+            ),
+        ]
+
+        prompt = self._prompt_composer.compose(
+            AgentRole.INTEGRATION_SUMMARIZER,
+            substitutions={},
+            sections=sections,
+            epilogue="",
         )
+        return self._executor.compose_summary(prompt=prompt)
 
     def cancel(self, handle: AgentHandle) -> None:
         self._git(
