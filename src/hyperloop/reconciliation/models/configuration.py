@@ -35,6 +35,9 @@ class Configuration(BaseSettings):
     trunk_branch: str = "main"
     branch_prefix: str = "hyperloop/"
 
+    executor_timeout_seconds: int = 300
+    executor_max_retries: int = 3
+
     @field_validator("convergence_bound")
     @classmethod
     def convergence_bound_must_be_positive(cls, v: int) -> int:
@@ -75,6 +78,20 @@ class Configuration(BaseSettings):
     def cycle_interval_must_be_positive(cls, v: int) -> int:
         if v < 1:
             raise ValueError("cycle_interval_seconds must be >= 1")
+        return v
+
+    @field_validator("executor_timeout_seconds")
+    @classmethod
+    def executor_timeout_must_be_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("executor_timeout_seconds must be >= 1")
+        return v
+
+    @field_validator("executor_max_retries")
+    @classmethod
+    def executor_max_retries_must_be_non_negative(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("executor_max_retries must be >= 0")
         return v
 
     @field_validator("specs_directory")

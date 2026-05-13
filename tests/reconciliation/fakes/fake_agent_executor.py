@@ -15,11 +15,13 @@ class FakeAgentExecutor:
             title="Default title", body="Default body"
         )
         self._integration_summary_error: Exception | None = None
+        self._stale_branches: list[str] = []
         self.started_tasks: list[tuple[str, str, str | None]] = []
         self.started_verifications: list[tuple[str, str, str | None]] = []
         self.decomposition_calls: list[tuple[str, str | None]] = []
         self.merge_calls: list[tuple[str, str, str, str | None]] = []
         self.summary_calls: list[tuple[str, str | None]] = []
+        self.cancelled_branches: list[str] = []
 
     def set_decomposition_result(self, tasks: list[ProposedTask]) -> None:
         self._decomposition_result = tasks
@@ -37,6 +39,9 @@ class FakeAgentExecutor:
 
     def set_integration_summary_error(self, error: Exception) -> None:
         self._integration_summary_error = error
+
+    def set_stale_branches(self, branches: list[str]) -> None:
+        self._stale_branches = list(branches)
 
     def set_start_task_error(self, error: Exception) -> None:
         self._start_task_error = error
@@ -84,3 +89,9 @@ class FakeAgentExecutor:
         if self._integration_summary_error is not None:
             raise self._integration_summary_error
         return self._integration_summary
+
+    def cancel(self, *, branch: str) -> None:
+        self.cancelled_branches.append(branch)
+
+    def detect_stale(self) -> list[str]:
+        return list(self._stale_branches)
