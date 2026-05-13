@@ -264,6 +264,7 @@ class GitAgentRuntime:
         return self._executor.compose_summary(prompt=prompt, model=None)
 
     def cancel(self, handle: AgentHandle) -> None:
+        self._executor.cancel(branch=handle.id)
         self._git(
             "branch",
             "-D",

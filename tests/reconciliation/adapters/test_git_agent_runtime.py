@@ -453,6 +453,20 @@ class TestCancel:
         runtime.cancel(handle)
         runtime.cancel(handle)
 
+    def test_cancel_calls_executor_cancel_before_deleting_branch(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        _create_branch_from(local, TASK_BRANCH, "main")
+        _push_branch(local, TASK_BRANCH)
+
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(local, executor=executor)
+        handle = AgentHandle(id=TASK_BRANCH)
+        runtime.cancel(handle)
+
+        assert TASK_BRANCH in executor.cancelled_branches
+
 
 class TestCustomBranchPrefix:
     def test_poll_works_with_custom_prefix(self, git_env: tuple[Path, Path]) -> None:
