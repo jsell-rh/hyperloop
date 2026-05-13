@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+import subprocess
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import structlog
@@ -40,6 +41,9 @@ class FakeStreamingReconciler(Reconciler):
         pass
 
 
+ReconcilerFactory = Callable[..., Reconciler]
+
+
 @pytest.fixture(autouse=True)
 def _reset_structlog() -> Iterator[None]:
     yield
@@ -54,12 +58,6 @@ class TestRunCommand:
         assert result.exit_code == 0
         assert reconciler.started is True
 
-    def test_run_without_reconciler_requires_executor(self) -> None:
-        runner = CliRunner()
-        result = runner.invoke(cli, ["run"], obj=object())
-        assert result.exit_code != 0
-        assert "agent executor" in result.output.lower()
-
     def test_run_fails_on_invalid_config(self, tmp_path: Path) -> None:
         config_file = tmp_path / DEFAULT_CONFIG_FILENAME
         config_file.write_text("convergence_bound: -1\n")
@@ -68,17 +66,46 @@ class TestRunCommand:
         assert result.exit_code != 0
         assert "convergence_bound" in result.output.lower()
 
-    def test_run_with_valid_config_still_requires_executor(
-        self, tmp_path: Path
-    ) -> None:
+    def test_run_constructs_reconciler_from_factory(self) -> None:
+        reconciler = FakeReconciler()
+
+        def factory(config: object, repo_path: Path, **kwargs: object) -> Reconciler:
+            return reconciler
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["run"], obj=factory)
+        assert result.exit_code == 0
+        assert reconciler.started is True
+
+    def test_run_factory_receives_config_path(self, tmp_path: Path) -> None:
+        captured_configs: list[object] = []
+        reconciler = FakeReconciler()
+
+        def factory(config: object, repo_path: Path, **kwargs: object) -> Reconciler:
+            captured_configs.append(config)
+            return reconciler
+
+        subprocess.run(
+            ["git", "init", str(tmp_path)],
+            check=True,
+            capture_output=True,
+        )
         specs_dir = tmp_path / "specs"
         specs_dir.mkdir()
-        config_file = tmp_path / DEFAULT_CONFIG_FILENAME
-        config_file.write_text(f"specs_directory: '{specs_dir}'\n")
+        config_file = tmp_path / "custom-config.yaml"
+        config_file.write_text(
+            f"specs_directory: '{specs_dir}'\nconvergence_bound: 7\n"
+        )
+
         runner = CliRunner()
-        result = runner.invoke(cli, ["run", "--config", str(config_file)], obj=object())
-        assert result.exit_code != 0
-        assert "agent executor" in result.output.lower()
+        result = runner.invoke(
+            cli,
+            ["run", "--config", str(config_file)],
+            obj=factory,
+        )
+        assert result.exit_code == 0
+        assert len(captured_configs) == 1
+        assert captured_configs[0].convergence_bound == 7  # type: ignore[union-attr]
 
 
 class TestRunStreamsEvents:
