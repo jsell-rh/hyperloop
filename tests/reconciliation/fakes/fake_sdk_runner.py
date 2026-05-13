@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import subprocess
 import uuid
 from pathlib import Path
 
 
 class FakeSDKRunner:
     def __init__(self) -> None:
-        self._sync_result: str = ""
+        self._sync_commit_message: str = ""
         self._sync_error: Exception | None = None
         self._async_error: Exception | None = None
         self._transient_failures_remaining: int = 0
@@ -16,7 +17,7 @@ class FakeSDKRunner:
         self._running_sessions: set[str] = set()
 
     def set_sync_result(self, result: str) -> None:
-        self._sync_result = result
+        self._sync_commit_message = f"Agent result\n\n```json\n{result}\n```"
         self._sync_error = None
 
     def set_sync_error(self, error: Exception) -> None:
@@ -51,7 +52,15 @@ class FakeSDKRunner:
             raise ConnectionError("transient failure")
         if self._sync_error is not None:
             raise self._sync_error
-        return self._sync_result
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", self._sync_commit_message],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+        )
+        return ""
 
     def start_async(
         self,

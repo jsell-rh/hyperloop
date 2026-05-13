@@ -47,6 +47,45 @@ _VERIFICATION_EPILOGUE = (
     f"Verification-Status: {AgentVerdict.FAIL}"
 )
 
+_DECOMPOSITION_EPILOGUE = (
+    "Signal completion by creating an empty commit.\n\n"
+    "Your commit message MUST contain a JSON array inside a fenced code block.\n"
+    "Each element represents a task with these fields:\n"
+    '- "name": short task identifier\n'
+    '- "description": what to implement\n'
+    '- "spec_path": path to the spec file this task satisfies\n'
+    '- "spec_blob_sha": the blob SHA of the spec\n'
+    '- "depends_on": list of task names this task depends on (empty if none)\n\n'
+    "Example commit message:\n\n"
+    "Decomposed 2 specs into 3 tasks\n\n"
+    "```json\n"
+    '[{"name": "add-auth-middleware", "description": "Implement JWT validation", '
+    '"spec_path": "specs/auth.spec.md", "spec_blob_sha": "abc123", '
+    '"depends_on": []}]\n'
+    "```"
+)
+
+_MERGE_RESOLUTION_EPILOGUE = (
+    "Signal completion by creating an empty commit.\n\n"
+    "Your commit message MUST contain the result as JSON in a fenced code block.\n\n"
+    "On success:\n"
+    "```json\n"
+    '{"resolved": true}\n'
+    "```\n\n"
+    "On failure:\n"
+    "```json\n"
+    '{"resolved": false}\n'
+    "```"
+)
+
+_SUMMARY_EPILOGUE = (
+    "Signal completion by creating an empty commit.\n\n"
+    "Your commit message MUST contain the summary as JSON in a fenced code block.\n\n"
+    "```json\n"
+    '{"title": "PR title (concise)", "body": "PR description"}\n'
+    "```"
+)
+
 
 def _build_branch_patterns(
     branch_prefix: str,
@@ -182,7 +221,7 @@ class GitAgentRuntime:
             AgentRole.DECOMPOSER,
             substitutions={},
             sections=sections,
-            epilogue="",
+            epilogue=_DECOMPOSITION_EPILOGUE,
         )
         return self._executor.run_decomposition(
             prompt=prompt, model=self._decomposition_model
@@ -228,7 +267,7 @@ class GitAgentRuntime:
             AgentRole.MERGE_RESOLVER,
             substitutions={},
             sections=sections,
-            epilogue="",
+            epilogue=_MERGE_RESOLUTION_EPILOGUE,
         )
         return self._executor.resolve_merge(
             task_branch=task_branch,
@@ -259,7 +298,7 @@ class GitAgentRuntime:
             AgentRole.INTEGRATION_SUMMARIZER,
             substitutions={},
             sections=sections,
-            epilogue="",
+            epilogue=_SUMMARY_EPILOGUE,
         )
         return self._executor.compose_summary(prompt=prompt, model=None)
 

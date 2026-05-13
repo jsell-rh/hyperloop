@@ -30,9 +30,18 @@ _GIT_ENV_VARS = frozenset(
 
 _DEFAULT_WORKTREE_DIR = ".hyperloop/worktrees"
 
+_JSON_FENCE_RE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
+
 
 def _sanitize_branch_for_path(branch: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]", "_", branch)
+
+
+def _extract_json(commit_message: str) -> str:
+    match = _JSON_FENCE_RE.search(commit_message)
+    if match:
+        return match.group(1).strip()
+    raise ValueError(f"No JSON block found in commit message: {commit_message[:200]}")
 
 
 class ClaudeSDKExecutor:
@@ -68,8 +77,8 @@ class ClaudeSDKExecutor:
     def run_decomposition(
         self, *, prompt: str, model: str | None = None
     ) -> list[ProposedTask]:
-        result_text = self._run_sync(prompt=prompt, model=model)
-        raw = json.loads(result_text)
+        commit_message = self._run_sync(prompt=prompt, model=model)
+        raw = json.loads(_extract_json(commit_message))
         return [ProposedTask(**item) for item in raw]
 
     def resolve_merge(
@@ -80,15 +89,15 @@ class ClaudeSDKExecutor:
         prompt: str,
         model: str | None = None,
     ) -> bool:
-        result_text = self._run_sync(prompt=prompt, model=model)
-        raw = json.loads(result_text)
+        commit_message = self._run_sync(prompt=prompt, model=model)
+        raw = json.loads(_extract_json(commit_message))
         return bool(raw["resolved"])
 
     def compose_summary(
         self, *, prompt: str, model: str | None = None
     ) -> IntegrationSummary:
-        result_text = self._run_sync(prompt=prompt, model=model)
-        raw = json.loads(result_text)
+        commit_message = self._run_sync(prompt=prompt, model=model)
+        raw = json.loads(_extract_json(commit_message))
         return IntegrationSummary(**raw)
 
     def cancel(self, *, branch: str) -> None:
@@ -152,7 +161,9 @@ class ClaudeSDKExecutor:
                     timeout_seconds=self._timeout_seconds,
                 )
 
-            return self._retry(_run)
+            self._retry(_run)
+            result = self._git("log", "-1", "--format=%B", cwd=worktree_path)
+            return result.stdout.strip()
         finally:
             self._remove_worktree(worktree_path)
             self._git("branch", "-D", "--", tmp_branch, check=False)

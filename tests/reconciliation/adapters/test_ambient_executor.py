@@ -71,6 +71,20 @@ def _make_executor(
     )
 
 
+def _make_sync_executor(
+    repo: Path,
+    remote: Path,
+    runner: FakePlatformRunner,
+    *,
+    timeout_seconds: int = 300,
+    max_retries: int = 3,
+) -> AmbientExecutor:
+    runner._remote_path = remote
+    return _make_executor(
+        repo, runner, timeout_seconds=timeout_seconds, max_retries=max_retries
+    )
+
+
 class TestBranchPushBeforeSessionCreation:
     def test_pushes_branch_to_remote_before_creating_session(
         self, git_env: tuple[Path, Path]
@@ -180,10 +194,10 @@ class TestModelSelection:
     def test_model_passed_to_platform_for_sync_agent(
         self, git_env: tuple[Path, Path]
     ) -> None:
-        repo, _ = git_env
+        repo, remote = git_env
         runner = FakePlatformRunner()
         runner.set_sync_result(json.dumps([]))
-        executor = _make_executor(repo, runner)
+        executor = _make_sync_executor(repo, remote, runner)
 
         executor.run_decomposition(prompt="Decompose", model="claude-sonnet-4-6")
 
@@ -194,7 +208,7 @@ class TestSyncExecution:
     def test_run_decomposition_blocks_until_completion(
         self, git_env: tuple[Path, Path]
     ) -> None:
-        repo, _ = git_env
+        repo, remote = git_env
         runner = FakePlatformRunner()
         tasks_json = json.dumps(
             [
@@ -208,7 +222,7 @@ class TestSyncExecution:
             ]
         )
         runner.set_sync_result(tasks_json)
-        executor = _make_executor(repo, runner)
+        executor = _make_sync_executor(repo, remote, runner)
 
         result = executor.run_decomposition(prompt="Decompose")
 
@@ -225,10 +239,10 @@ class TestSyncExecution:
     def test_sync_session_stopped_after_completion(
         self, git_env: tuple[Path, Path]
     ) -> None:
-        repo, _ = git_env
+        repo, remote = git_env
         runner = FakePlatformRunner()
         runner.set_sync_result(json.dumps([]))
-        executor = _make_executor(repo, runner)
+        executor = _make_sync_executor(repo, remote, runner)
 
         executor.run_decomposition(prompt="Decompose")
 
@@ -237,10 +251,10 @@ class TestSyncExecution:
     def test_resolve_merge_returns_true_on_success(
         self, git_env: tuple[Path, Path]
     ) -> None:
-        repo, _ = git_env
+        repo, remote = git_env
         runner = FakePlatformRunner()
         runner.set_sync_result(json.dumps({"resolved": True}))
-        executor = _make_executor(repo, runner)
+        executor = _make_sync_executor(repo, remote, runner)
 
         result = executor.resolve_merge(
             task_branch="hyperloop/spec/abc123/task/1",
@@ -253,10 +267,10 @@ class TestSyncExecution:
     def test_resolve_merge_returns_false_on_failure(
         self, git_env: tuple[Path, Path]
     ) -> None:
-        repo, _ = git_env
+        repo, remote = git_env
         runner = FakePlatformRunner()
         runner.set_sync_result(json.dumps({"resolved": False}))
-        executor = _make_executor(repo, runner)
+        executor = _make_sync_executor(repo, remote, runner)
 
         result = executor.resolve_merge(
             task_branch="hyperloop/spec/abc123/task/1",
@@ -269,12 +283,12 @@ class TestSyncExecution:
     def test_compose_summary_returns_parsed_summary(
         self, git_env: tuple[Path, Path]
     ) -> None:
-        repo, _ = git_env
+        repo, remote = git_env
         runner = FakePlatformRunner()
         runner.set_sync_result(
             json.dumps({"title": "Add feature X", "body": "Implements X via Y"})
         )
-        executor = _make_executor(repo, runner)
+        executor = _make_sync_executor(repo, remote, runner)
 
         result = executor.compose_summary(prompt="Summarize")
 
@@ -283,10 +297,10 @@ class TestSyncExecution:
         )
 
     def test_sync_operation_passes_timeout(self, git_env: tuple[Path, Path]) -> None:
-        repo, _ = git_env
+        repo, remote = git_env
         runner = FakePlatformRunner()
         runner.set_sync_result(json.dumps([]))
-        executor = _make_executor(repo, runner, timeout_seconds=120)
+        executor = _make_sync_executor(repo, remote, runner, timeout_seconds=120)
 
         executor.run_decomposition(prompt="Decompose")
 

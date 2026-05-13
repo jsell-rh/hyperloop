@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import re
 import subprocess
 import time
 import uuid
@@ -40,6 +41,16 @@ def _decode_branch(encoded: str) -> str:
         result.append(encoded[i])
         i += 1
     return "".join(result)
+
+
+_JSON_FENCE_RE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
+
+
+def _extract_json(commit_message: str) -> str:
+    match = _JSON_FENCE_RE.search(commit_message)
+    if match:
+        return match.group(1).strip()
+    raise ValueError(f"No JSON block found in commit message: {commit_message[:200]}")
 
 
 def _derive_session_prefix(branch_prefix: str) -> str:
@@ -83,8 +94,8 @@ class AmbientExecutor:
     def run_decomposition(
         self, *, prompt: str, model: str | None = None
     ) -> list[ProposedTask]:
-        result_text = self._run_sync(prompt=prompt, model=model)
-        raw = json.loads(result_text)
+        commit_message = self._run_sync(prompt=prompt, model=model)
+        raw = json.loads(_extract_json(commit_message))
         return [ProposedTask(**item) for item in raw]
 
     def resolve_merge(
@@ -95,15 +106,15 @@ class AmbientExecutor:
         prompt: str,
         model: str | None = None,
     ) -> bool:
-        result_text = self._run_sync(prompt=prompt, model=model)
-        raw = json.loads(result_text)
+        commit_message = self._run_sync(prompt=prompt, model=model)
+        raw = json.loads(_extract_json(commit_message))
         return bool(raw["resolved"])
 
     def compose_summary(
         self, *, prompt: str, model: str | None = None
     ) -> IntegrationSummary:
-        result_text = self._run_sync(prompt=prompt, model=model)
-        raw = json.loads(result_text)
+        commit_message = self._run_sync(prompt=prompt, model=model)
+        raw = json.loads(_extract_json(commit_message))
         return IntegrationSummary(**raw)
 
     def check_health(self) -> list[str]:
@@ -157,7 +168,12 @@ class AmbientExecutor:
         self._sessions[branch] = session_id
 
     def _run_sync(self, *, prompt: str, model: str | None) -> str:
-        session_name = f"{self._session_prefix}sync-{uuid.uuid4().hex[:12]}"
+        tmp_suffix = uuid.uuid4().hex[:12]
+        tmp_branch = f"{self._branch_prefix}tmp-{tmp_suffix}"
+        self._git("branch", "--", tmp_branch, "HEAD")
+        self._push_branch(tmp_branch)
+
+        session_name = f"{self._session_prefix}sync-{tmp_suffix}"
 
         def _create() -> str:
             return self._platform_runner.create_session(
@@ -176,9 +192,14 @@ class AmbientExecutor:
                     session_id, timeout_seconds=self._timeout_seconds
                 )
 
-            return self._retry(_wait)
+            self._retry(_wait)
+            self._git("fetch", "origin", tmp_branch)
+            result = self._git("log", "-1", "--format=%B", f"origin/{tmp_branch}")
+            return result.stdout.strip()
         finally:
             self._platform_runner.stop_session(session_id)
+            self._git("push", "origin", "--delete", tmp_branch, check=False)
+            self._git("branch", "-D", "--", tmp_branch, check=False)
 
     def _push_branch(self, branch: str) -> None:
         self._retry(lambda: self._git("push", "origin", branch))
