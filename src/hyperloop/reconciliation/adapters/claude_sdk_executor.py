@@ -28,7 +28,7 @@ _GIT_ENV_VARS = frozenset(
     }
 )
 
-_WORKTREE_DIR_NAME = ".hyperloop/worktrees"
+_DEFAULT_WORKTREE_DIR = ".hyperloop/worktrees"
 
 
 def _sanitize_branch_for_path(branch: str) -> str:
@@ -43,44 +43,27 @@ class ClaudeSDKExecutor:
         sdk_runner: SDKRunner,
         timeout_seconds: int = 300,
         max_retries: int = 3,
+        branch_prefix: str = "hyperloop/",
+        worktree_dir: str = _DEFAULT_WORKTREE_DIR,
     ) -> None:
         self._repo_path = repo_path
         self._sdk_runner = sdk_runner
         self._timeout_seconds = timeout_seconds
         self._max_retries = max_retries
-        self._worktree_base = repo_path / _WORKTREE_DIR_NAME
+        self._branch_prefix = branch_prefix
+        self._worktree_base = repo_path / worktree_dir
         self._sessions: dict[str, str] = {}
         self._worktrees: dict[str, Path] = {}
 
     def start_task_agent(
         self, *, branch: str, prompt: str, model: str | None = None
     ) -> None:
-        worktree_path = self._create_worktree(branch)
-        env = self._filtered_env()
-
-        def _start() -> str:
-            return self._sdk_runner.start_async(
-                prompt=prompt, cwd=worktree_path, model=model, env=env
-            )
-
-        session_id = self._retry(_start)
-        self._sessions[branch] = session_id
-        self._worktrees[branch] = worktree_path
+        self._start_async_agent(branch=branch, prompt=prompt, model=model)
 
     def start_verification_agent(
         self, *, branch: str, prompt: str, model: str | None = None
     ) -> None:
-        worktree_path = self._create_worktree(branch)
-        env = self._filtered_env()
-
-        def _start() -> str:
-            return self._sdk_runner.start_async(
-                prompt=prompt, cwd=worktree_path, model=model, env=env
-            )
-
-        session_id = self._retry(_start)
-        self._sessions[branch] = session_id
-        self._worktrees[branch] = worktree_path
+        self._start_async_agent(branch=branch, prompt=prompt, model=model)
 
     def run_decomposition(
         self, *, prompt: str, model: str | None = None
@@ -130,9 +113,31 @@ class ClaudeSDKExecutor:
                 stale.append(branch)
         return stale
 
+    def _start_async_agent(
+        self, *, branch: str, prompt: str, model: str | None
+    ) -> None:
+        worktree_path = self._create_worktree(branch)
+        env = self._filtered_env()
+
+        try:
+
+            def _start() -> str:
+                return self._sdk_runner.start_async(
+                    prompt=prompt, cwd=worktree_path, model=model, env=env
+                )
+
+            session_id = self._retry(_start)
+        except Exception:
+            self._remove_worktree(worktree_path)
+            raise
+
+        self._sessions[branch] = session_id
+        self._worktrees[branch] = worktree_path
+
     def _run_sync(self, *, prompt: str, model: str | None) -> str:
-        tmp_branch = f"hyperloop-tmp-{uuid.uuid4().hex[:12]}"
-        self._git("branch", tmp_branch, "HEAD")
+        tmp_prefix = self._branch_prefix.rstrip("/").replace("/", "-")
+        tmp_branch = f"{tmp_prefix}-tmp-{uuid.uuid4().hex[:12]}"
+        self._git("branch", "--", tmp_branch, "HEAD")
         worktree_path = self._create_worktree(tmp_branch)
         env = self._filtered_env()
 
@@ -150,13 +155,13 @@ class ClaudeSDKExecutor:
             return self._retry(_run)
         finally:
             self._remove_worktree(worktree_path)
-            self._git("branch", "-D", tmp_branch, check=False)
+            self._git("branch", "-D", "--", tmp_branch, check=False)
 
     def _create_worktree(self, branch: str) -> Path:
         self._worktree_base.mkdir(parents=True, exist_ok=True)
         dirname = _sanitize_branch_for_path(branch)
         worktree_path = self._worktree_base / dirname
-        self._git("worktree", "add", str(worktree_path), branch)
+        self._git("worktree", "add", str(worktree_path), "--", branch)
         return worktree_path
 
     def _remove_worktree(self, worktree_path: Path) -> None:

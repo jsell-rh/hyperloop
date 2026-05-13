@@ -121,6 +121,21 @@ class TestAsyncWorktreeCreation:
 
         assert runner.async_calls[0]["prompt"] == "Do specific work"
 
+    def test_start_task_agent_cleans_up_worktree_on_sdk_failure(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, _ = git_env
+        runner = FakeSDKRunner()
+        runner.set_async_error(RuntimeError("SDK crashed"))
+        executor = _make_executor(repo, runner, max_retries=0)
+        _create_branch(repo, TASK_BRANCH)
+
+        with pytest.raises(RuntimeError, match="SDK crashed"):
+            executor.start_task_agent(branch=TASK_BRANCH, prompt="Work")
+
+        worktrees = _worktree_paths(repo)
+        assert len(worktrees) == 1  # only main repo, worktree cleaned up
+
 
 class TestModelSelection:
     def test_model_passed_to_sdk_for_async_agent(
@@ -200,6 +215,8 @@ class TestSyncTemporaryWorkspace:
         executor.run_decomposition(prompt="Decompose")
 
         result = _git(repo, "branch", "--list", "hyperloop-tmp-*")
+        assert result.stdout.strip() == ""
+        result = _git(repo, "branch", "--list", "*-tmp-*")
         assert result.stdout.strip() == ""
 
     def test_run_decomposition_returns_parsed_tasks(
