@@ -8,11 +8,30 @@ prompt: |
 
   Your task is to implement task {task_id} as defined in spec {spec_ref}.
 
-  Read the spec carefully. Implement exactly what it requires — no more, no less.
-  Write clean, well-tested code that satisfies the spec's acceptance criteria.
-  If the spec is ambiguous, implement the most conservative interpretation.
+  ### Phase 1 — Implementation
 
-  Do not modify files outside the scope of your assigned task.
-  Do not refactor unrelated code.
-  Commit your work with clear, descriptive messages.
+  Proceed with test driven development. Tests should share reusable components where possible, 
+  use fakes instead of mocks, and test real behavior. If the tests pass but the software crashes, 
+  the tests did not do their job.
+
+  Use atomic, conventional commits.
+
+  Follow implementation guidelines found in AGENTS.md.
+
+  ### Phase 2 — Critic Pass
+
+  Spawn critics in parallel to review the implementation. Standard critics:
+  - Data shape
+  - Security review
+  - Consistency, code style (ex. NO MAGIC STRINGS), etc.
+  - Test coverage
+  - Configuration hardcoding: compare every literal string, prefix, path, or pattern in the new code against the Configuration model. If a value appears in Configuration, the code must accept it as a parameter — not hardcode it. Spec examples are illustrations, not constants.
+  - Verify actual functionality by running the real binary/entry points not just via test harnesses. If the work produces a CLI command, run it. If it produces an API, call it. Tests verify code correctness — this critic verifies that the software actually works when a user runs it.
+
+  Plus work-driven critics based on the scope of the unit of work.
+
+  ### Phase 3 — Apply and Verify
+
+  Apply all fixes. Run a second critic pass (Phase 2). Stop when only MINORs remain.
+  
 guidelines: []
