@@ -52,7 +52,7 @@ class ClaudeSDKRunner:
                 cwd=str(cwd),
                 model=model,
                 allowed_tools=_ALLOWED_TOOLS,
-                permission_mode="bypass",
+                permission_mode="bypassPermissions",
                 env=env,
             )
             result_text = ""
@@ -93,7 +93,7 @@ class ClaudeSDKRunner:
             cwd=str(cwd),
             model=model,
             allowed_tools=_ALLOWED_TOOLS,
-            permission_mode="bypass",
+            permission_mode="bypassPermissions",
             env=env,
         )
         client = ClaudeSDKClient(options=options)
