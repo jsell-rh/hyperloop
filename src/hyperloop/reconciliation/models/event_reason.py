@@ -5,6 +5,9 @@ from enum import StrEnum
 
 class EventReason(StrEnum):
     RECONCILER_STARTED = "ReconcilerStarted"
+    DECOMPOSITION_COMPLETED = "DecompositionCompleted"
+    DECOMPOSITION_FAILED = "DecompositionFailed"
+    TASK_DISPATCHED = "TaskDispatched"
     TASK_COMPLETED = "TaskCompleted"
     TASK_FAILED = "TaskFailed"
     MERGE_CONFLICT = "MergeConflict"
@@ -12,5 +15,4 @@ class EventReason(StrEnum):
     VERIFICATION_PASSED = "VerificationPassed"
     SPEC_SYNCED = "SpecSynced"
     INTEGRATION_FAILED = "IntegrationFailed"
-    DECOMPOSITION_FAILED = "DecompositionFailed"
     DEPENDENCY_INVALIDATED = "DependencyInvalidated"

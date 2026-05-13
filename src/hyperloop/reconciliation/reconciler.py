@@ -210,6 +210,13 @@ class Reconciler:
             cycle=self._cycle,
             duration_s=duration,
         )
+        for sp in out_of_sync:
+            sp.record_event(
+                reason=EventReason.DECOMPOSITION_COMPLETED,
+                message=f"{tasks_created} tasks created",
+                event_type=EventType.NORMAL,
+                timestamp=datetime.now(timezone.utc),
+            )
 
     def _handle_decomposition_failure(self, specs: list[SpecPlan], reason: str) -> None:
         self._observer.decomposition_failed(reason=reason, cycle=self._cycle)
@@ -401,6 +408,12 @@ class Reconciler:
                 retry_count=task.retry_count,
                 cycle=self._cycle,
             )
+            task.record_event(
+                reason=EventReason.TASK_DISPATCHED,
+                message=f"Dispatched (attempt {task.retry_count + 1})",
+                event_type=EventType.NORMAL,
+                timestamp=datetime.now(timezone.utc),
+            )
             dispatched += 1
 
         return dispatched
@@ -437,6 +450,12 @@ class Reconciler:
                             spec_path=task.spec_path,
                             spec_blob_sha=task.spec_blob_sha,
                             cycle=self._cycle,
+                        )
+                        task.record_event(
+                            reason=EventReason.TASK_COMPLETED,
+                            message="Task completed and merged",
+                            event_type=EventType.NORMAL,
+                            timestamp=datetime.now(timezone.utc),
                         )
                         completed += 1
                     else:
@@ -681,6 +700,12 @@ class Reconciler:
                 spec_blob_sha=sp.blob_sha,
                 total_tasks=len(sp.tasks),
                 cycle=self._cycle,
+            )
+            sp.record_event(
+                reason=EventReason.SPEC_SYNCED,
+                message=f"Integrated to trunk ({len(sp.tasks)} tasks)",
+                event_type=EventType.NORMAL,
+                timestamp=datetime.now(timezone.utc),
             )
         except Exception as exc:
             sp.integration_attempts += 1
