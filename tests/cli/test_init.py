@@ -48,9 +48,10 @@ class TestInitCreatesOverlay:
         assert content["apiVersion"] == "kustomize.config.k8s.io/v1beta1"
         assert content["kind"] == "Kustomization"
         assert len(content["resources"]) == 1
-        base_path = Path(content["resources"][0])
-        assert base_path.is_dir()
-        assert (base_path / "kustomization.yaml").is_file()
+        resource = content["resources"][0]
+        assert "github.com" in resource
+        assert "//base" in resource
+        assert "?ref=" in resource
 
     def test_overlay_directory_exists_after_init(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -135,7 +136,6 @@ class TestInitOverlayPathValidation:
         assert result.exit_code == 0
 
         overlay = tmp_path / ".hyperloop" / "agents"
-        Configuration.model_fields["overlay_path"].metadata
         assert overlay.is_dir()
         Configuration.overlay_path_must_exist(str(overlay))
 
