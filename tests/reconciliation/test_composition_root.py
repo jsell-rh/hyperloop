@@ -6,22 +6,22 @@ import pytest
 
 from hyperloop.reconciliation.adapters.ambient_executor import AmbientExecutor
 from hyperloop.reconciliation.adapters.claude_sdk_executor import ClaudeSDKExecutor
+from hyperloop.reconciliation.adapters.composite_observer import CompositeObserver
 from hyperloop.reconciliation.adapters.git_agent_runtime import GitAgentRuntime
 from hyperloop.reconciliation.adapters.git_plan_store import GitPlanStore
-from hyperloop.reconciliation.models.agent_role import AgentRole
-from hyperloop.reconciliation.models.agent_template import AgentTemplate
-from hyperloop.reconciliation.models.missing_template_error import MissingTemplateError
 from hyperloop.reconciliation.adapters.git_spec_source import GitSpecSource
 from hyperloop.reconciliation.adapters.git_workspace_manager import GitWorkspaceManager
 from hyperloop.reconciliation.adapters.kustomize_prompt_composer import (
     KustomizePromptComposer,
 )
-from hyperloop.reconciliation.adapters.composite_observer import CompositeObserver
 from hyperloop.reconciliation.adapters.null_probe import NullProbe
 from hyperloop.reconciliation.adapters.structlog_observer import StructlogObserver
 from hyperloop.reconciliation.composition_root import build_executor, create_reconciler
+from hyperloop.reconciliation.models.agent_role import AgentRole
+from hyperloop.reconciliation.models.agent_template import AgentTemplate
 from hyperloop.reconciliation.models.configuration import Configuration
 from hyperloop.reconciliation.models.executor_type import ExecutorType
+from hyperloop.reconciliation.models.missing_template_error import MissingTemplateError
 from hyperloop.reconciliation.models.observer_adapter import ObserverAdapter
 from hyperloop.reconciliation.reconciler import Reconciler
 
