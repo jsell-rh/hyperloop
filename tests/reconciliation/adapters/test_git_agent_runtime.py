@@ -557,7 +557,7 @@ class TestLaunchTask:
         runtime.launch_task(briefing)
 
         assert len(executor.started_tasks) == 1
-        branch, prompt = executor.started_tasks[0]
+        branch, prompt, _model = executor.started_tasks[0]
         assert branch == TASK_BRANCH
         assert isinstance(prompt, str)
 
@@ -787,7 +787,8 @@ class TestLaunchDecomposition:
         runtime.launch_decomposition(spec_diffs, [], [])
 
         assert len(executor.decomposition_calls) == 1
-        assert isinstance(executor.decomposition_calls[0], str)
+        prompt, _model = executor.decomposition_calls[0]
+        assert isinstance(prompt, str)
 
     def test_composes_prompt_for_decomposer_role(self, tmp_path: Path) -> None:
         composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
@@ -989,7 +990,7 @@ class TestLaunchVerification:
         )
 
         assert len(executor.started_verifications) == 1
-        branch, prompt = executor.started_verifications[0]
+        branch, prompt, _model = executor.started_verifications[0]
         assert branch == VERIFIER_BRANCH
         assert isinstance(prompt, str)
 
@@ -1081,7 +1082,7 @@ class TestLaunchMergeResolution:
 
         assert result is True
         assert len(executor.merge_calls) == 1
-        task_br, delivery_br, prompt = executor.merge_calls[0]
+        task_br, delivery_br, prompt, _model = executor.merge_calls[0]
         assert task_br == TASK_BRANCH
         assert delivery_br == f"{BRANCH_PREFIX}spec/{BLOB_SHA}/delivery"
         assert isinstance(prompt, str)
@@ -1135,7 +1136,8 @@ class TestComposeIntegrationSummary:
 
         assert result == expected
         assert len(executor.summary_calls) == 1
-        assert isinstance(executor.summary_calls[0], str)
+        prompt, _model = executor.summary_calls[0]
+        assert isinstance(prompt, str)
 
     def test_composes_prompt_for_integration_summarizer_role(
         self, tmp_path: Path

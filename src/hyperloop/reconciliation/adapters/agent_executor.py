@@ -7,11 +7,17 @@ from hyperloop.reconciliation.models.proposed_task import ProposedTask
 
 
 class AgentExecutor(Protocol):
-    def start_task_agent(self, *, branch: str, prompt: str) -> None: ...
+    def start_task_agent(
+        self, *, branch: str, prompt: str, model: str | None = None
+    ) -> None: ...
 
-    def start_verification_agent(self, *, branch: str, prompt: str) -> None: ...
+    def start_verification_agent(
+        self, *, branch: str, prompt: str, model: str | None = None
+    ) -> None: ...
 
-    def run_decomposition(self, *, prompt: str) -> list[ProposedTask]: ...
+    def run_decomposition(
+        self, *, prompt: str, model: str | None = None
+    ) -> list[ProposedTask]: ...
 
     def resolve_merge(
         self,
@@ -19,6 +25,9 @@ class AgentExecutor(Protocol):
         task_branch: str,
         delivery_branch: str,
         prompt: str,
+        model: str | None = None,
     ) -> bool: ...
 
-    def compose_summary(self, *, prompt: str) -> IntegrationSummary: ...
+    def compose_summary(
+        self, *, prompt: str, model: str | None = None
+    ) -> IntegrationSummary: ...

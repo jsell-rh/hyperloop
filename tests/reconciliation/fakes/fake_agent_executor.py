@@ -15,11 +15,11 @@ class FakeAgentExecutor:
             title="Default title", body="Default body"
         )
         self._integration_summary_error: Exception | None = None
-        self.started_tasks: list[tuple[str, str]] = []
-        self.started_verifications: list[tuple[str, str]] = []
-        self.decomposition_calls: list[str] = []
-        self.merge_calls: list[tuple[str, str, str]] = []
-        self.summary_calls: list[str] = []
+        self.started_tasks: list[tuple[str, str, str | None]] = []
+        self.started_verifications: list[tuple[str, str, str | None]] = []
+        self.decomposition_calls: list[tuple[str, str | None]] = []
+        self.merge_calls: list[tuple[str, str, str, str | None]] = []
+        self.summary_calls: list[tuple[str, str | None]] = []
 
     def set_decomposition_result(self, tasks: list[ProposedTask]) -> None:
         self._decomposition_result = tasks
@@ -44,18 +44,24 @@ class FakeAgentExecutor:
     def set_start_verification_error(self, error: Exception) -> None:
         self._start_verification_error = error
 
-    def start_task_agent(self, *, branch: str, prompt: str) -> None:
+    def start_task_agent(
+        self, *, branch: str, prompt: str, model: str | None = None
+    ) -> None:
         if self._start_task_error is not None:
             raise self._start_task_error
-        self.started_tasks.append((branch, prompt))
+        self.started_tasks.append((branch, prompt, model))
 
-    def start_verification_agent(self, *, branch: str, prompt: str) -> None:
+    def start_verification_agent(
+        self, *, branch: str, prompt: str, model: str | None = None
+    ) -> None:
         if self._start_verification_error is not None:
             raise self._start_verification_error
-        self.started_verifications.append((branch, prompt))
+        self.started_verifications.append((branch, prompt, model))
 
-    def run_decomposition(self, *, prompt: str) -> list[ProposedTask]:
-        self.decomposition_calls.append(prompt)
+    def run_decomposition(
+        self, *, prompt: str, model: str | None = None
+    ) -> list[ProposedTask]:
+        self.decomposition_calls.append((prompt, model))
         if self._decomposition_error is not None:
             raise self._decomposition_error
         return self._decomposition_result
@@ -66,12 +72,15 @@ class FakeAgentExecutor:
         task_branch: str,
         delivery_branch: str,
         prompt: str,
+        model: str | None = None,
     ) -> bool:
-        self.merge_calls.append((task_branch, delivery_branch, prompt))
+        self.merge_calls.append((task_branch, delivery_branch, prompt, model))
         return self._merge_result
 
-    def compose_summary(self, *, prompt: str) -> IntegrationSummary:
-        self.summary_calls.append(prompt)
+    def compose_summary(
+        self, *, prompt: str, model: str | None = None
+    ) -> IntegrationSummary:
+        self.summary_calls.append((prompt, model))
         if self._integration_summary_error is not None:
             raise self._integration_summary_error
         return self._integration_summary
