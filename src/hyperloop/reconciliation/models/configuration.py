@@ -109,6 +109,16 @@ class Configuration(BaseSettings):
             )
         return v
 
+    @field_validator("overlay_path")
+    @classmethod
+    def overlay_path_must_exist(cls, v: str) -> str:
+        if not Path(v).is_dir():
+            raise ValueError(
+                f"overlay_path '{v}' does not exist or is not a directory. "
+                "Run `hyperloop init` to scaffold the default configuration"
+            )
+        return v
+
     @model_validator(mode="after")
     def ambient_requires_url_and_project(self) -> Configuration:
         if self.executor_type == ExecutorType.AMBIENT:

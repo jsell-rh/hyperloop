@@ -66,14 +66,18 @@ class TestRunCommand:
         assert result.exit_code != 0
         assert "convergence_bound" in result.output.lower()
 
-    def test_run_constructs_reconciler_from_factory(self) -> None:
+    def test_run_constructs_reconciler_from_factory(self, tmp_path: Path) -> None:
         reconciler = FakeReconciler()
+        overlay = tmp_path / "overlay"
+        overlay.mkdir()
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(f"overlay_path: '{overlay}'\n")
 
         def factory(config: object, repo_path: Path, **kwargs: object) -> Reconciler:
             return reconciler
 
         runner = CliRunner()
-        result = runner.invoke(cli, ["run"], obj=factory)
+        result = runner.invoke(cli, ["run", "--config", str(config_file)], obj=factory)
         assert result.exit_code == 0
         assert reconciler.started is True
 
@@ -92,9 +96,13 @@ class TestRunCommand:
         )
         specs_dir = tmp_path / "specs"
         specs_dir.mkdir()
+        overlay_dir = tmp_path / "overlay"
+        overlay_dir.mkdir()
         config_file = tmp_path / "custom-config.yaml"
         config_file.write_text(
-            f"specs_directory: '{specs_dir}'\nconvergence_bound: 7\n"
+            f"specs_directory: '{specs_dir}'\n"
+            f"overlay_path: '{overlay_dir}'\n"
+            f"convergence_bound: 7\n"
         )
 
         runner = CliRunner()

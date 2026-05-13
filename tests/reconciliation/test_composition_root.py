@@ -25,6 +25,21 @@ from .fakes.fake_agent_executor import FakeAgentExecutor
 from .fakes.fake_kustomize_build_runner import FakeKustomizeBuildRunner
 
 
+def _setup_dirs(tmp_path: Path) -> None:
+    (tmp_path / "specs").mkdir(exist_ok=True)
+    (tmp_path / "overlay").mkdir(exist_ok=True)
+
+
+def _default_config(tmp_path: Path, **overrides: object) -> Configuration:
+    _setup_dirs(tmp_path)
+    defaults: dict[str, object] = {
+        "specs_directory": str(tmp_path / "specs"),
+        "overlay_path": str(tmp_path / "overlay"),
+    }
+    defaults.update(overrides)
+    return Configuration(**defaults)  # type: ignore[arg-type]
+
+
 def _create(
     tmp_path: Path,
     *,
@@ -32,8 +47,8 @@ def _create(
     executor: FakeAgentExecutor | None = None,
     runner: FakeKustomizeBuildRunner | None = None,
 ) -> Reconciler:
-    (tmp_path / "specs").mkdir(exist_ok=True)
-    cfg = config or Configuration(specs_directory=str(tmp_path / "specs"))
+    _setup_dirs(tmp_path)
+    cfg = config or _default_config(tmp_path)
     return create_reconciler(
         cfg,
         tmp_path,
@@ -49,66 +64,42 @@ class TestCreateReconciler:
         assert isinstance(result, Reconciler)
 
     def test_propagates_convergence_bound(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            convergence_bound=5,
-            specs_directory=str(tmp_path / "specs"),
-        )
+        config = _default_config(tmp_path, convergence_bound=5)
 
         reconciler = _create(tmp_path, config=config)
 
         assert reconciler._convergence_bound == 5
 
     def test_propagates_max_task_retries(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            max_task_retries=2,
-            specs_directory=str(tmp_path / "specs"),
-        )
+        config = _default_config(tmp_path, max_task_retries=2)
 
         reconciler = _create(tmp_path, config=config)
 
         assert reconciler._max_task_retries == 2
 
     def test_propagates_max_concurrent_tasks(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            max_concurrent_tasks=3,
-            specs_directory=str(tmp_path / "specs"),
-        )
+        config = _default_config(tmp_path, max_concurrent_tasks=3)
 
         reconciler = _create(tmp_path, config=config)
 
         assert reconciler._max_concurrent_tasks == 3
 
     def test_propagates_cycle_interval(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            cycle_interval_seconds=60,
-            specs_directory=str(tmp_path / "specs"),
-        )
+        config = _default_config(tmp_path, cycle_interval_seconds=60)
 
         reconciler = _create(tmp_path, config=config)
 
         assert reconciler._cycle_interval_seconds == 60
 
     def test_propagates_max_integration_retries(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            max_integration_retries=5,
-            specs_directory=str(tmp_path / "specs"),
-        )
+        config = _default_config(tmp_path, max_integration_retries=5)
 
         reconciler = _create(tmp_path, config=config)
 
         assert reconciler._max_integration_retries == 5
 
     def test_propagates_max_redecompositions(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            max_redecompositions=2,
-            specs_directory=str(tmp_path / "specs"),
-        )
+        config = _default_config(tmp_path, max_redecompositions=2)
 
         reconciler = _create(tmp_path, config=config)
 
@@ -120,10 +111,8 @@ class TestCreateReconciler:
         assert isinstance(reconciler._observer, NullProbe)
 
     def test_structlog_observer_adapter(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            observer_adapters=[ObserverAdapter.STRUCTLOG],
-            specs_directory=str(tmp_path / "specs"),
+        config = _default_config(
+            tmp_path, observer_adapters=[ObserverAdapter.STRUCTLOG]
         )
 
         reconciler = _create(tmp_path, config=config)
@@ -131,10 +120,9 @@ class TestCreateReconciler:
         assert isinstance(reconciler._observer, StructlogObserver)
 
     def test_multiple_observer_adapters_uses_composite(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
+        config = _default_config(
+            tmp_path,
             observer_adapters=[ObserverAdapter.STRUCTLOG, ObserverAdapter.STRUCTLOG],
-            specs_directory=str(tmp_path / "specs"),
         )
 
         reconciler = _create(tmp_path, config=config)
@@ -142,18 +130,17 @@ class TestCreateReconciler:
         assert isinstance(reconciler._observer, CompositeObserver)
 
     def test_unknown_observer_adapter_raises(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
+        _setup_dirs(tmp_path)
         with pytest.raises(ValueError):
             Configuration(
                 observer_adapters=["unknown"],  # type: ignore[list-item]
                 specs_directory=str(tmp_path / "specs"),
+                overlay_path=str(tmp_path / "overlay"),
             )
 
     def test_observer_shared_with_prompt_composer(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            observer_adapters=[ObserverAdapter.STRUCTLOG],
-            specs_directory=str(tmp_path / "specs"),
+        config = _default_config(
+            tmp_path, observer_adapters=[ObserverAdapter.STRUCTLOG]
         )
 
         reconciler = _create(tmp_path, config=config)
@@ -163,11 +150,8 @@ class TestCreateReconciler:
         assert composer._observer is reconciler._observer
 
     def test_wires_git_plan_store(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            plan_branch="custom/plan",
-            plan_file="state.json",
-            specs_directory=str(tmp_path / "specs"),
+        config = _default_config(
+            tmp_path, plan_branch="custom/plan", plan_file="state.json"
         )
 
         reconciler = _create(tmp_path, config=config)
@@ -179,11 +163,7 @@ class TestCreateReconciler:
         assert plan_store._plan_file == "state.json"
 
     def test_wires_git_spec_source(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            trunk_branch="develop",
-            specs_directory=str(tmp_path / "specs"),
-        )
+        config = _default_config(tmp_path, trunk_branch="develop")
 
         reconciler = _create(tmp_path, config=config)
 
@@ -194,11 +174,8 @@ class TestCreateReconciler:
         assert spec_source._specs_dir == str(tmp_path / "specs")
 
     def test_wires_git_workspace_manager(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            trunk_branch="develop",
-            branch_prefix="custom/",
-            specs_directory=str(tmp_path / "specs"),
+        config = _default_config(
+            tmp_path, trunk_branch="develop", branch_prefix="custom/"
         )
 
         reconciler = _create(tmp_path, config=config)
@@ -210,11 +187,7 @@ class TestCreateReconciler:
         assert workspace_manager._branch_prefix == "custom/"
 
     def test_wires_executor_into_agent_runtime(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            branch_prefix="custom/",
-            specs_directory=str(tmp_path / "specs"),
-        )
+        config = _default_config(tmp_path, branch_prefix="custom/")
         executor = FakeAgentExecutor()
 
         reconciler = _create(tmp_path, config=config, executor=executor)
@@ -233,17 +206,15 @@ class TestCreateReconciler:
         assert isinstance(agent_runtime._prompt_composer, KustomizePromptComposer)
 
     def test_prompt_composer_uses_config_overlay_path(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            overlay_path=".custom/agents",
-            specs_directory=str(tmp_path / "specs"),
-        )
+        custom_overlay = tmp_path / ".custom" / "agents"
+        custom_overlay.mkdir(parents=True)
+        config = _default_config(tmp_path, overlay_path=str(custom_overlay))
 
         reconciler = _create(tmp_path, config=config)
 
         composer = reconciler._agent_runtime._prompt_composer
         assert isinstance(composer, KustomizePromptComposer)
-        assert composer._overlay_path == tmp_path / ".custom/agents"
+        assert composer._overlay_path == custom_overlay
 
     def test_prompt_composer_receives_observer(self, tmp_path: Path) -> None:
         reconciler = _create(tmp_path)
@@ -262,12 +233,11 @@ class TestCreateReconciler:
         assert composer._runner is runner
 
     def test_wires_model_config_into_agent_runtime(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
+        config = _default_config(
+            tmp_path,
             implementation_model="claude-sonnet",
             verification_model="gemini-pro",
             decomposition_model="claude-opus",
-            specs_directory=str(tmp_path / "specs"),
         )
 
         reconciler = _create(tmp_path, config=config)
@@ -290,30 +260,21 @@ class TestCreateReconciler:
 
 class TestBuildExecutor:
     def test_claude_sdk_returns_claude_sdk_executor(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            executor_type=ExecutorType.CLAUDE_SDK,
-            specs_directory=str(tmp_path / "specs"),
-        )
+        config = _default_config(tmp_path, executor_type=ExecutorType.CLAUDE_SDK)
 
         executor = build_executor(config, tmp_path)
 
         assert isinstance(executor, ClaudeSDKExecutor)
 
     def test_default_config_returns_claude_sdk_executor(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(specs_directory=str(tmp_path / "specs"))
+        config = _default_config(tmp_path)
 
         executor = build_executor(config, tmp_path)
 
         assert isinstance(executor, ClaudeSDKExecutor)
 
     def test_claude_sdk_uses_timeout_from_config(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            executor_timeout_seconds=600,
-            specs_directory=str(tmp_path / "specs"),
-        )
+        config = _default_config(tmp_path, executor_timeout_seconds=600)
 
         executor = build_executor(config, tmp_path)
 
@@ -321,11 +282,7 @@ class TestBuildExecutor:
         assert executor._timeout_seconds == 600
 
     def test_claude_sdk_uses_max_retries_from_config(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            executor_max_retries=5,
-            specs_directory=str(tmp_path / "specs"),
-        )
+        config = _default_config(tmp_path, executor_max_retries=5)
 
         executor = build_executor(config, tmp_path)
 
@@ -333,11 +290,7 @@ class TestBuildExecutor:
         assert executor._max_retries == 5
 
     def test_claude_sdk_uses_branch_prefix_from_config(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
-            branch_prefix="custom/",
-            specs_directory=str(tmp_path / "specs"),
-        )
+        config = _default_config(tmp_path, branch_prefix="custom/")
 
         executor = build_executor(config, tmp_path)
 
@@ -345,12 +298,11 @@ class TestBuildExecutor:
         assert executor._branch_prefix == "custom/"
 
     def test_ambient_executor_raises_not_implemented(self, tmp_path: Path) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(
+        config = _default_config(
+            tmp_path,
             executor_type=ExecutorType.AMBIENT,
             repository_url="https://github.com/org/repo.git",
             project_identifier="my-project",
-            specs_directory=str(tmp_path / "specs"),
         )
 
         with pytest.raises(NotImplementedError, match="ambient"):
@@ -359,8 +311,7 @@ class TestBuildExecutor:
     def test_create_reconciler_builds_executor_from_config(
         self, tmp_path: Path
     ) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(specs_directory=str(tmp_path / "specs"))
+        config = _default_config(tmp_path)
         runner = FakeKustomizeBuildRunner()
 
         reconciler = create_reconciler(config, tmp_path, kustomize_runner=runner)
@@ -372,8 +323,7 @@ class TestBuildExecutor:
     def test_create_reconciler_uses_injected_executor_over_config(
         self, tmp_path: Path
     ) -> None:
-        (tmp_path / "specs").mkdir()
-        config = Configuration(specs_directory=str(tmp_path / "specs"))
+        config = _default_config(tmp_path)
         executor = FakeAgentExecutor()
         runner = FakeKustomizeBuildRunner()
 
