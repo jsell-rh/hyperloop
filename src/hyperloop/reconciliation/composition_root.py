@@ -13,12 +13,39 @@ from hyperloop.reconciliation.adapters.kustomize_build_runner import (
 from hyperloop.reconciliation.adapters.kustomize_prompt_composer import (
     KustomizePromptComposer,
 )
+from hyperloop.reconciliation.adapters.composite_observer import CompositeObserver
 from hyperloop.reconciliation.adapters.null_probe import NullProbe
+from hyperloop.reconciliation.adapters.structlog_observer import StructlogObserver
+from hyperloop.reconciliation.ports.observer import Observer
 from hyperloop.reconciliation.adapters.subprocess_kustomize_build_runner import (
     SubprocessKustomizeBuildRunner,
 )
 from hyperloop.reconciliation.models.configuration import Configuration
 from hyperloop.reconciliation.reconciler import Reconciler
+
+
+_OBSERVER_REGISTRY: dict[str, type[Observer]] = {
+    "structlog": StructlogObserver,
+}
+
+
+def _build_observer(adapter_names: list[str]) -> Observer:
+    if not adapter_names:
+        return NullProbe()
+
+    adapters: list[Observer] = []
+    for name in adapter_names:
+        adapter_cls = _OBSERVER_REGISTRY.get(name)
+        if adapter_cls is None:
+            raise ValueError(
+                f"Unknown observer adapter: {name!r}. "
+                f"Available: {sorted(_OBSERVER_REGISTRY)}"
+            )
+        adapters.append(adapter_cls())
+
+    if len(adapters) == 1:
+        return adapters[0]
+    return CompositeObserver(adapters)
 
 
 def create_reconciler(
@@ -28,7 +55,7 @@ def create_reconciler(
     executor: AgentExecutor,
     kustomize_runner: KustomizeBuildRunner | None = None,
 ) -> Reconciler:
-    observer = NullProbe()
+    observer = _build_observer(config.observer_adapters)
 
     runner = kustomize_runner or SubprocessKustomizeBuildRunner()
 

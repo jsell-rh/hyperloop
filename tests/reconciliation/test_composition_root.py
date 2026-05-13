@@ -9,7 +9,9 @@ from hyperloop.reconciliation.adapters.git_workspace_manager import GitWorkspace
 from hyperloop.reconciliation.adapters.kustomize_prompt_composer import (
     KustomizePromptComposer,
 )
+from hyperloop.reconciliation.adapters.composite_observer import CompositeObserver
 from hyperloop.reconciliation.adapters.null_probe import NullProbe
+from hyperloop.reconciliation.adapters.structlog_observer import StructlogObserver
 from hyperloop.reconciliation.composition_root import create_reconciler
 from hyperloop.reconciliation.models.configuration import Configuration
 from hyperloop.reconciliation.reconciler import Reconciler
@@ -111,6 +113,53 @@ class TestCreateReconciler:
         reconciler = _create(tmp_path)
 
         assert isinstance(reconciler._observer, NullProbe)
+
+    def test_structlog_observer_adapter(self, tmp_path: Path) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(
+            observer_adapters=["structlog"],
+            specs_directory=str(tmp_path / "specs"),
+        )
+
+        reconciler = _create(tmp_path, config=config)
+
+        assert isinstance(reconciler._observer, StructlogObserver)
+
+    def test_multiple_observer_adapters_uses_composite(self, tmp_path: Path) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(
+            observer_adapters=["structlog", "structlog"],
+            specs_directory=str(tmp_path / "specs"),
+        )
+
+        reconciler = _create(tmp_path, config=config)
+
+        assert isinstance(reconciler._observer, CompositeObserver)
+
+    def test_unknown_observer_adapter_raises(self, tmp_path: Path) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(
+            observer_adapters=["unknown"],
+            specs_directory=str(tmp_path / "specs"),
+        )
+
+        import pytest
+
+        with pytest.raises(ValueError, match="unknown"):
+            _create(tmp_path, config=config)
+
+    def test_observer_shared_with_prompt_composer(self, tmp_path: Path) -> None:
+        (tmp_path / "specs").mkdir()
+        config = Configuration(
+            observer_adapters=["structlog"],
+            specs_directory=str(tmp_path / "specs"),
+        )
+
+        reconciler = _create(tmp_path, config=config)
+
+        composer = reconciler._agent_runtime._prompt_composer
+        assert isinstance(composer, KustomizePromptComposer)
+        assert composer._observer is reconciler._observer
 
     def test_wires_git_plan_store(self, tmp_path: Path) -> None:
         (tmp_path / "specs").mkdir()
