@@ -47,7 +47,6 @@ def _create(
     executor: FakeAgentExecutor | None = None,
     runner: FakeKustomizeBuildRunner | None = None,
 ) -> Reconciler:
-    _setup_dirs(tmp_path)
     cfg = config or _default_config(tmp_path)
     return create_reconciler(
         cfg,

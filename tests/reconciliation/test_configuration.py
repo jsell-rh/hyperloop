@@ -359,6 +359,12 @@ class TestValidation:
                 overlay_path="/nonexistent/overlay/path",
             )
 
+    def test_overlay_path_file_rejected(self, specs_dir: Path, tmp_path: Path) -> None:
+        file_path = tmp_path / "not_a_dir.txt"
+        file_path.touch()
+        with pytest.raises(ValueError, match="overlay_path"):
+            Configuration(specs_directory=str(specs_dir), overlay_path=str(file_path))
+
     def test_overlay_path_existing_accepted(self, tmp_path: Path) -> None:
         specs = tmp_path / "specs"
         specs.mkdir()
@@ -584,7 +590,7 @@ class TestYamlLoading:
         assert config.decomposition_model == "claude-haiku"
         assert config.specs_directory == str(specs)
         assert config.overlay_path == str(overlay)
-        assert config.observer_adapters == ["structlog"]
+        assert config.observer_adapters == [ObserverAdapter.STRUCTLOG]
         assert config.plan_branch == "hyperloop/state"
         assert config.trunk_branch == "develop"
         assert config.branch_prefix == "hl/"
