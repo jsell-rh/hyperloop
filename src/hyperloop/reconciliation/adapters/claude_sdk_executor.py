@@ -106,6 +106,10 @@ class ClaudeSDKExecutor:
             self._sdk_runner.stop(session_id)
 
         worktree_path = self._worktrees.pop(branch, None)
+        if worktree_path is None:
+            candidate = self._worktree_base / _sanitize_branch_for_path(branch)
+            if candidate.exists():
+                worktree_path = candidate
         if worktree_path is not None:
             self._remove_worktree(worktree_path)
 

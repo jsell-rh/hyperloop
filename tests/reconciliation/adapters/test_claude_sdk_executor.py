@@ -414,6 +414,21 @@ class TestCancellation:
 
         executor.cancel(branch="nonexistent/branch")  # no error
 
+    def test_cancel_removes_worktree_not_tracked_in_memory(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, _ = git_env
+        runner = FakeSDKRunner()
+        executor = _make_executor(repo, runner)
+        _create_branch(repo, TASK_BRANCH)
+        executor.start_task_agent(branch=TASK_BRANCH, prompt="Work")
+
+        fresh_executor = _make_executor(repo, FakeSDKRunner())
+        fresh_executor.cancel(branch=TASK_BRANCH)
+
+        worktrees = _worktree_paths(repo)
+        assert len(worktrees) == 1  # only main repo
+
 
 class TestRetryLogic:
     def test_retries_on_transient_failure(self, git_env: tuple[Path, Path]) -> None:
