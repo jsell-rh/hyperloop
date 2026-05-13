@@ -134,13 +134,13 @@ class TestDefaultValues:
         )
         assert config.repository_url is None
 
-    def test_project_identifier_defaults_to_none(
+    def test_project_name_defaults_to_none(
         self, specs_dir: Path, overlay_dir: Path
     ) -> None:
         config = Configuration(
             specs_directory=str(specs_dir), overlay_path=str(overlay_dir)
         )
-        assert config.project_identifier is None
+        assert config.project_name is None
 
     def test_executor_timeout_seconds_defaults_to_300(
         self, specs_dir: Path, overlay_dir: Path
@@ -418,13 +418,13 @@ class TestExecutorConfiguration:
         config = Configuration(
             executor_type=ExecutorType.AMBIENT,
             repository_url="https://github.com/org/repo.git",
-            project_identifier="my-project",
+            project_name="my-project",
             specs_directory=str(specs_dir),
             overlay_path=str(overlay_dir),
         )
         assert config.executor_type == ExecutorType.AMBIENT
         assert config.repository_url == "https://github.com/org/repo.git"
-        assert config.project_identifier == "my-project"
+        assert config.project_name == "my-project"
 
     def test_ambient_without_repository_url_rejected(
         self, specs_dir: Path, overlay_dir: Path
@@ -432,15 +432,15 @@ class TestExecutorConfiguration:
         with pytest.raises(ValueError, match="repository_url"):
             Configuration(
                 executor_type=ExecutorType.AMBIENT,
-                project_identifier="my-project",
+                project_name="my-project",
                 specs_directory=str(specs_dir),
                 overlay_path=str(overlay_dir),
             )
 
-    def test_ambient_without_project_identifier_rejected(
+    def test_ambient_without_project_name_rejected(
         self, specs_dir: Path, overlay_dir: Path
     ) -> None:
-        with pytest.raises(ValueError, match="project_identifier"):
+        with pytest.raises(ValueError, match="project_name"):
             Configuration(
                 executor_type=ExecutorType.AMBIENT,
                 repository_url="https://github.com/org/repo.git",
@@ -464,7 +464,7 @@ class TestExecutorConfiguration:
         config = Configuration(
             executor_type=ExecutorType.CLAUDE_SDK,
             repository_url="https://github.com/org/repo.git",
-            project_identifier="my-project",
+            project_name="my-project",
             specs_directory=str(specs_dir),
             overlay_path=str(overlay_dir),
         )
@@ -504,7 +504,7 @@ class TestExecutorConfiguration:
             {
                 "executor_type": "ambient",
                 "repository_url": "https://github.com/org/repo.git",
-                "project_identifier": "my-project",
+                "project_name": "my-project",
                 "specs_directory": str(specs_dir),
                 "overlay_path": str(overlay_dir),
             },
@@ -512,7 +512,7 @@ class TestExecutorConfiguration:
         config = Configuration.from_yaml(config_file)
         assert config.executor_type == ExecutorType.AMBIENT
         assert config.repository_url == "https://github.com/org/repo.git"
-        assert config.project_identifier == "my-project"
+        assert config.project_name == "my-project"
 
 
 class TestImmutability:

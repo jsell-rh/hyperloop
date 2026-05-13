@@ -31,7 +31,7 @@ class AmbientExecutor:
         *,
         platform_runner: PlatformRunner,
         repository_url: str,
-        project_identifier: str,
+        project_name: str,
         timeout_seconds: int = 300,
         max_retries: int = 3,
         branch_prefix: str = "hyperloop/",
@@ -39,7 +39,7 @@ class AmbientExecutor:
         self._repo_path = repo_path
         self._platform_runner = platform_runner
         self._repository_url = repository_url
-        self._project_identifier = project_identifier
+        self._project_name = project_name
         self._timeout_seconds = timeout_seconds
         self._max_retries = max_retries
         self._branch_prefix = branch_prefix
@@ -89,7 +89,7 @@ class AmbientExecutor:
             self._platform_runner.stop_session(session_id)
 
     def detect_stale(self) -> list[str]:
-        sessions = self._platform_runner.list_sessions(project=self._project_identifier)
+        sessions = self._platform_runner.list_sessions(project=self._project_name)
         stale: list[str] = []
         for session in sessions:
             branch = self._branch_from_session_name(session.name)
@@ -117,7 +117,7 @@ class AmbientExecutor:
                 name=session_name,
                 prompt=prompt,
                 repository_url=self._repository_url,
-                project=self._project_identifier,
+                project=self._project_name,
                 model=model,
             )
 
@@ -132,7 +132,7 @@ class AmbientExecutor:
                 name=session_name,
                 prompt=prompt,
                 repository_url=self._repository_url,
-                project=self._project_identifier,
+                project=self._project_name,
                 model=model,
             )
 

@@ -302,14 +302,14 @@ class TestBuildExecutor:
             tmp_path,
             executor_type=ExecutorType.AMBIENT,
             repository_url="https://github.com/org/repo.git",
-            project_identifier="my-project",
+            project_name="my-project",
         )
 
         executor = build_executor(config, tmp_path)
 
         assert isinstance(executor, AmbientExecutor)
         assert executor._repository_url == "https://github.com/org/repo.git"
-        assert executor._project_identifier == "my-project"
+        assert executor._project_name == "my-project"
 
     def test_create_reconciler_builds_executor_from_config(
         self, tmp_path: Path

@@ -42,7 +42,7 @@ class Configuration(BaseSettings):
     executor_timeout_seconds: int = 300
     executor_max_retries: int = 3
     repository_url: str | None = None
-    project_identifier: str | None = None
+    project_name: str | None = None
     acpctl_path: str = "acpctl"
 
     @field_validator("convergence_bound")
@@ -127,9 +127,9 @@ class Configuration(BaseSettings):
                 raise ValueError(
                     "repository_url is required when executor_type is 'ambient'"
                 )
-            if self.project_identifier is None:
+            if self.project_name is None:
                 raise ValueError(
-                    "project_identifier is required when executor_type is 'ambient'"
+                    "project_name is required when executor_type is 'ambient'"
                 )
         return self
 

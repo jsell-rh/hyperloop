@@ -65,7 +65,7 @@ def _make_executor(
         repo_path=repo,
         platform_runner=runner,
         repository_url=REPO_URL,
-        project_identifier=PROJECT_ID,
+        project_name=PROJECT_ID,
         timeout_seconds=timeout_seconds,
         max_retries=max_retries,
     )

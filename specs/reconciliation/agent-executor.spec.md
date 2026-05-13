@@ -171,7 +171,7 @@ The Claude Agent SDK executor SHALL run agents locally using the Claude Agent SD
 
 ### Requirement: Ambient Code Platform Executor
 
-The Ambient Code Platform executor SHALL run agents remotely as platform sessions. Sessions are created with the full prompt and a configured repository URL. The repository URL and project identifier are provided at construction time. The executor SHALL guarantee that all running sessions are stopped when the orchestrator process exits (whether cleanly or via crash), preventing sessions from continuing to consume platform resources.
+The Ambient Code Platform executor SHALL run agents remotely as platform sessions. Sessions are created with the full prompt and a configured repository URL. The repository URL and project name are provided at construction time. The executor SHALL guarantee that all running sessions are stopped when the orchestrator process exits (whether cleanly or via crash), preventing sessions from continuing to consume platform resources.
 
 #### Scenario: Branch push before session creation
 
@@ -248,5 +248,5 @@ The Configuration model SHALL include fields for executor selection and operatio
 - GIVEN the Ambient Code Platform executor is selected
 - WHEN the executor is constructed
 - THEN a repository URL MUST be provided (the clone URL for the target repository)
-- AND a project identifier MUST be provided (the platform project that owns the sessions)
+- AND a project name MUST be provided (the platform project that owns the sessions)
 - AND if either is missing, construction SHALL fail with a validation error

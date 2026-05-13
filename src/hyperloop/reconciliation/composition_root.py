@@ -67,14 +67,14 @@ def build_executor(config: Configuration, repo_path: Path) -> AgentExecutor:
         )
     if config.executor_type == ExecutorType.AMBIENT:
         assert config.repository_url is not None
-        assert config.project_identifier is not None
+        assert config.project_name is not None
         return AmbientExecutor(
             repo_path,
             platform_runner=AcpctlPlatformRunner(
                 acpctl_path=config.acpctl_path,
             ),
             repository_url=config.repository_url,
-            project_identifier=config.project_identifier,
+            project_name=config.project_name,
             timeout_seconds=config.executor_timeout_seconds,
             max_retries=config.executor_max_retries,
             branch_prefix=config.branch_prefix,
