@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from hyperloop.reconciliation.models.agent_template import AgentTemplate
+from hyperloop.reconciliation.models.compose_error import ComposeError
+from hyperloop.reconciliation.models.missing_template_error import MissingTemplateError
 from hyperloop.reconciliation.models.prompt_section import PromptSection
 
 
@@ -14,13 +17,18 @@ class ComposeCall:
 
 
 class FakePromptComposer:
-    def __init__(self) -> None:
+    def __init__(self, templates: list[AgentTemplate] | None = None) -> None:
         self.calls: list[ComposeCall] = []
-        self._responses: dict[str, str] = {}
-        self._validated: bool = False
+        self._templates: dict[str, AgentTemplate] = {
+            t.name: t for t in (templates or [])
+        }
+        self._rebuild_failure: str | None = None
 
-    def set_response(self, role: str, response: str) -> None:
-        self._responses[role] = response
+    def set_templates(self, templates: list[AgentTemplate]) -> None:
+        self._templates = {t.name: t for t in templates}
+
+    def set_rebuild_failure(self, reason: str) -> None:
+        self._rebuild_failure = reason
 
     def compose(
         self,
@@ -30,6 +38,8 @@ class FakePromptComposer:
         sections: list[PromptSection],
         epilogue: str,
     ) -> str:
+        if role not in self._templates:
+            raise ComposeError({role})
         self.calls.append(
             ComposeCall(
                 role=role,
@@ -38,10 +48,14 @@ class FakePromptComposer:
                 epilogue=epilogue,
             )
         )
-        return self._responses.get(role, f"composed prompt for {role}")
+        template = self._templates[role]
+        return template.prompt
 
     def validate(self, required_roles: set[str]) -> None:
-        self._validated = True
+        missing = required_roles - set(self._templates.keys())
+        if missing:
+            raise MissingTemplateError(missing)
 
     def rebuild(self) -> None:
-        pass
+        if self._rebuild_failure is not None:
+            raise RuntimeError(self._rebuild_failure)

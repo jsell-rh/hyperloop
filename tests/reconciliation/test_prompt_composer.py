@@ -50,6 +50,58 @@ class TestTemplateLoading:
 
         assert "Implement the task." in result
 
+    def test_non_agent_kind_docs_are_skipped(self) -> None:
+        runner = FakeKustomizeBuildRunner()
+        obs = FakeObserver()
+        raw_yaml = (
+            "kind: Agent\nname: implementer\nprompt: Implement.\nguidelines: []\n"
+            "---\n"
+            "kind: ConfigMap\nname: settings\ndata: {}\n"
+        )
+        runner._templates = []
+        runner.build_count = 0
+
+        class DirectRunner:
+            def __init__(self, yaml_output: str) -> None:
+                self._yaml = yaml_output
+
+            def build(self, path: Path) -> str:
+                return self._yaml
+
+        composer = KustomizePromptComposer(
+            overlay_path=Path("/fake"),
+            kustomize_runner=DirectRunner(raw_yaml),
+            observer=obs,
+        )
+
+        result = composer.compose(
+            "implementer",
+            substitutions={},
+            sections=[],
+            epilogue="",
+        )
+        assert "Implement." in result
+        with pytest.raises(MissingTemplateError):
+            composer.compose("settings", substitutions={}, sections=[], epilogue="")
+
+    def test_empty_yaml_output_produces_no_templates(self) -> None:
+        class EmptyRunner:
+            def build(self, path: Path) -> str:
+                return ""
+
+        obs = FakeObserver()
+        composer = KustomizePromptComposer(
+            overlay_path=Path("/fake"),
+            kustomize_runner=EmptyRunner(),
+            observer=obs,
+        )
+
+        rebuilt = obs.calls_for("composer_rebuilt")
+        assert rebuilt[0]["template_count"] == 0
+
+        with pytest.raises(MissingTemplateError):
+            composer.compose("implementer", substitutions={}, sections=[], epilogue="")
+
     def test_base_layer_provides_identity_when_no_overlays(self) -> None:
         templates = [
             AgentTemplate(
@@ -348,19 +400,21 @@ class TestValidation:
 
         composer.validate({"implementer", "verifier"})
 
-    def test_compose_unknown_role_raises_compose_error(self) -> None:
+    def test_compose_unknown_role_raises_missing_template_error(self) -> None:
         templates = [
             AgentTemplate(name="implementer", prompt="Implement.", guidelines=[]),
         ]
         composer, _, _ = _make_composer(templates)
 
-        with pytest.raises(ComposeError):
+        with pytest.raises(MissingTemplateError) as exc_info:
             composer.compose(
                 "nonexistent",
                 substitutions={},
                 sections=[],
                 epilogue="",
             )
+
+        assert "nonexistent" in str(exc_info.value)
 
 
 class TestHotReload:

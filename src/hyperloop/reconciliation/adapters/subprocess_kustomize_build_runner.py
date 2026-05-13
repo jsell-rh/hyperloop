@@ -4,6 +4,9 @@ import subprocess
 from pathlib import Path
 
 
+_BUILD_TIMEOUT_SECONDS = 30
+
+
 class SubprocessKustomizeBuildRunner:
     def build(self, path: Path) -> str:
         result = subprocess.run(
@@ -12,5 +15,6 @@ class SubprocessKustomizeBuildRunner:
             text=True,
             encoding="utf-8",
             check=True,
+            timeout=_BUILD_TIMEOUT_SECONDS,
         )
         return result.stdout

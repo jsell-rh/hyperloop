@@ -12,6 +12,7 @@ from hyperloop.reconciliation.models.agent_template import AgentTemplate
 from hyperloop.reconciliation.models.compose_error import ComposeError
 from hyperloop.reconciliation.models.missing_template_error import MissingTemplateError
 from hyperloop.reconciliation.models.prompt_section import PromptSection
+from hyperloop.reconciliation.models.template_kind import TemplateKind
 from hyperloop.reconciliation.ports.observer import Observer
 
 _PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
@@ -41,7 +42,7 @@ class KustomizePromptComposer:
     ) -> str:
         template = self._templates.get(role)
         if template is None:
-            raise ComposeError({role})
+            raise MissingTemplateError({role})
 
         prompt_text = _substitute(template.prompt, substitutions)
 
@@ -91,7 +92,7 @@ def _parse_templates(raw_yaml: str) -> list[AgentTemplate]:
     for doc in yaml.safe_load_all(raw_yaml):
         if doc is None:
             continue
-        if doc.get("kind") != "Agent":
+        if doc.get("kind") != TemplateKind.AGENT:
             continue
         templates.append(
             AgentTemplate(

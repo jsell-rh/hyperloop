@@ -13,6 +13,7 @@ class FakeKustomizeBuildRunner:
         self._fail: bool = False
         self._failure_message: str = ""
         self.build_count: int = 0
+        self.last_build_path: Path | None = None
 
     def set_templates(self, templates: list[AgentTemplate]) -> None:
         self._templates = templates
@@ -21,12 +22,9 @@ class FakeKustomizeBuildRunner:
         self._fail = True
         self._failure_message = message
 
-    def clear_failure(self) -> None:
-        self._fail = False
-        self._failure_message = ""
-
     def build(self, path: Path) -> str:
         self.build_count += 1
+        self.last_build_path = path
         if self._fail:
             raise RuntimeError(self._failure_message)
         docs = []
