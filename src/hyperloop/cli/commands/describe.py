@@ -8,6 +8,7 @@ import click
 from hyperloop.cli.formatters.table import format_table
 from hyperloop.cli.formatters.time import format_relative_time
 from hyperloop.cli.output_format import OutputFormat
+from hyperloop.cli.plan_store_factory import create_plan_store_from_config
 from hyperloop.cli.serializers import (
     spec_plan_to_dict,
     task_to_dict,
@@ -21,8 +22,11 @@ from hyperloop.reconciliation.ports.plan_store import PlanStore
 
 
 @click.group()
-def describe() -> None:
-    pass
+@click.pass_context
+def describe(ctx: click.Context) -> None:
+    if ctx.obj is not None:
+        return
+    ctx.obj = create_plan_store_from_config()
 
 
 @describe.command()
