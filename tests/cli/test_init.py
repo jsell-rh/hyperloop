@@ -8,6 +8,7 @@ import yaml
 from click.testing import CliRunner
 
 from hyperloop.cli.app import cli
+from hyperloop.reconciliation.models.configuration import Configuration
 
 
 def _git_init(path: Path) -> None:
@@ -39,7 +40,8 @@ class TestInitCreatesOverlay:
         monkeypatch.chdir(tmp_path)
 
         runner = CliRunner()
-        runner.invoke(cli, ["init"])
+        result = runner.invoke(cli, ["init"])
+        assert result.exit_code == 0
 
         kustomization = tmp_path / ".hyperloop" / "agents" / "kustomization.yaml"
         content = yaml.safe_load(kustomization.read_text())
@@ -57,7 +59,8 @@ class TestInitCreatesOverlay:
         monkeypatch.chdir(tmp_path)
 
         runner = CliRunner()
-        runner.invoke(cli, ["init"])
+        result = runner.invoke(cli, ["init"])
+        assert result.exit_code == 0
 
         overlay = tmp_path / ".hyperloop" / "agents"
         assert overlay.is_dir()
@@ -118,6 +121,37 @@ class TestInitNonGitDirectory:
         result = runner.invoke(cli, ["init"])
 
         assert "git repository" in result.output.lower()
+
+
+class TestInitOverlayPathValidation:
+    def test_scaffolded_overlay_passes_configuration_validator(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _git_init(tmp_path)
+        monkeypatch.chdir(tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["init"])
+        assert result.exit_code == 0
+
+        overlay = tmp_path / ".hyperloop" / "agents"
+        Configuration.model_fields["overlay_path"].metadata
+        assert overlay.is_dir()
+        Configuration.overlay_path_must_exist(str(overlay))
+
+
+class TestInitEdgeCases:
+    def test_fails_when_hyperloop_dir_is_a_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _git_init(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".hyperloop").write_text("not a directory")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["init"])
+
+        assert result.exit_code != 0
 
 
 class TestInitRegistered:
