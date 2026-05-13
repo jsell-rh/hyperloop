@@ -119,6 +119,30 @@ The CLI SHALL support detailed views with `hyperloop describe <resource> <identi
 - WHEN `hyperloop describe task 99` is run
 - THEN it exits with an error message: "task 99 not found"
 
+### Requirement: Init Subcommand
+
+The `hyperloop init` subcommand SHALL scaffold the default Hyperloop configuration in the current repository.
+
+#### Scenario: Init creates overlay directory
+
+- GIVEN no `.hyperloop/agents/` directory exists
+- WHEN `hyperloop init` is run
+- THEN `.hyperloop/agents/kustomization.yaml` is created referencing the base templates
+- AND the reconciler can be started with `hyperloop run` using default configuration
+
+#### Scenario: Init is idempotent
+
+- GIVEN `.hyperloop/agents/kustomization.yaml` already exists
+- WHEN `hyperloop init` is run
+- THEN the existing configuration is not overwritten
+- AND the command exits successfully
+
+#### Scenario: Init in non-git directory
+
+- GIVEN the current directory is not a git repository
+- WHEN `hyperloop init` is run
+- THEN it fails with an error indicating a git repository is required
+
 ### Requirement: Run Subcommand
 
 The `hyperloop run` subcommand SHALL start the reconciler and stream live domain probe events to the console.
@@ -136,6 +160,13 @@ The `hyperloop run` subcommand SHALL start the reconciler and stream live domain
 - GIVEN a configuration file at `.hyperloop.yaml`
 - WHEN `hyperloop run --config .hyperloop.yaml` is run
 - THEN configuration is loaded from the specified file
+
+#### Scenario: Run without configuration file
+
+- GIVEN no `.hyperloop.yaml` exists but `.hyperloop/agents/` has been initialized
+- WHEN `hyperloop run` is run
+- THEN all configuration values use their defaults
+- AND the reconciler starts successfully
 
 ### Requirement: Read-Only State Access
 

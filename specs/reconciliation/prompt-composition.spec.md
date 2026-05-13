@@ -12,11 +12,11 @@ Prompts SHALL be composed from three layers, applied in order:
 
 | Layer | Source | Who writes it | What it provides |
 |---|---|---|---|
-| Base | Hyperloop package | Framework maintainers | Core agent identity and behavior (`prompt`) |
+| Base | `base/` in the Hyperloop repository | Framework maintainers | Core agent identity and behavior (`prompt`) |
 | Project overlay | `.hyperloop/agents/` in team's repository | Project team | Project-specific rules and customizations (`guidelines`, `prompt` patches) |
 | Process overlay | `.hyperloop/agents/process/` in team's repository | Automated tooling or team | Learned or refined rules (`guidelines`) |
 
-All three layers are resolved via a single `kustomize build` invocation, producing a unified set of agent templates.
+The project's `.hyperloop/agents/kustomization.yaml` references the base layer via kustomize resource references (relative path for local checkouts, remote URL for external consumers). All three layers are resolved via a single `kustomize build` invocation, producing a unified set of agent templates.
 
 #### Scenario: Base layer provides identity
 
@@ -126,6 +126,17 @@ At compose time, the prompt composer SHALL inject runtime context as additional 
 - THEN it contains: base prompt + guidelines + spec content at pinned SHA + completed task names and descriptions + verification rationale
 - AND the agent produces a structured response with a PR title and body
 
+### Requirement: Initial Build
+
+The prompt composer SHALL build templates from the overlay path at startup. If the initial build fails, the reconciler SHALL NOT start.
+
+#### Scenario: Initial build failure prevents startup
+
+- GIVEN the overlay path exists but `kustomize build` fails (invalid YAML, missing base reference, etc.)
+- WHEN the reconciler attempts to start
+- THEN it fails with an error describing the build failure
+- AND no reconciliation cycles are executed
+
 ### Requirement: Hot-Reload
 
 The prompt composer SHALL rebuild templates when overlay files change. Rebuild MUST NOT require a reconciler restart.
@@ -168,22 +179,27 @@ The prompt composer SHALL validate that all agent roles referenced in the system
 The project SHALL organize prompt-related files as:
 
 ```
-.hyperloop/
+base/                                 # Base agent templates (in Hyperloop repo)
+  kustomization.yaml                  # Lists all base agent templates
+  {role}.yaml                         # One file per agent role
+
+.hyperloop/                           # Project-specific configuration
   agents/
-    kustomization.yaml              # References base + patches
-    {role}-patch.yaml               # Per-role overrides (optional)
-    process/                        # Process overlay (kustomize Component)
+    kustomization.yaml                # References base + patches
+    {role}-patch.yaml                 # Per-role overrides (optional)
+    process/                          # Process overlay (kustomize Component)
       kustomization.yaml
-      {role}-overlay.yaml           # Per-role guideline additions
+      {role}-overlay.yaml             # Per-role guideline additions
 ```
 
-The base agent definitions are bundled with the Hyperloop package and referenced by the project's `kustomization.yaml`.
+The base agent definitions live in the Hyperloop repository at `base/`. The project's `.hyperloop/agents/kustomization.yaml` references them via kustomize resource references.
 
 #### Scenario: Minimal project setup
 
 - GIVEN a team wants to use Hyperloop with default agent behavior
-- WHEN they create `.hyperloop/agents/kustomization.yaml` referencing only the base
-- THEN all agents use their default prompts with no customization
+- WHEN they run `hyperloop init`
+- THEN `.hyperloop/agents/kustomization.yaml` is created referencing the base templates
+- AND all agents use their default prompts with no customization
 
 #### Scenario: Team adds project-specific guidelines
 

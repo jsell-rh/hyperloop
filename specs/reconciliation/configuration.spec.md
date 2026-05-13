@@ -76,7 +76,7 @@ The system SHALL support the following configuration values:
 | Name | Type | Default | Description |
 |---|---|---|---|
 | specs_directory | str | "specs/" | Directory containing spec files, relative to repository root |
-| overlay_path | str | ".hyperloop/agents" | Path to kustomize overlay directory for prompt composition. Must exist if prompt composition is enabled |
+| overlay_path | str | ".hyperloop/agents" | Path to kustomize overlay directory for prompt composition. Must exist at startup |
 
 **Observability:**
 
@@ -126,11 +126,18 @@ The system SHALL validate all configuration values at startup. Invalid configura
 - WHEN the reconciler attempts to start
 - THEN it fails with a validation error
 
-#### Scenario: Missing required paths rejected
+#### Scenario: Missing specs directory rejected
 
 - GIVEN specs_directory is set to a path that does not exist
 - WHEN the reconciler attempts to start
 - THEN it fails with a validation error indicating the directory was not found
+
+#### Scenario: Missing overlay path rejected
+
+- GIVEN overlay_path is set to a path that does not exist
+- WHEN the reconciler attempts to start
+- THEN it fails with a validation error indicating the overlay directory was not found
+- AND the error message suggests running `hyperloop init` to scaffold the default configuration
 
 #### Scenario: Valid configuration accepted
 
