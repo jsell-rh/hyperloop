@@ -31,20 +31,20 @@ _TASK_EPILOGUE = (
     "Signal completion by creating an empty commit.\n\n"
     "On success:\n"
     "<Summary of work performed>\n\n"
-    "Task-Status: Complete\n\n"
+    f"Task-Status: {AgentStatus.COMPLETE}\n\n"
     "On failure:\n"
     "<Rationale for failure>\n\n"
-    "Task-Status: Failed"
+    f"Task-Status: {AgentStatus.FAILED}"
 )
 
 _VERIFICATION_EPILOGUE = (
     "Signal completion by creating an empty commit.\n\n"
     "On alignment:\n"
     "<Assessment rationale>\n\n"
-    "Verification-Status: Pass\n\n"
+    f"Verification-Status: {AgentVerdict.PASS}\n\n"
     "On misalignment:\n"
     "<Detailed rationale>\n\n"
-    "Verification-Status: Fail"
+    f"Verification-Status: {AgentVerdict.FAIL}"
 )
 
 

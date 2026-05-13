@@ -840,6 +840,29 @@ class TestLaunchDecomposition:
         assert len(task_sections) == 1
         assert "implement-auth" in task_sections[0].content
 
+    def test_includes_events_section(self, tmp_path: Path) -> None:
+        from datetime import datetime, timezone
+
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        now = datetime.now(timezone.utc)
+        events = [
+            Event(
+                type=EventType.WARNING,
+                reason=EventReason.TASK_FAILED,
+                message="Tests did not pass",
+                first_timestamp=now,
+                last_timestamp=now,
+            )
+        ]
+        runtime.launch_decomposition([], [], events)
+
+        sections = composer.calls[0].sections
+        event_sections = [s for s in sections if s.heading == "Events"]
+        assert len(event_sections) == 1
+        assert "Tests did not pass" in event_sections[0].content
+
     def test_executor_failure_propagates(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
         executor = FakeAgentExecutor()
