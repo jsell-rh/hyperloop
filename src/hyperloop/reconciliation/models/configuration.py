@@ -43,6 +43,7 @@ class Configuration(BaseSettings):
     executor_max_retries: int = 3
     repository_url: str | None = None
     project_identifier: str | None = None
+    acpctl_path: str = "acpctl"
 
     @field_validator("convergence_bound")
     @classmethod

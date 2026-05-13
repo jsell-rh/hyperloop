@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from hyperloop.reconciliation.adapters.ambient_executor import AmbientExecutor
 from hyperloop.reconciliation.adapters.claude_sdk_executor import ClaudeSDKExecutor
 from hyperloop.reconciliation.adapters.git_agent_runtime import GitAgentRuntime
 from hyperloop.reconciliation.adapters.git_plan_store import GitPlanStore
@@ -296,7 +297,7 @@ class TestBuildExecutor:
         assert isinstance(executor, ClaudeSDKExecutor)
         assert executor._branch_prefix == "custom/"
 
-    def test_ambient_executor_raises_not_implemented(self, tmp_path: Path) -> None:
+    def test_ambient_executor_constructs_with_config(self, tmp_path: Path) -> None:
         config = _default_config(
             tmp_path,
             executor_type=ExecutorType.AMBIENT,
@@ -304,8 +305,11 @@ class TestBuildExecutor:
             project_identifier="my-project",
         )
 
-        with pytest.raises(NotImplementedError, match="ambient"):
-            build_executor(config, tmp_path)
+        executor = build_executor(config, tmp_path)
+
+        assert isinstance(executor, AmbientExecutor)
+        assert executor._repository_url == "https://github.com/org/repo.git"
+        assert executor._project_identifier == "my-project"
 
     def test_create_reconciler_builds_executor_from_config(
         self, tmp_path: Path

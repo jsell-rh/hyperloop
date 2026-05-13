@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from hyperloop.reconciliation.adapters.acpctl_platform_runner import (
+    AcpctlPlatformRunner,
+)
 from hyperloop.reconciliation.adapters.agent_executor import AgentExecutor
+from hyperloop.reconciliation.adapters.ambient_executor import AmbientExecutor
 from hyperloop.reconciliation.adapters.claude_sdk_executor import ClaudeSDKExecutor
 from hyperloop.reconciliation.adapters.claude_sdk_runner import ClaudeSDKRunner
 from hyperloop.reconciliation.adapters.git_agent_runtime import GitAgentRuntime
@@ -62,9 +66,18 @@ def build_executor(config: Configuration, repo_path: Path) -> AgentExecutor:
             branch_prefix=config.branch_prefix,
         )
     if config.executor_type == ExecutorType.AMBIENT:
-        raise NotImplementedError(
-            "The ambient executor is not yet implemented. "
-            "Use executor_type 'claude-sdk' instead."
+        assert config.repository_url is not None
+        assert config.project_identifier is not None
+        return AmbientExecutor(
+            repo_path,
+            platform_runner=AcpctlPlatformRunner(
+                acpctl_path=config.acpctl_path,
+            ),
+            repository_url=config.repository_url,
+            project_identifier=config.project_identifier,
+            timeout_seconds=config.executor_timeout_seconds,
+            max_retries=config.executor_max_retries,
+            branch_prefix=config.branch_prefix,
         )
     raise ValueError(f"Unknown executor_type: {config.executor_type!r}")
 
