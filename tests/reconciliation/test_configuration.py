@@ -84,6 +84,14 @@ class TestDefaultValues:
         config = Configuration(specs_directory=str(specs_dir))
         assert config.project_identifier is None
 
+    def test_executor_timeout_seconds_defaults_to_300(self, specs_dir: Path) -> None:
+        config = Configuration(specs_directory=str(specs_dir))
+        assert config.executor_timeout_seconds == 300
+
+    def test_executor_max_retries_defaults_to_3(self, specs_dir: Path) -> None:
+        config = Configuration(specs_directory=str(specs_dir))
+        assert config.executor_max_retries == 3
+
 
 class TestValidation:
     def test_convergence_bound_zero_rejected(self, specs_dir: Path) -> None:
@@ -137,6 +145,28 @@ class TestValidation:
     def test_cycle_interval_seconds_one_accepted(self, specs_dir: Path) -> None:
         config = Configuration(cycle_interval_seconds=1, specs_directory=str(specs_dir))
         assert config.cycle_interval_seconds == 1
+
+    def test_executor_timeout_seconds_zero_rejected(self, specs_dir: Path) -> None:
+        with pytest.raises(ValueError, match="executor_timeout_seconds"):
+            Configuration(executor_timeout_seconds=0, specs_directory=str(specs_dir))
+
+    def test_executor_timeout_seconds_negative_rejected(self, specs_dir: Path) -> None:
+        with pytest.raises(ValueError, match="executor_timeout_seconds"):
+            Configuration(executor_timeout_seconds=-1, specs_directory=str(specs_dir))
+
+    def test_executor_timeout_seconds_one_accepted(self, specs_dir: Path) -> None:
+        config = Configuration(
+            executor_timeout_seconds=1, specs_directory=str(specs_dir)
+        )
+        assert config.executor_timeout_seconds == 1
+
+    def test_executor_max_retries_negative_rejected(self, specs_dir: Path) -> None:
+        with pytest.raises(ValueError, match="executor_max_retries"):
+            Configuration(executor_max_retries=-1, specs_directory=str(specs_dir))
+
+    def test_executor_max_retries_zero_accepted(self, specs_dir: Path) -> None:
+        config = Configuration(executor_max_retries=0, specs_directory=str(specs_dir))
+        assert config.executor_max_retries == 0
 
     def test_specs_directory_nonexistent_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="specs_directory"):
