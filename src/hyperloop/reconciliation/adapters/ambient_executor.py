@@ -13,8 +13,6 @@ from hyperloop.reconciliation.models.executor_timeout_error import ExecutorTimeo
 from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
 
-_SESSION_PREFIX = "hyperloop--"
-
 
 def _encode_branch(branch: str) -> str:
     return branch.replace("/", "--")
@@ -22,6 +20,10 @@ def _encode_branch(branch: str) -> str:
 
 def _decode_branch(encoded: str) -> str:
     return encoded.replace("--", "/")
+
+
+def _derive_session_prefix(branch_prefix: str) -> str:
+    return _encode_branch(branch_prefix.rstrip("/")) + "--"
 
 
 class AmbientExecutor:
@@ -43,6 +45,7 @@ class AmbientExecutor:
         self._timeout_seconds = timeout_seconds
         self._max_retries = max_retries
         self._branch_prefix = branch_prefix
+        self._session_prefix = _derive_session_prefix(branch_prefix)
         self._sessions: dict[str, str] = {}
 
         atexit.register(self._cleanup_all_sessions)
@@ -98,12 +101,12 @@ class AmbientExecutor:
         return stale
 
     def _session_name(self, branch: str) -> str:
-        return _SESSION_PREFIX + _encode_branch(branch)
+        return self._session_prefix + _encode_branch(branch)
 
     def _branch_from_session_name(self, name: str) -> str | None:
-        if not name.startswith(_SESSION_PREFIX):
+        if not name.startswith(self._session_prefix):
             return None
-        encoded = name[len(_SESSION_PREFIX) :]
+        encoded = name[len(self._session_prefix) :]
         return _decode_branch(encoded)
 
     def _start_async_agent(
@@ -125,7 +128,7 @@ class AmbientExecutor:
         self._sessions[branch] = session_id
 
     def _run_sync(self, *, prompt: str, model: str | None) -> str:
-        session_name = f"{_SESSION_PREFIX}sync-{uuid.uuid4().hex[:12]}"
+        session_name = f"{self._session_prefix}sync-{uuid.uuid4().hex[:12]}"
 
         def _create() -> str:
             return self._platform_runner.create_session(
@@ -149,7 +152,7 @@ class AmbientExecutor:
             self._platform_runner.stop_session(session_id)
 
     def _push_branch(self, branch: str) -> None:
-        self._git("push", "origin", branch)
+        self._retry(lambda: self._git("push", "origin", branch))
 
     def _cleanup_all_sessions(self) -> None:
         for session_id in self._sessions.values():

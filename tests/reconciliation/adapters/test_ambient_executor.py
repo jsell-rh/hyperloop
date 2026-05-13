@@ -510,3 +510,35 @@ class TestSessionNamingConvention:
         name_b = executor._session_name("hyperloop/spec/abc123/task/2")
 
         assert name_a != name_b
+
+    def test_session_prefix_derives_from_branch_prefix(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, _ = git_env
+        runner = FakePlatformRunner()
+        executor = AmbientExecutor(
+            repo_path=repo,
+            platform_runner=runner,
+            repository_url=REPO_URL,
+            project_name=PROJECT_ID,
+            branch_prefix="custom/prefix/",
+        )
+
+        name = executor._session_name("custom/prefix/task/1")
+
+        assert name.startswith("custom--prefix--")
+
+
+class TestBranchPushRetry:
+    def test_push_retries_on_transient_failure(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, remote = git_env
+        runner = FakePlatformRunner()
+        executor = _make_executor(repo, runner, max_retries=3)
+        _create_branch(repo, TASK_BRANCH)
+
+        executor.start_task_agent(branch=TASK_BRANCH, prompt="Work")
+
+        assert _remote_branch_exists(repo, TASK_BRANCH)
+        assert len(runner.create_calls) == 1
