@@ -184,6 +184,7 @@ class AmbientExecutor:
                 model=model,
             )
 
+        head_before = self._git("rev-parse", tmp_branch).stdout.strip()
         session_id = self._retry(_create)
         try:
 
@@ -194,6 +195,9 @@ class AmbientExecutor:
 
             self._retry(_wait)
             self._git("fetch", "origin", tmp_branch)
+            head_after = self._git("rev-parse", f"origin/{tmp_branch}").stdout.strip()
+            if head_after == head_before:
+                raise ValueError("Agent completed without creating a result commit")
             result = self._git("log", "-1", "--format=%B", f"origin/{tmp_branch}")
             return result.stdout.strip()
         finally:

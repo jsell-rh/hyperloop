@@ -151,6 +151,9 @@ class ClaudeSDKExecutor:
         env = self._filtered_env()
 
         try:
+            head_before = self._git(
+                "rev-parse", "HEAD", cwd=worktree_path
+            ).stdout.strip()
 
             def _run() -> str:
                 return self._sdk_runner.run_sync(
@@ -162,6 +165,13 @@ class ClaudeSDKExecutor:
                 )
 
             self._retry(_run)
+
+            head_after = self._git(
+                "rev-parse", "HEAD", cwd=worktree_path
+            ).stdout.strip()
+            if head_after == head_before:
+                raise ValueError("Agent completed without creating a result commit")
+
             result = self._git("log", "-1", "--format=%B", cwd=worktree_path)
             return result.stdout.strip()
         finally:
