@@ -53,11 +53,18 @@ def _reset_state(repo_path: Path, plan_branch: str, branch_prefix: str) -> None:
 
 
 def _configure_structlog() -> None:
+    import sys
+
+    if sys.stderr.isatty():
+        renderer: structlog.types.Processor = structlog.dev.ConsoleRenderer(colors=True)
+    else:
+        renderer = structlog.processors.JSONRenderer()
+
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer(),
+            renderer,
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
         logger_factory=structlog.PrintLoggerFactory(),
