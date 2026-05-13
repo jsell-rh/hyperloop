@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    ResultMessage,
+    TaskProgressMessage,
+    TextBlock,
+    ToolUseBlock,
+)
 
 from hyperloop.reconciliation.models.executor_timeout_error import ExecutorTimeoutError
 
@@ -21,6 +31,10 @@ _ALLOWED_TOOLS = [
     "Agent",
 ]
 
+_MAX_PREVIEW = 200
+
+MessageCallback = Callable[[str, str, str], None]
+
 
 class _BackgroundSession:
     def __init__(
@@ -35,8 +49,13 @@ class _BackgroundSession:
 
 
 class ClaudeSDKRunner:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        on_message: MessageCallback | None = None,
+    ) -> None:
         self._sessions: dict[str, _BackgroundSession] = {}
+        self._on_message = on_message
 
     def run_sync(
         self,
@@ -47,6 +66,9 @@ class ClaudeSDKRunner:
         env: dict[str, str],
         timeout_seconds: int,
     ) -> str:
+        on_msg = self._on_message
+        branch = cwd.name
+
         async def _run() -> str:
             options = ClaudeAgentOptions(
                 cwd=str(cwd),
@@ -60,6 +82,8 @@ class ClaudeSDKRunner:
                 async with ClaudeSDKClient(options=options) as client:
                     await client.query(prompt)
                     async for message in client.receive_response():
+                        if on_msg is not None:
+                            _dispatch(on_msg, branch, message)
                         if isinstance(message, ResultMessage):
                             result_text = message.result or ""
             except TimeoutError as exc:
@@ -82,12 +106,15 @@ class ClaudeSDKRunner:
         env: dict[str, str],
     ) -> str:
         session_id = str(uuid.uuid4())
+        on_msg = self._on_message
+        branch = cwd.name
 
         async def _run(client: ClaudeSDKClient) -> None:
             async with client:
                 await client.query(prompt)
-                async for _ in client.receive_response():
-                    pass
+                async for message in client.receive_response():
+                    if on_msg is not None:
+                        _dispatch(on_msg, branch, message)
 
         options = ClaudeAgentOptions(
             cwd=str(cwd),
@@ -124,3 +151,15 @@ class ClaudeSDKRunner:
             future.result(timeout=10)
         except Exception:
             pass
+
+
+def _dispatch(callback: MessageCallback, branch: str, message: object) -> None:
+    if isinstance(message, AssistantMessage):
+        for block in message.content:
+            if isinstance(block, ToolUseBlock):
+                preview = json.dumps(block.input, default=str)[:_MAX_PREVIEW]
+                callback("tool_use", branch, f"{block.name}: {preview}")
+            elif isinstance(block, TextBlock):
+                callback("text", branch, block.text[:_MAX_PREVIEW])
+    elif isinstance(message, TaskProgressMessage):
+        callback("progress", branch, message.description)

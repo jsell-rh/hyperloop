@@ -26,9 +26,20 @@ class StructlogObserver:
     def __init__(self) -> None:
         self._logger: structlog.stdlib.BoundLogger = structlog.get_logger()
 
+    _DEBUG_EVENTS = frozenset(
+        {
+            "agent_tool_use",
+            "agent_text",
+            "agent_progress",
+            "agent_error",
+        }
+    )
+
     def _emit(self, event: str, **kwargs: object) -> None:
         if event in _WARNING_EVENTS:
             self._logger.warning(event, **kwargs)
+        elif event in self._DEBUG_EVENTS:
+            self._logger.debug(event, **kwargs)
         else:
             self._logger.info(event, **kwargs)
 
@@ -350,6 +361,18 @@ class StructlogObserver:
 
     def composer_rebuild_failed(self, *, reason: str) -> None:
         self._emit("composer_rebuild_failed", reason=reason)
+
+    def agent_tool_use(self, *, branch: str, tool: str, input_preview: str) -> None:
+        self._emit("agent_tool_use", branch=branch, tool=tool, input=input_preview)
+
+    def agent_text(self, *, branch: str, text_preview: str) -> None:
+        self._emit("agent_text", branch=branch, text=text_preview)
+
+    def agent_progress(self, *, branch: str, description: str) -> None:
+        self._emit("agent_progress", branch=branch, description=description)
+
+    def agent_error(self, *, branch: str, error: str) -> None:
+        self._emit("agent_error", branch=branch, error=error)
 
     def plan_synced(self, *, cycle: int) -> None:
         self._emit("plan_synced", cycle=cycle)

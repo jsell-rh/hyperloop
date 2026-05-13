@@ -328,6 +328,20 @@ class CompositeObserver:
             cycle=cycle,
         )
 
+    def agent_tool_use(self, *, branch: str, tool: str, input_preview: str) -> None:
+        self._fan_out(
+            "agent_tool_use", branch=branch, tool=tool, input_preview=input_preview
+        )
+
+    def agent_text(self, *, branch: str, text_preview: str) -> None:
+        self._fan_out("agent_text", branch=branch, text_preview=text_preview)
+
+    def agent_progress(self, *, branch: str, description: str) -> None:
+        self._fan_out("agent_progress", branch=branch, description=description)
+
+    def agent_error(self, *, branch: str, error: str) -> None:
+        self._fan_out("agent_error", branch=branch, error=error)
+
     def crash_recovery_started(self, *, stale_agent_count: int) -> None:
         self._fan_out("crash_recovery_started", stale_agent_count=stale_agent_count)
 

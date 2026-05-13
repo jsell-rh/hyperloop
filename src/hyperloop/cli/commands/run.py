@@ -52,7 +52,24 @@ def _reset_state(repo_path: Path, plan_branch: str, branch_prefix: str) -> None:
     click.echo(f"Reset: deleted {count} branches (plan + {len(branches)} managed)")
 
 
-def _configure_structlog() -> None:
+def _filter_by_level(
+    min_level: str,
+) -> structlog.types.Processor:
+    levels = ("debug", "info", "warning", "error", "critical")
+    threshold = levels.index(min_level)
+
+    def _filter(
+        logger: object, method_name: str, event_dict: dict[str, object]
+    ) -> dict[str, object]:
+        level = str(event_dict.get("level", "info"))
+        if levels.index(level) < threshold:
+            raise structlog.DropEvent
+        return event_dict
+
+    return _filter
+
+
+def _configure_structlog(*, verbose: bool = False) -> None:
     import sys
 
     if sys.stderr.isatty():
@@ -60,12 +77,20 @@ def _configure_structlog() -> None:
     else:
         renderer = structlog.processors.JSONRenderer()
 
-    structlog.configure(
-        processors=[
-            structlog.stdlib.add_log_level,
+    processors: list[structlog.types.Processor] = [
+        structlog.stdlib.add_log_level,
+    ]
+    if not verbose:
+        processors.append(_filter_by_level("info"))
+    processors.extend(
+        [
             structlog.processors.TimeStamper(fmt="iso"),
             renderer,
-        ],
+        ]
+    )
+
+    structlog.configure(
+        processors=processors,
         wrapper_class=structlog.stdlib.BoundLogger,
         logger_factory=structlog.PrintLoggerFactory(),
     )
@@ -103,6 +128,13 @@ def _configure_structlog() -> None:
     default=False,
     help="Delete plan branch and all managed branches before starting",
 )
+@click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="Show debug-level events (agent messages, tool use)",
+)
 @click.pass_context
 def run(
     ctx: click.Context,
@@ -113,8 +145,9 @@ def run(
     acpctl_path: str | None,
     timeout_seconds: int | None,
     reset_state: bool,
+    verbose: bool,
 ) -> None:
-    _configure_structlog()
+    _configure_structlog(verbose=verbose)
 
     if isinstance(ctx.obj, Reconciler):
         ctx.obj.run()

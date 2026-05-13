@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from hyperloop.reconciliation.adapters.acpctl_platform_runner import (
@@ -56,11 +57,14 @@ def _build_observer(adapter_names: list[ObserverAdapter]) -> Observer:
     return CompositeObserver(adapters)
 
 
-def build_executor(config: Configuration, repo_path: Path) -> AgentExecutor:
+def build_executor(
+    config: Configuration, repo_path: Path, observer: Observer | None = None
+) -> AgentExecutor:
     if config.executor_type == ExecutorType.CLAUDE_SDK:
+        on_message = _make_observer_callback(observer) if observer else None
         return ClaudeSDKExecutor(
             repo_path,
-            sdk_runner=ClaudeSDKRunner(),
+            sdk_runner=ClaudeSDKRunner(on_message=on_message),
             timeout_seconds=config.executor_timeout_seconds,
             max_retries=config.executor_max_retries,
             branch_prefix=config.branch_prefix,
@@ -82,6 +86,24 @@ def build_executor(config: Configuration, repo_path: Path) -> AgentExecutor:
     raise ValueError(f"Unknown executor_type: {config.executor_type!r}")
 
 
+def _make_observer_callback(
+    observer: Observer,
+) -> Callable[[str, str, str], None]:
+    def _callback(kind: str, branch: str, detail: str) -> None:
+        if kind == "tool_use":
+            observer.agent_tool_use(
+                branch=branch, tool=detail.split(":")[0], input_preview=detail
+            )
+        elif kind == "text":
+            observer.agent_text(branch=branch, text_preview=detail)
+        elif kind == "progress":
+            observer.agent_progress(branch=branch, description=detail)
+        else:
+            observer.agent_error(branch=branch, error=detail)
+
+    return _callback
+
+
 def create_reconciler(
     config: Configuration,
     repo_path: Path,
@@ -89,8 +111,8 @@ def create_reconciler(
     executor: AgentExecutor | None = None,
     kustomize_runner: KustomizeBuildRunner | None = None,
 ) -> Reconciler:
-    resolved_executor = executor or build_executor(config, repo_path)
     observer = _build_observer(config.observer_adapters)
+    resolved_executor = executor or build_executor(config, repo_path, observer)
 
     runner = kustomize_runner or SubprocessKustomizeBuildRunner()
 

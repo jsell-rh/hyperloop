@@ -176,6 +176,18 @@ class NullProbe:
     ) -> None:
         pass
 
+    def agent_tool_use(self, *, branch: str, tool: str, input_preview: str) -> None:
+        pass
+
+    def agent_text(self, *, branch: str, text_preview: str) -> None:
+        pass
+
+    def agent_progress(self, *, branch: str, description: str) -> None:
+        pass
+
+    def agent_error(self, *, branch: str, error: str) -> None:
+        pass
+
     def crash_recovery_started(self, *, stale_agent_count: int) -> None:
         pass
 

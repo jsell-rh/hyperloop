@@ -82,7 +82,8 @@ class TestStructlogObserver:
 
     def test_non_warning_events_use_info_level(self) -> None:
         observer = StructlogObserver()
-        info_methods = set(EXPECTED_METHODS) - _WARNING_EVENTS
+        debug_events = StructlogObserver._DEBUG_EVENTS
+        info_methods = set(EXPECTED_METHODS) - _WARNING_EVENTS - debug_events
 
         for method_name in info_methods:
             kwargs = _build_kwargs(EXPECTED_METHODS[method_name])
@@ -91,6 +92,18 @@ class TestStructlogObserver:
 
             assert cap[0]["log_level"] == "info", (
                 f"{method_name} should emit at info level"
+            )
+
+    def test_debug_events_use_debug_level(self) -> None:
+        observer = StructlogObserver()
+
+        for method_name in StructlogObserver._DEBUG_EVENTS:
+            kwargs = _build_kwargs(EXPECTED_METHODS[method_name])
+            with capture_logs() as cap:
+                getattr(observer, method_name)(**kwargs)
+
+            assert cap[0]["log_level"] == "debug", (
+                f"{method_name} should emit at debug level"
             )
 
     def test_list_kwargs_are_preserved(self) -> None:
