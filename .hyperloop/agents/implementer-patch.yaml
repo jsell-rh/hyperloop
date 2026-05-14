@@ -1,0 +1,8 @@
+apiVersion: hyperloop.dev/v1
+kind: Agent
+metadata:
+  name: implementer
+guidelines:
+  - "Use test-driven development (TDD). Write tests before implementation code."
+  - "Use behavioral fakes for all test doubles. No unittest.mock, no MagicMock, no patch. Tests must verify behavior, not implementation details."
+  - "Follow implementation guidelines found in AGENTS.md."

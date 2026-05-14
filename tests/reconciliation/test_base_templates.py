@@ -282,6 +282,84 @@ class TestGenericPrompts:
                 )
 
 
+OVERLAY_DIR = Path(__file__).resolve().parents[2] / ".hyperloop" / "agents"
+
+
+class TestProjectOverlay:
+    """prompt-composition.spec.md — Requirement: Three-Layer Composition.
+
+    Project overlay adds project-specific guidelines via kustomize patches.
+    """
+
+    def test_overlay_directory_exists(self) -> None:
+        assert OVERLAY_DIR.is_dir()
+
+    def test_overlay_kustomization_exists(self) -> None:
+        assert (OVERLAY_DIR / "kustomization.yaml").is_file()
+
+    def test_implementer_patch_exists(self) -> None:
+        assert (OVERLAY_DIR / "implementer-patch.yaml").is_file()
+
+    def test_implementer_patch_has_agent_kind(self) -> None:
+        doc = yaml.safe_load((OVERLAY_DIR / "implementer-patch.yaml").read_text())
+        assert doc["kind"] == TemplateKind.AGENT
+
+    def test_implementer_patch_targets_implementer(self) -> None:
+        doc = yaml.safe_load((OVERLAY_DIR / "implementer-patch.yaml").read_text())
+        assert doc["metadata"]["name"] == "implementer"
+
+    def test_implementer_patch_has_guidelines(self) -> None:
+        doc = yaml.safe_load((OVERLAY_DIR / "implementer-patch.yaml").read_text())
+        guidelines = doc.get("guidelines", [])
+        assert len(guidelines) > 0, "Patch must add at least one guideline"
+
+    def test_patch_guidelines_contain_project_testing_methodology(self) -> None:
+        doc = yaml.safe_load((OVERLAY_DIR / "implementer-patch.yaml").read_text())
+        guidelines_text = " ".join(doc.get("guidelines", [])).lower()
+        assert "tdd" in guidelines_text or "test-driven" in guidelines_text, (
+            "Project overlay must specify the project's testing methodology"
+        )
+
+    def test_patch_guidelines_contain_test_double_convention(self) -> None:
+        doc = yaml.safe_load((OVERLAY_DIR / "implementer-patch.yaml").read_text())
+        guidelines_text = " ".join(doc.get("guidelines", [])).lower()
+        assert "fake" in guidelines_text, (
+            "Project overlay must specify the project's test double convention"
+        )
+
+    def test_kustomization_references_patch(self) -> None:
+        kustomization = yaml.safe_load((OVERLAY_DIR / "kustomization.yaml").read_text())
+        patches = kustomization.get("patches", [])
+        patch_paths = [
+            p.get("path", "") if isinstance(p, dict) else "" for p in patches
+        ]
+        assert "implementer-patch.yaml" in patch_paths
+
+    def test_composed_prompt_includes_overlay_guidelines(self) -> None:
+        base_doc = yaml.safe_load((BASE_DIR / "implementer.yaml").read_text())
+        patch_doc = yaml.safe_load((OVERLAY_DIR / "implementer-patch.yaml").read_text())
+
+        merged = {
+            "kind": "Agent",
+            "name": "implementer",
+            "prompt": base_doc["prompt"],
+            "guidelines": patch_doc["guidelines"],
+        }
+        raw_yaml = yaml.dump(merged, default_flow_style=False, allow_unicode=True)
+        composer = _make_composer_from_output(raw_yaml)
+        result = composer.compose(
+            "implementer",
+            substitutions={"task_id": "1", "spec_ref": "specs/test.spec.md@abc"},
+            sections=[],
+            epilogue="",
+        )
+
+        for guideline in patch_doc["guidelines"]:
+            assert guideline in result, (
+                f"Composed prompt must include overlay guideline: {guideline}"
+            )
+
+
 class TestKustomizeBuildIntegration:
     @pytest.fixture()
     def kustomize_output(self) -> str:
