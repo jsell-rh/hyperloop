@@ -1235,6 +1235,58 @@ class TestTaskDispatch:
         assert briefing.events[0].reason == EventReason.TASK_FAILED
         assert briefing.events[0].message == "Test compilation error"
 
+    def test_workspace_briefing_contains_task_details(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+
+        reconciler.run_cycle()
+
+        briefing = workspace_manager.get_task_briefing("abc123", tasks[0].id)
+        assert f"Task {tasks[0].id}" in briefing
+        assert tasks[0].name in briefing
+        assert tasks[0].description in briefing
+
+    def test_workspace_briefing_contains_spec_reference(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+
+        reconciler.run_cycle()
+
+        briefing = workspace_manager.get_task_briefing("abc123", tasks[0].id)
+        assert "auth.spec.md" in briefing
+        assert "abc123" in briefing
+
+    def test_workspace_briefing_contains_events_on_retry(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+        tasks[0].record_event(
+            reason=EventReason.TASK_FAILED,
+            message="Test compilation error",
+            event_type=EventType.WARNING,
+            timestamp=datetime.now(timezone.utc),
+        )
+
+        reconciler.run_cycle()
+
+        briefing = workspace_manager.get_task_briefing("abc123", tasks[0].id)
+        assert EventReason.TASK_FAILED in briefing
+        assert "Test compilation error" in briefing
+
     def test_blocked_task_not_dispatched(
         self,
         reconciler: Reconciler,

@@ -374,8 +374,9 @@ class Reconciler:
                 )
 
             spec_content = self._spec_source.read_at(task.spec_path, task.spec_blob_sha)
+            workspace_briefing = self._format_workspace_briefing(task)
             workspace_id = self._workspace_manager.create_task_workspace(
-                task.spec_blob_sha, task.id, task.description
+                task.spec_blob_sha, task.id, workspace_briefing
             )
             task.workspace_id = workspace_id
             briefing = TaskBriefing(
@@ -862,6 +863,22 @@ class Reconciler:
             for sp in plan.spec_plans
             if not sp.superseded and sp.status == SpecPlanStatus.OUT_OF_SYNC
         )
+
+    @staticmethod
+    def _format_workspace_briefing(task: Task) -> str:
+        lines = [
+            f"Task {task.id}: {task.name}",
+            "",
+            task.description,
+            "",
+            f"Spec: {task.spec_path} @ {task.spec_blob_sha}",
+        ]
+        if task.events:
+            lines.append("")
+            lines.append("Events:")
+            for event in task.events:
+                lines.append(f"- [{event.type}] {event.reason}: {event.message}")
+        return "\n".join(lines)
 
     def _count_in_progress(self, plan: Plan) -> int:
         return sum(
