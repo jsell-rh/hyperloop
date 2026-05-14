@@ -574,11 +574,11 @@ class Reconciler:
                     self._workspace_manager.create_delivery_workspace(sp.blob_sha)
                 )
 
-            workspace_id = self._workspace_manager.create_verification_workspace(
-                sp.blob_sha
-            )
-            spec_content = self._spec_source.read_at(sp.path, sp.blob_sha)
             try:
+                workspace_id = self._workspace_manager.create_verification_workspace(
+                    sp.blob_sha
+                )
+                spec_content = self._spec_source.read_at(sp.path, sp.blob_sha)
                 handle = self._agent_runtime.launch_verification(
                     spec_content, sp.path, sp.blob_sha, workspace_id
                 )

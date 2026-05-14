@@ -2372,6 +2372,35 @@ class TestVerificationLaunch:
 
         agent_runtime.launch_verification = original_launch  # type: ignore[assignment]
 
+    def test_workspace_creation_failure_fires_event_and_continues(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        _build_all_tasks_complete_spec_plan(plan_store, spec_source, workspace_manager)
+        original_create = workspace_manager.create_verification_workspace
+
+        def failing_create(blob_sha: str) -> str:
+            raise RuntimeError("Branch already exists")
+
+        workspace_manager.create_verification_workspace = failing_create  # type: ignore[assignment]
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        sp = next(sp for sp in plan.spec_plans if sp.path == "auth.spec.md")
+        assert sp.status == SpecPlanStatus.RECONCILING
+        events = observer.calls_for("verification_launch_failed")
+        assert len(events) == 1
+        assert events[0]["spec_path"] == "auth.spec.md"
+        assert "Branch already exists" in events[0]["reason"]
+
+        workspace_manager.create_verification_workspace = original_create  # type: ignore[assignment]
+
 
 class TestVerificationPass:
     def test_verification_pass_transitions_to_synced(
