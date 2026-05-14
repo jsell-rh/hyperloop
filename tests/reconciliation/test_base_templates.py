@@ -102,6 +102,186 @@ def _make_composer_from_output(raw_yaml: str) -> KustomizePromptComposer:
     )
 
 
+_PROJECT_SPECIFIC_FILE_REFERENCES = [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "pyproject.toml",
+    "Makefile",
+    "Dockerfile",
+    "package.json",
+    "Cargo.toml",
+    "go.mod",
+]
+
+_PROJECT_SPECIFIC_TESTING_TERMS = [
+    "test driven development",
+    "test-driven development",
+    "tdd",
+    "behavior driven development",
+    "behavior-driven development",
+    "bdd",
+]
+
+_PROJECT_SPECIFIC_TEST_DOUBLE_TERMS = [
+    "fakes instead of mocks",
+    "mocks instead of fakes",
+    "use fakes",
+    "use mocks",
+    "no unittest.mock",
+    "no MagicMock",
+    "no patch",
+]
+
+
+class TestImplementerWorkflowPhases:
+    """agent-prompts.spec.md — Requirement: Implementer Workflow.
+
+    The implementer base prompt SHALL instruct the agent to follow a
+    multi-phase workflow: understand, implement with tests, then self-critique.
+    """
+
+    @pytest.fixture()
+    def implementer_prompt(self) -> str:
+        doc = yaml.safe_load((BASE_DIR / "implementer.yaml").read_text())
+        return doc["prompt"]
+
+    def test_addresses_orientation_phase(self, implementer_prompt: str) -> None:
+        prompt_lower = implementer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "read the spec",
+                "read the codebase",
+                "orientation",
+                "understand",
+            ]
+        ), (
+            "Implementer prompt must address orientation: reading the spec and codebase before writing code"
+        )
+
+    def test_addresses_configuration_awareness(self, implementer_prompt: str) -> None:
+        prompt_lower = implementer_prompt.lower()
+        assert "configur" in prompt_lower, (
+            "Implementer prompt must address configuration awareness"
+        )
+
+    def test_addresses_implementation_with_tests(self, implementer_prompt: str) -> None:
+        prompt_lower = implementer_prompt.lower()
+        assert "test" in prompt_lower, (
+            "Implementer prompt must instruct the agent to write tests"
+        )
+
+    def test_addresses_atomic_commits(self, implementer_prompt: str) -> None:
+        prompt_lower = implementer_prompt.lower()
+        assert "atomic" in prompt_lower or "commit" in prompt_lower, (
+            "Implementer prompt must address atomic commits"
+        )
+
+    def test_addresses_critic_pass(self, implementer_prompt: str) -> None:
+        prompt_lower = implementer_prompt.lower()
+        assert any(
+            phrase in prompt_lower for phrase in ["critic", "self-review", "review"]
+        ), "Implementer prompt must address a critic/self-review pass"
+
+    def test_addresses_iterative_refinement(self, implementer_prompt: str) -> None:
+        prompt_lower = implementer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in ["refine", "iterate", "fix issues", "repeat"]
+        ), "Implementer prompt must address iterative refinement"
+
+    def test_orientation_appears_before_implementation(
+        self, implementer_prompt: str
+    ) -> None:
+        prompt_lower = implementer_prompt.lower()
+        orientation_phrases = ["read", "understand", "orientation"]
+        implementation_phrases = ["implement", "write", "code"]
+
+        orientation_pos = len(prompt_lower)
+        for phrase in orientation_phrases:
+            idx = prompt_lower.find(phrase)
+            if idx >= 0:
+                orientation_pos = min(orientation_pos, idx)
+
+        implementation_pos = 0
+        for phrase in implementation_phrases:
+            idx = prompt_lower.find(phrase)
+            if idx >= 0:
+                implementation_pos = max(implementation_pos, idx)
+
+        assert orientation_pos < implementation_pos, (
+            "Orientation (reading spec/codebase) must appear before "
+            "implementation instructions"
+        )
+
+
+class TestGenericPrompts:
+    """agent-prompts.spec.md — Requirement: Generic Prompts.
+
+    Base agent prompts SHALL NOT contain project-specific references.
+    Testing methodology is a project-level concern.
+    """
+
+    @pytest.fixture()
+    def prompts_by_role(self) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for role in ALL_ROLES:
+            doc = yaml.safe_load((BASE_DIR / f"{role}.yaml").read_text())
+            result[role] = doc["prompt"]
+        return result
+
+    def test_no_project_specific_file_references(
+        self, prompts_by_role: dict[str, str]
+    ) -> None:
+        for role, prompt in prompts_by_role.items():
+            for ref in _PROJECT_SPECIFIC_FILE_REFERENCES:
+                assert ref not in prompt, (
+                    f"{role}: base prompt must not reference project-specific "
+                    f"file '{ref}'"
+                )
+
+    def test_no_specific_testing_methodology(
+        self, prompts_by_role: dict[str, str]
+    ) -> None:
+        for role, prompt in prompts_by_role.items():
+            prompt_lower = prompt.lower()
+            for term in _PROJECT_SPECIFIC_TESTING_TERMS:
+                assert term not in prompt_lower, (
+                    f"{role}: base prompt must not specify testing methodology "
+                    f"'{term}' — this belongs in the project overlay"
+                )
+
+    def test_no_specific_test_double_conventions(
+        self, prompts_by_role: dict[str, str]
+    ) -> None:
+        for role, prompt in prompts_by_role.items():
+            prompt_lower = prompt.lower()
+            for term in _PROJECT_SPECIFIC_TEST_DOUBLE_TERMS:
+                assert term.lower() not in prompt_lower, (
+                    f"{role}: base prompt must not specify test double "
+                    f"convention '{term}' — this belongs in the project overlay"
+                )
+
+    def test_prompts_are_language_agnostic(
+        self, prompts_by_role: dict[str, str]
+    ) -> None:
+        language_specific_terms = [
+            "python",
+            "javascript",
+            "typescript",
+            "golang",
+            "rustlang",
+            "java ",
+        ]
+        for role, prompt in prompts_by_role.items():
+            prompt_lower = prompt.lower()
+            for term in language_specific_terms:
+                assert term not in prompt_lower, (
+                    f"{role}: base prompt must be language-agnostic, "
+                    f"but contains '{term}'"
+                )
+
+
 class TestKustomizeBuildIntegration:
     @pytest.fixture()
     def kustomize_output(self) -> str:

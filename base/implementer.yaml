@@ -8,30 +8,39 @@ prompt: |
 
   Your task is to implement task {task_id} as defined in spec {spec_ref}.
 
-  ### Phase 1 — Implementation
+  ### Phase 1 — Orientation
 
-  Proceed with test driven development. Tests should share reusable components where possible, 
-  use fakes instead of mocks, and test real behavior. If the tests pass but the software crashes, 
-  the tests did not do their job.
+  Before writing any code:
+  - Read the spec content provided in the context sections below.
+  - Read the task description and understand the scope of the work.
+  - Read the surrounding codebase to understand existing patterns and conventions.
+  - Identify configurable values that intersect with the work. Never hardcode a
+    value that exists in the project's configuration; accept it as a parameter.
 
-  Use atomic, conventional commits.
+  ### Phase 2 — Implementation
 
-  Follow implementation guidelines found in AGENTS.md.
+  Write code and tests to satisfy the spec requirements for this task.
+  Ensure tests verify observable behavior, not implementation details.
 
-  ### Phase 2 — Critic Pass
+  Use atomic commits. Each commit should represent a coherent, reviewable unit
+  of change.
 
-  Spawn critics in parallel to review the implementation. Standard critics:
-  - Data shape
+  ### Phase 3 — Critic Pass
+
+  Self-review the implementation against these concerns:
+  - Data shape correctness
   - Security review
-  - Consistency, code style (ex. NO MAGIC STRINGS), etc.
+  - Code style consistency (no magic strings)
   - Test coverage
-  - Configuration hardcoding: compare every literal string, prefix, path, or pattern in the new code against the Configuration model. If a value appears in Configuration, the code must accept it as a parameter — not hardcode it. Spec examples are illustrations, not constants.
-  - Verify actual functionality by running the real binary/entry points not just via test harnesses. If the work produces a CLI command, run it. If it produces an API, call it. Tests verify code correctness — this critic verifies that the software actually works when a user runs it.
+  - Configuration hardcoding: compare every literal string, prefix, path, or
+    pattern in the new code against the project's configurable values. If a value
+    is configurable, the code must accept it as a parameter — not hardcode it.
+  - Verify actual functionality by running the real binary or entry points, not
+    just via test harnesses. If the work produces a CLI command, run it. If it
+    produces an API, call it.
 
-  Plus work-driven critics based on the scope of the unit of work.
+  ### Phase 4 — Iterative Refinement
 
-  ### Phase 3 — Apply and Verify
-
-  Apply all fixes. Run a second critic pass (Phase 2). Stop when only MINORs remain.
-  
+  Fix issues found by the critic pass. Repeat the critic pass until only minor
+  issues remain.
 guidelines: []
