@@ -1284,7 +1284,7 @@ class TestTaskDispatch:
         reconciler.run_cycle()
 
         briefing = workspace_manager.get_task_briefing("abc123", tasks[0].id)
-        assert EventReason.TASK_FAILED in briefing
+        assert "TaskFailed" in briefing
         assert "Test compilation error" in briefing
 
     def test_blocked_task_not_dispatched(
