@@ -51,8 +51,9 @@ _SYNC_PREAMBLE = (
     "CRITICAL: Your ONLY output mechanism is an empty git commit. "
     "Text you write to the conversation is NOT captured. "
     "You MUST run `git commit --allow-empty -m '<message>'` with "
-    "your result as the commit message. If you do not create this "
-    "commit, your work is lost.\n\n"
+    "your result as the commit message, then run `git push` to "
+    "publish it. If you do not create and push this commit, "
+    "your work is lost.\n\n"
 )
 
 _DECOMPOSITION_EPILOGUE = _SYNC_PREAMBLE + (
