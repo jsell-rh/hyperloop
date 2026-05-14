@@ -197,16 +197,21 @@ class AmbientExecutor:
             self._git("push", "origin", "--delete", tmp_branch, check=False)
             self._git("branch", "-D", "--", tmp_branch, check=False)
 
+    _COMMIT_POLL_DELAYS = (0, 2.0, 5.0, 10.0, 15.0)
+
     def _await_result(self, session_id: str, branch: str, head_before: str) -> str:
         self._platform_runner.wait_for_completion(
             session_id, timeout_seconds=self._timeout_seconds
         )
 
-        self._git("fetch", "origin", branch, check=False)
-        head_after = self._git("rev-parse", f"origin/{branch}").stdout.strip()
-        if head_after != head_before:
-            result = self._git("log", "-1", "--format=%B", f"origin/{branch}")
-            return result.stdout.strip()
+        for delay in self._COMMIT_POLL_DELAYS:
+            if delay:
+                time.sleep(delay)
+            self._git("fetch", "origin", branch, check=False)
+            head_after = self._git("rev-parse", f"origin/{branch}").stdout.strip()
+            if head_after != head_before:
+                result = self._git("log", "-1", "--format=%B", f"origin/{branch}")
+                return result.stdout.strip()
 
         raise ValueError("Agent completed without creating a result commit")
 
