@@ -186,6 +186,9 @@ class ClaudeSDKExecutor:
         self._worktree_base.mkdir(parents=True, exist_ok=True)
         dirname = _sanitize_branch_for_path(branch)
         worktree_path = self._worktree_base / dirname
+        if worktree_path.exists():
+            self._remove_worktree(worktree_path)
+            self._git("worktree", "prune", check=False)
         self._git("worktree", "add", str(worktree_path), "--", branch)
         return worktree_path
 
