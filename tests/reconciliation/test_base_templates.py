@@ -215,6 +215,163 @@ class TestImplementerWorkflowPhases:
         )
 
 
+class TestDecomposerWorkflowPhases:
+    """agent-prompts.spec.md — Requirement: Decomposer Workflow.
+
+    The decomposer base prompt SHALL instruct the agent to follow a
+    read-first, dependency-ordered decomposition workflow.
+    """
+
+    @pytest.fixture()
+    def decomposer_prompt(self) -> str:
+        doc = yaml.safe_load((BASE_DIR / "decomposer.yaml").read_text())
+        return doc["prompt"]
+
+    def test_addresses_read_specs_phase(self, decomposer_prompt: str) -> None:
+        prompt_lower = decomposer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in ["read each spec", "read the spec", "read specs"]
+        ), "Decomposer prompt must address reading specs"
+
+    def test_addresses_read_diffs_phase(self, decomposer_prompt: str) -> None:
+        prompt_lower = decomposer_prompt.lower()
+        assert "diff" in prompt_lower, (
+            "Decomposer prompt must address reading diffs for modified specs"
+        )
+
+    def test_addresses_read_implementation_phase(self, decomposer_prompt: str) -> None:
+        prompt_lower = decomposer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "read the current",
+                "current implementation",
+                "current codebase",
+                "existing code",
+            ]
+        ), "Decomposer prompt must address reading current implementation"
+
+    def test_addresses_prior_failures_phase(self, decomposer_prompt: str) -> None:
+        prompt_lower = decomposer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in ["prior failure", "prior event", "verification fail"]
+        ), (
+            "Decomposer prompt must address checking for prior failures "
+            "and producing targeted corrective tasks"
+        )
+
+    def test_prior_failures_instruct_targeted_corrective_tasks(
+        self, decomposer_prompt: str
+    ) -> None:
+        prompt_lower = decomposer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "targeted corrective",
+                "corrective task",
+                "only tasks that address",
+                "only targeted",
+            ]
+        ), (
+            "Decomposer prompt must instruct producing only targeted corrective "
+            "tasks when prior failures exist, not re-decomposing from scratch"
+        )
+
+    def test_prior_failures_instruct_no_duplication(
+        self, decomposer_prompt: str
+    ) -> None:
+        prompt_lower = decomposer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "do not duplicate",
+                "not duplicate work",
+                "already succeeded",
+                "not re-decompos",
+            ]
+        ), "Decomposer prompt must instruct not duplicating work that already succeeded"
+
+    def test_addresses_cross_spec_dependency_awareness(
+        self, decomposer_prompt: str
+    ) -> None:
+        prompt_lower = decomposer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "cross-spec",
+                "existing tasks from other specs",
+                "other specs",
+            ]
+        ), "Decomposer prompt must address cross-spec dependency awareness"
+
+    def test_cross_spec_instructs_declaring_dependencies(
+        self, decomposer_prompt: str
+    ) -> None:
+        prompt_lower = decomposer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "cross-spec dependenc",
+                "declare depend",
+                "reference existing tasks",
+            ]
+        ), (
+            "Decomposer prompt must instruct declaring cross-spec dependencies "
+            "when proposed tasks depend on work from another spec"
+        )
+
+    def test_addresses_gap_analysis_phase(self, decomposer_prompt: str) -> None:
+        prompt_lower = decomposer_prompt.lower()
+        assert "gap" in prompt_lower, "Decomposer prompt must address gap analysis"
+
+    def test_addresses_dependency_ordering_phase(self, decomposer_prompt: str) -> None:
+        prompt_lower = decomposer_prompt.lower()
+        assert any(
+            phrase in prompt_lower for phrase in ["depend", "order", "blocking"]
+        ), "Decomposer prompt must address dependency ordering"
+
+    def test_addresses_proposed_task_formatting_phase(
+        self, decomposer_prompt: str
+    ) -> None:
+        prompt_lower = decomposer_prompt.lower()
+        assert "testing scenario" in prompt_lower or (
+            "test" in prompt_lower and "scenario" in prompt_lower
+        ), (
+            "Decomposer prompt must instruct including testing scenarios "
+            "in proposed tasks"
+        )
+
+    def test_diff_scoping_instructs_only_changed_requirements(
+        self, decomposer_prompt: str
+    ) -> None:
+        prompt_lower = decomposer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "scope",
+                "only what changed",
+                "only the requirements that changed",
+                "changed requirements",
+            ]
+        ), (
+            "Decomposer prompt must instruct scoping to only "
+            "changed requirements when a diff is provided"
+        )
+
+    def test_reading_phases_appear_before_gap_analysis(
+        self, decomposer_prompt: str
+    ) -> None:
+        prompt_lower = decomposer_prompt.lower()
+        read_pos = prompt_lower.find("read")
+        gap_pos = prompt_lower.find("gap")
+        assert read_pos >= 0 and gap_pos >= 0, (
+            "Decomposer prompt must contain both reading and gap analysis phases"
+        )
+        assert read_pos < gap_pos, "Reading phases must appear before gap analysis"
+
+
 class TestGenericPrompts:
     """agent-prompts.spec.md — Requirement: Generic Prompts.
 
