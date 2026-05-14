@@ -29,7 +29,6 @@ class GitPlanStore:
         return self._read_plan()
 
     def write_plan(self, plan: Plan) -> None:
-        self._fetch_plan_branch()
         if not self._branch_exists():
             self._create_plan_commit(plan, parent=None)
         else:
