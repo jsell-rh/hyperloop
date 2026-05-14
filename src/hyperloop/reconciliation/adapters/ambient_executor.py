@@ -187,6 +187,7 @@ class AmbientExecutor:
         head_before = self._git("rev-parse", tmp_branch).stdout.strip()
         session_id = self._retry(_create)
         try:
+            self._wait_for_running(session_id)
 
             def _wait() -> str:
                 return self._platform_runner.wait_for_completion(
@@ -204,6 +205,21 @@ class AmbientExecutor:
             self._platform_runner.stop_session(session_id)
             self._git("push", "origin", "--delete", tmp_branch, check=False)
             self._git("branch", "-D", "--", tmp_branch, check=False)
+
+    _STARTUP_POLL_INTERVAL = 2.0
+    _STARTUP_TIMEOUT = 120.0
+
+    def _wait_for_running(self, session_id: str) -> None:
+        deadline = time.monotonic() + self._STARTUP_TIMEOUT
+        while time.monotonic() < deadline:
+            status = self._platform_runner.get_session_status(session_id)
+            if status not in (SessionStatus.PENDING, SessionStatus.CREATING):
+                return
+            time.sleep(self._STARTUP_POLL_INTERVAL)
+        raise ExecutorTimeoutError(
+            f"Session {session_id} did not reach running state "
+            f"within {self._STARTUP_TIMEOUT}s"
+        )
 
     def _push_branch(self, branch: str) -> None:
         self._retry(lambda: self._git("push", "origin", branch))
