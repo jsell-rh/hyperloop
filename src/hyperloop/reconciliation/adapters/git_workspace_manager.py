@@ -40,8 +40,13 @@ class GitWorkspaceManager:
         delivery = self._delivery_branch(blob_sha)
         verifier = self._verifier_branch(blob_sha)
         if self._branch_exists(verifier):
+            self._git("worktree", "prune", check=False)
             self._delete_branch(verifier)
-        self._git("branch", verifier, delivery)
+        if self._branch_exists(verifier):
+            delivery_sha = self._git("rev-parse", delivery).stdout.strip()
+            self._git("update-ref", f"refs/heads/{verifier}", delivery_sha)
+        else:
+            self._git("branch", verifier, delivery)
         self._push_branch(verifier)
         return f"verification/{blob_sha}"
 
