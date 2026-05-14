@@ -187,39 +187,26 @@ class AmbientExecutor:
         head_before = self._git("rev-parse", tmp_branch).stdout.strip()
         session_id = self._retry(_create)
         try:
-            self._wait_for_running(session_id)
-
-            def _wait() -> str:
-                return self._platform_runner.wait_for_completion(
-                    session_id, timeout_seconds=self._timeout_seconds
-                )
-
-            self._retry(_wait)
-            self._git("fetch", "origin", tmp_branch)
-            head_after = self._git("rev-parse", f"origin/{tmp_branch}").stdout.strip()
-            if head_after == head_before:
-                raise ValueError("Agent completed without creating a result commit")
-            result = self._git("log", "-1", "--format=%B", f"origin/{tmp_branch}")
-            return result.stdout.strip()
+            return self._await_result(session_id, tmp_branch, head_before)
         finally:
             self._platform_runner.stop_session(session_id)
             self._git("push", "origin", "--delete", tmp_branch, check=False)
             self._git("branch", "-D", "--", tmp_branch, check=False)
 
-    _STARTUP_POLL_INTERVAL = 2.0
-    _STARTUP_TIMEOUT = 120.0
+    _RESULT_BACKOFF = (2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0, 30.0)
 
-    def _wait_for_running(self, session_id: str) -> None:
-        deadline = time.monotonic() + self._STARTUP_TIMEOUT
-        while time.monotonic() < deadline:
-            status = self._platform_runner.get_session_status(session_id)
-            if status not in (SessionStatus.PENDING, SessionStatus.CREATING):
-                return
-            time.sleep(self._STARTUP_POLL_INTERVAL)
-        raise ExecutorTimeoutError(
-            f"Session {session_id} did not reach running state "
-            f"within {self._STARTUP_TIMEOUT}s"
+    def _await_result(self, session_id: str, branch: str, head_before: str) -> str:
+        self._platform_runner.wait_for_completion(
+            session_id, timeout_seconds=self._timeout_seconds
         )
+        for delay in self._RESULT_BACKOFF:
+            self._git("fetch", "origin", branch, check=False)
+            head_after = self._git("rev-parse", f"origin/{branch}").stdout.strip()
+            if head_after != head_before:
+                result = self._git("log", "-1", "--format=%B", f"origin/{branch}")
+                return result.stdout.strip()
+            time.sleep(delay)
+        raise ValueError("Agent completed without creating a result commit")
 
     def _push_branch(self, branch: str) -> None:
         self._retry(lambda: self._git("push", "origin", branch))

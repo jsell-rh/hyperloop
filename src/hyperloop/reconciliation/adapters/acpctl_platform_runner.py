@@ -104,9 +104,9 @@ class AcpctlPlatformRunner:
         if result.returncode != 0:
             return SessionStatus.UNKNOWN
         data = json.loads(result.stdout)
-        raw_status = data.get("status", "").lower()
+        raw_phase = data.get("phase", "").lower()
         try:
-            return SessionStatus(raw_status)
+            return SessionStatus(raw_phase)
         except ValueError:
             return SessionStatus.UNKNOWN
 
