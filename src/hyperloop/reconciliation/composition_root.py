@@ -131,6 +131,8 @@ def create_reconciler(
         repo_path=repo_path,
         plan_branch=config.plan_branch,
         plan_file=config.plan_file,
+        git_author_name=config.git_author_name,
+        git_author_email=config.git_author_email,
     )
 
     spec_source = GitSpecSource(

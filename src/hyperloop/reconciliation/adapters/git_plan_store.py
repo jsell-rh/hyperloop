@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -13,12 +14,20 @@ class GitPlanStore:
         *,
         plan_branch: str,
         plan_file: str,
+        git_author_name: str = "hyperloop",
+        git_author_email: str = "hyperloop@localhost",
         remote: str = "origin",
     ) -> None:
         self._repo_path = repo_path
         self._plan_branch = plan_branch
         self._plan_file = plan_file
         self._remote = remote
+        self._git_env = {
+            "GIT_AUTHOR_NAME": git_author_name,
+            "GIT_AUTHOR_EMAIL": git_author_email,
+            "GIT_COMMITTER_NAME": git_author_name,
+            "GIT_COMMITTER_EMAIL": git_author_email,
+        }
 
     def get_plan(self) -> Plan:
         self._fetch_plan_branch()
@@ -80,6 +89,7 @@ class GitPlanStore:
         input: str | None = None,
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
+        env = {**os.environ, **self._git_env}
         return subprocess.run(
             ["git", *args],
             cwd=self._repo_path,
@@ -88,4 +98,5 @@ class GitPlanStore:
             encoding="utf-8",
             input=input,
             check=check,
+            env=env,
         )

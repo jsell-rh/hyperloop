@@ -38,6 +38,9 @@ class Configuration(BaseSettings):
     trunk_branch: str = "main"
     branch_prefix: str = "hyperloop/"
 
+    git_author_name: str = "hyperloop"
+    git_author_email: str = "hyperloop@localhost"
+
     executor_type: ExecutorType = ExecutorType.CLAUDE_SDK
     executor_timeout_seconds: int = 2700
     executor_max_retries: int = 3
