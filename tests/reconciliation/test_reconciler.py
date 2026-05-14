@@ -4812,6 +4812,45 @@ class TestDecompositionFailure:
         assert cycle_completed[0]["cycle"] == 1
 
 
+class TestSpecContentReadFailure:
+    def test_read_at_failure_treated_as_decomposition_failure(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        spec_source.set_read_error(RuntimeError("blob not found"))
+
+        reconciler.run_cycle()
+
+        sp = plan_store.get_plan().spec_plans[0]
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        assert sp.tasks == []
+
+        decomp_events = [
+            e for e in sp.events if e.reason == EventReason.DECOMPOSITION_FAILED
+        ]
+        assert len(decomp_events) == 1
+        assert "blob not found" in decomp_events[0].message
+
+    def test_read_at_failure_fires_decomposition_failed_probe(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        observer: FakeObserver,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "abc123")
+        spec_source.set_read_error(RuntimeError("git error"))
+
+        reconciler.run_cycle()
+
+        probes = observer.calls_for("decomposition_failed")
+        assert len(probes) == 1
+        assert "git error" in probes[0]["reason"]
+
+
 class TestCyclicDependencyRejection:
     def test_self_referencing_dependency_rejected(
         self,

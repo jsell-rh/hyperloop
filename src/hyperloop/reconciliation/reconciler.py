@@ -172,25 +172,25 @@ class Reconciler:
             specs_count=len(out_of_sync), cycle=self._cycle
         )
 
-        spec_diffs: list[SpecDiff] = []
-        for sp in out_of_sync:
-            old_sha = self._find_last_synced_sha(plan, sp.path)
-            content = self._spec_source.read_at(sp.path, sp.blob_sha)
-            diff_text = self._spec_source.diff(sp.path, old_sha, sp.blob_sha)
-            spec_diffs.append(
-                SpecDiff(
-                    spec_path=sp.path,
-                    blob_sha=sp.blob_sha,
-                    old_blob_sha=old_sha,
-                    content=content,
-                    diff_text=diff_text,
-                )
-            )
-
-        existing_tasks = self._collect_all_tasks(plan)
-        events = self._collect_spec_events(out_of_sync)
-
         try:
+            spec_diffs: list[SpecDiff] = []
+            for sp in out_of_sync:
+                old_sha = self._find_last_synced_sha(plan, sp.path)
+                content = self._spec_source.read_at(sp.path, sp.blob_sha)
+                diff_text = self._spec_source.diff(sp.path, old_sha, sp.blob_sha)
+                spec_diffs.append(
+                    SpecDiff(
+                        spec_path=sp.path,
+                        blob_sha=sp.blob_sha,
+                        old_blob_sha=old_sha,
+                        content=content,
+                        diff_text=diff_text,
+                    )
+                )
+
+            existing_tasks = self._collect_all_tasks(plan)
+            events = self._collect_spec_events(out_of_sync)
+
             proposed = self._agent_runtime.launch_decomposition(
                 spec_diffs, existing_tasks, events
             )

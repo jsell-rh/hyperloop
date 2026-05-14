@@ -1062,6 +1062,27 @@ class TestDecompositionSpecContent:
         tasks_idx = headings.index("Existing Tasks")
         assert content_idx < tasks_idx
 
+    def test_includes_spec_diff_section_for_new_spec(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha=BLOB_SHA,
+                old_blob_sha=None,
+                content="# Auth Spec\nNew content.",
+                diff_text="# Auth Spec\nNew content.",
+            ),
+        ]
+        runtime.launch_decomposition(spec_diffs, [], [])
+
+        sections = composer.calls[0].sections
+        diff_sections = [s for s in sections if s.heading == "Spec Diffs"]
+        assert len(diff_sections) == 1
+        assert "(new)" in diff_sections[0].content
+        assert "# Auth Spec" in diff_sections[0].content
+
 
 class TestLaunchVerification:
     def test_returns_handle_with_verifier_branch_as_id(
