@@ -197,30 +197,18 @@ class AmbientExecutor:
             self._git("push", "origin", "--delete", tmp_branch, check=False)
             self._git("branch", "-D", "--", tmp_branch, check=False)
 
-    _POLL_INTERVAL = 5.0
-
     def _await_result(self, session_id: str, branch: str, head_before: str) -> str:
         self._platform_runner.wait_for_completion(
             session_id, timeout_seconds=self._timeout_seconds
         )
 
-        deadline = time.monotonic() + self._timeout_seconds
-        while time.monotonic() < deadline:
-            self._git("fetch", "origin", branch, check=False)
-            head_after = self._git("rev-parse", f"origin/{branch}").stdout.strip()
-            if head_after != head_before:
-                result = self._git("log", "-1", "--format=%B", f"origin/{branch}")
-                return result.stdout.strip()
+        self._git("fetch", "origin", branch, check=False)
+        head_after = self._git("rev-parse", f"origin/{branch}").stdout.strip()
+        if head_after != head_before:
+            result = self._git("log", "-1", "--format=%B", f"origin/{branch}")
+            return result.stdout.strip()
 
-            phase = self._platform_runner.get_session_status(session_id)
-            if phase in (SessionStatus.STOPPED, SessionStatus.FAILED):
-                raise ValueError("Agent completed without creating a result commit")
-
-            time.sleep(self._POLL_INTERVAL)
-
-        raise ExecutorTimeoutError(
-            f"Session {session_id} timed out after {self._timeout_seconds}s"
-        )
+        raise ValueError("Agent completed without creating a result commit")
 
     def _push_branch(self, branch: str) -> None:
         self._retry(lambda: self._git("push", "origin", branch))

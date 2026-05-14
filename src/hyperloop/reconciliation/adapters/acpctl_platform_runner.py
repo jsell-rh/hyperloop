@@ -57,14 +57,7 @@ class AcpctlPlatformRunner:
     def wait_for_completion(self, session_id: str, *, timeout_seconds: int) -> str:
         try:
             result = subprocess.run(
-                [
-                    self._acpctl_path,
-                    "session",
-                    "messages",
-                    session_id,
-                    "-f",
-                    "--json",
-                ],
+                [self._acpctl_path, "session", "events", session_id],
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
