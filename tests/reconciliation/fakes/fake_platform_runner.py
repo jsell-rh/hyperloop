@@ -67,7 +67,9 @@ class FakePlatformRunner:
         self.stop_calls.append(session_id)
         self._running_sessions.pop(session_id, None)
 
-    def wait_for_completion(self, session_id: str, *, timeout_seconds: int) -> str:
+    def wait_for_completion(
+        self, session_id: str, *, timeout_seconds: int, branch: str = ""
+    ) -> str:
         self.wait_calls.append(
             {"session_id": session_id, "timeout_seconds": timeout_seconds}
         )

@@ -73,10 +73,12 @@ def build_executor(
     if config.executor_type == ExecutorType.AMBIENT:
         assert config.repository_url is not None
         assert config.project_name is not None
+        on_event = _make_observer_callback(observer) if observer else None
         return AmbientExecutor(
             repo_path,
             platform_runner=AcpctlPlatformRunner(
                 acpctl_path=config.acpctl_path,
+                on_event=on_event,
             ),
             repository_url=config.repository_url,
             project_name=config.project_name,
