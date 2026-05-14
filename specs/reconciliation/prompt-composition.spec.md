@@ -115,9 +115,10 @@ At compose time, the prompt composer SHALL inject runtime context as additional 
 
 #### Scenario: Decomposition prompt
 
-- GIVEN OutOfSync specs with diffs, events, and cross-spec task state
+- GIVEN OutOfSync specs with references, events, and cross-spec task state
 - WHEN the decomposition agent's prompt is composed
-- THEN it contains: base prompt + guidelines + spec content at current SHA + diff from last Synced SHA + prior events (if any) + current task state across all specs (for cross-spec dependency awareness)
+- THEN it contains: base prompt + guidelines + spec references (path, current blob SHA, previous Synced blob SHA if any) + prior events (if any) + current task state across all specs (for cross-spec dependency awareness)
+- AND it does NOT embed spec content or diffs inline (the agent reads and diffs specs itself using the provided references)
 
 #### Scenario: Integration summarizer prompt
 

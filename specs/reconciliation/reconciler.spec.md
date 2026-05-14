@@ -70,10 +70,12 @@ The reconciler SHALL detect divergence by comparing the spec files reported by t
 
 The reconciler SHALL invoke the decomposition agent for all OutOfSync specs. The decomposition agent runs serially and receives, for each spec:
 
-- The spec content at the current blob SHA
-- The diff from the last Synced blob SHA (if any) to the current blob SHA
+- The spec path and current blob SHA
+- The last Synced blob SHA (if any), so the agent can diff between versions itself
 - All events on the SpecPlan (including prior VerificationFailed and TaskFailed events)
 - The current state of all tasks across all specs (for cross-spec dependency awareness)
+
+The reconciler SHALL NOT embed spec content or diffs in the prompt. The agent reads and diffs specs itself using the provided references. This avoids inflating the prompt beyond context limits for large or numerous specs.
 
 #### Scenario: Decomposition with prior failure context
 
