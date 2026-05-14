@@ -90,7 +90,7 @@ class GitPlanStore:
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         env = {**os.environ, **self._git_env}
-        return subprocess.run(
+        result = subprocess.run(
             ["git", *args],
             cwd=self._repo_path,
             capture_output=True,
@@ -100,3 +100,13 @@ class GitPlanStore:
             check=check,
             env=env,
         )
+        config_path = self._repo_path / ".git" / "config"
+        if config_path.exists():
+            content = config_path.read_text()
+            if "bare = true" in content:
+                subprocess.run(
+                    ["git", "config", "--unset", "core.bare"],
+                    cwd=self._repo_path,
+                    capture_output=True,
+                )
+        return result
