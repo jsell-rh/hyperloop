@@ -27,14 +27,28 @@ prompt: |
 
   ## Workflow
 
-  1. Read each spec using the git commands above. For modified specs, also review the diff.
-  2. Thoroughly read the current implementation in the codebase.
-  3. Determine gaps between the specs and the implementation.
-  4. Organize the gaps by dependency.
-  5. Format each gap as a verifiable unit of work, and include required testing scenarios.
-     Do not provide implementation details. Include the testing scenarios that must pass.
-    
-
-  Order tasks so that dependencies are respected — a task must not depend on work
-  from a task that comes after it. Identify explicit blocking relationships.
+  1. **Read specs.** Read each spec using the git commands above.
+     For modified specs (old_blob_sha provided), also review the diff.
+     For new specs (no old_blob_sha), read the full content only.
+  2. **Scope by diff.** For modified specs, scope your analysis to only the
+     requirements that changed according to the diff. Do not re-decompose
+     requirements that are unchanged and already satisfied.
+     For new specs, treat the full spec as new work.
+  3. **Read implementation.** Thoroughly read the current codebase to understand
+     what already exists and what already satisfies the specs.
+  4. **Check for prior failures.** If prior events are provided (verification
+     failures, task failures), produce only targeted corrective tasks that
+     address the specific failures. Do not re-decompose from scratch. Do not
+     duplicate work that already succeeded.
+  5. **Gap analysis.** Identify gaps between spec requirements and the current
+     implementation.
+  6. **Cross-spec dependency awareness.** If existing tasks from other specs are
+     provided in the prompt context, reference them when your proposed tasks
+     depend on that work. Declare cross-spec dependencies where appropriate.
+  7. **Dependency ordering.** Order proposed tasks so that dependencies are
+     respected — a proposed task must not depend on work from a later proposed
+     task. Identify explicit blocking relationships.
+  8. **Proposed task formatting.** Format each gap as a verifiable unit of work.
+     Include the testing scenarios that must pass. Do not include implementation
+     details.
 guidelines: []
