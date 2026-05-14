@@ -267,19 +267,13 @@ class TestSpecDiff:
             spec_path="auth.spec.md",
             blob_sha="def456",
             old_blob_sha="abc123",
-            content="# Auth Spec",
-            diff_text="@@ diff @@",
         )
         assert diff.spec_path == "auth.spec.md"
         assert diff.blob_sha == "def456"
         assert diff.old_blob_sha == "abc123"
-        assert diff.content == "# Auth Spec"
-        assert diff.diff_text == "@@ diff @@"
 
     def test_is_frozen(self) -> None:
-        diff = SpecDiff(
-            spec_path="x", blob_sha="y", old_blob_sha=None, content="", diff_text=""
-        )
+        diff = SpecDiff(spec_path="x", blob_sha="y", old_blob_sha=None)
         try:
             diff.spec_path = "other"  # type: ignore[misc]
             assert False, "should have raised"
@@ -343,8 +337,6 @@ class TestFakeDecomposition:
                 spec_path="auth.spec.md",
                 blob_sha="abc",
                 old_blob_sha=None,
-                content="",
-                diff_text="",
             )
         ]
         result = runtime.launch_decomposition(
@@ -362,8 +354,6 @@ class TestFakeDecomposition:
                 spec_path="a.spec.md",
                 blob_sha="sha1",
                 old_blob_sha=None,
-                content="",
-                diff_text="",
             )
         ]
         tasks = [

@@ -8,11 +8,7 @@ class FakeSpecSource:
         self._entries: list[SpecEntry] = []
         self._contents: dict[tuple[str, str], str] = {}
         self._diffs: dict[tuple[str, str | None, str], str] = {}
-        self._read_error: Exception | None = None
         self.sync_count: int = 0
-
-    def set_read_error(self, error: Exception) -> None:
-        self._read_error = error
 
     def add_spec(self, path: str, blob_sha: str, content: str = "") -> None:
         self._entries = [e for e in self._entries if e.path != path]
@@ -31,8 +27,6 @@ class FakeSpecSource:
         return list(self._entries)
 
     def read_at(self, path: str, blob_sha: str) -> str:
-        if self._read_error is not None:
-            raise self._read_error
         return self._contents[(path, blob_sha)]
 
     def diff(self, path: str, old_sha: str | None, new_sha: str) -> str:

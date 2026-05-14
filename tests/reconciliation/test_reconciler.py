@@ -1107,88 +1107,6 @@ class TestDecompositionDispatch:
         assert len(set(all_ids)) == 3
 
 
-class TestDecompositionSpecContent:
-    def test_decomposition_receives_spec_content_for_new_spec(
-        self,
-        reconciler: Reconciler,
-        spec_source: FakeSpecSource,
-        agent_runtime: FakeAgentRuntime,
-    ) -> None:
-        spec_source.add_spec(
-            "auth.spec.md", "abc123", content="# Auth Spec\nRequirements here."
-        )
-        agent_runtime.set_decomposition_result([])
-
-        reconciler.run_cycle()
-
-        diffs, _, _ = agent_runtime.decomposition_calls[0]
-        assert diffs[0].content == "# Auth Spec\nRequirements here."
-
-    def test_decomposition_receives_diff_text_for_modified_spec(
-        self,
-        reconciler: Reconciler,
-        spec_source: FakeSpecSource,
-        plan_store: FakePlanStore,
-        agent_runtime: FakeAgentRuntime,
-    ) -> None:
-        plan = plan_store.get_plan()
-        old_sp = plan.add_spec("auth.spec.md", "old_sha")
-        old_sp.status = SpecPlanStatus.SYNCED
-
-        spec_source.add_spec("auth.spec.md", "new_sha", content="# Auth Spec v2")
-        spec_source.set_diff(
-            "auth.spec.md",
-            "old_sha",
-            "new_sha",
-            "@@ -1 +1 @@\n-# Auth Spec v1\n+# Auth Spec v2",
-        )
-        agent_runtime.set_decomposition_result([])
-
-        reconciler.run_cycle()
-
-        diffs, _, _ = agent_runtime.decomposition_calls[0]
-        assert diffs[0].content == "# Auth Spec v2"
-        assert diffs[0].diff_text == "@@ -1 +1 @@\n-# Auth Spec v1\n+# Auth Spec v2"
-
-    def test_decomposition_receives_full_content_as_diff_for_new_spec(
-        self,
-        reconciler: Reconciler,
-        spec_source: FakeSpecSource,
-        agent_runtime: FakeAgentRuntime,
-    ) -> None:
-        spec_source.add_spec(
-            "auth.spec.md", "abc123", content="# Auth Spec\nNew content."
-        )
-        spec_source.set_diff(
-            "auth.spec.md", None, "abc123", "# Auth Spec\nNew content."
-        )
-        agent_runtime.set_decomposition_result([])
-
-        reconciler.run_cycle()
-
-        diffs, _, _ = agent_runtime.decomposition_calls[0]
-        assert diffs[0].diff_text == "# Auth Spec\nNew content."
-
-    def test_multiple_specs_each_get_their_own_content_and_diff(
-        self,
-        reconciler: Reconciler,
-        spec_source: FakeSpecSource,
-        agent_runtime: FakeAgentRuntime,
-    ) -> None:
-        spec_source.add_spec("auth.spec.md", "sha1", content="Auth content")
-        spec_source.add_spec("users.spec.md", "sha2", content="Users content")
-        spec_source.set_diff("auth.spec.md", None, "sha1", "Auth content")
-        spec_source.set_diff("users.spec.md", None, "sha2", "Users content")
-        agent_runtime.set_decomposition_result([])
-
-        reconciler.run_cycle()
-
-        diffs, _, _ = agent_runtime.decomposition_calls[0]
-        by_path = {d.spec_path: d for d in diffs}
-        assert by_path["auth.spec.md"].content == "Auth content"
-        assert by_path["users.spec.md"].content == "Users content"
-
-
 def _build_reconciling_spec_plan(
     plan_store: FakePlanStore,
     spec_source: FakeSpecSource,
@@ -4810,45 +4728,6 @@ class TestDecompositionFailure:
         cycle_completed = observer.calls_for("cycle_completed")
         assert len(cycle_completed) == 1
         assert cycle_completed[0]["cycle"] == 1
-
-
-class TestSpecContentReadFailure:
-    def test_read_at_failure_treated_as_decomposition_failure(
-        self,
-        reconciler: Reconciler,
-        spec_source: FakeSpecSource,
-        plan_store: FakePlanStore,
-        agent_runtime: FakeAgentRuntime,
-    ) -> None:
-        spec_source.add_spec("auth.spec.md", "abc123")
-        spec_source.set_read_error(RuntimeError("blob not found"))
-
-        reconciler.run_cycle()
-
-        sp = plan_store.get_plan().spec_plans[0]
-        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
-        assert sp.tasks == []
-
-        decomp_events = [
-            e for e in sp.events if e.reason == EventReason.DECOMPOSITION_FAILED
-        ]
-        assert len(decomp_events) == 1
-        assert "blob not found" in decomp_events[0].message
-
-    def test_read_at_failure_fires_decomposition_failed_probe(
-        self,
-        reconciler: Reconciler,
-        spec_source: FakeSpecSource,
-        observer: FakeObserver,
-    ) -> None:
-        spec_source.add_spec("auth.spec.md", "abc123")
-        spec_source.set_read_error(RuntimeError("git error"))
-
-        reconciler.run_cycle()
-
-        probes = observer.calls_for("decomposition_failed")
-        assert len(probes) == 1
-        assert "git error" in probes[0]["reason"]
 
 
 class TestCyclicDependencyRejection:
