@@ -82,6 +82,7 @@ def build_executor(
             project_name=config.project_name,
             timeout_seconds=config.executor_timeout_seconds,
             max_retries=config.executor_max_retries,
+            max_tokens=config.executor_max_tokens,
             branch_prefix=config.branch_prefix,
         )
     raise ValueError(f"Unknown executor_type: {config.executor_type!r}")

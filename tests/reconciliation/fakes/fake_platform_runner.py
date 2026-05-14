@@ -42,6 +42,7 @@ class FakePlatformRunner:
         repository_url: str,
         project: str,
         model: str | None,
+        max_tokens: int | None = None,
     ) -> str:
         self.create_calls.append(
             {
@@ -50,6 +51,7 @@ class FakePlatformRunner:
                 "repository_url": repository_url,
                 "project": project,
                 "model": model,
+                "max_tokens": max_tokens,
             }
         )
         if self._transient_failures_remaining > 0:

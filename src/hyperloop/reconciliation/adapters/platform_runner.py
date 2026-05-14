@@ -15,6 +15,7 @@ class PlatformRunner(Protocol):
         repository_url: str,
         project: str,
         model: str | None,
+        max_tokens: int | None = None,
     ) -> str: ...
 
     def stop_session(self, session_id: str) -> None: ...

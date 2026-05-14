@@ -20,6 +20,7 @@ class AcpctlPlatformRunner:
         repository_url: str,
         project: str,
         model: str | None,
+        max_tokens: int | None = None,
     ) -> str:
         cmd = [
             self._acpctl_path,
@@ -38,6 +39,8 @@ class AcpctlPlatformRunner:
         ]
         if model is not None:
             cmd.extend(["--model", model])
+        if max_tokens is not None:
+            cmd.extend(["--max-tokens", str(max_tokens)])
 
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         data = json.loads(result.stdout)
@@ -104,6 +107,8 @@ class AcpctlPlatformRunner:
         if result.returncode != 0:
             return SessionStatus.UNKNOWN
         data = json.loads(result.stdout)
+        if data.get("completion_time"):
+            return SessionStatus.STOPPED
         raw_phase = data.get("phase", "").lower()
         try:
             return SessionStatus(raw_phase)

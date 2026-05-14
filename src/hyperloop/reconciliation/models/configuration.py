@@ -41,6 +41,7 @@ class Configuration(BaseSettings):
     executor_type: ExecutorType = ExecutorType.CLAUDE_SDK
     executor_timeout_seconds: int = 2700
     executor_max_retries: int = 3
+    executor_max_tokens: int = 128000
     repository_url: str | None = None
     project_name: str | None = None
     acpctl_path: str = "acpctl"

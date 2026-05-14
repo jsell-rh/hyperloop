@@ -67,6 +67,7 @@ class AmbientExecutor:
         project_name: str,
         timeout_seconds: int = 300,
         max_retries: int = 3,
+        max_tokens: int = 128000,
         branch_prefix: str = "hyperloop/",
     ) -> None:
         self._repo_path = repo_path
@@ -75,6 +76,7 @@ class AmbientExecutor:
         self._project_name = project_name
         self._timeout_seconds = timeout_seconds
         self._max_retries = max_retries
+        self._max_tokens = max_tokens
         self._branch_prefix = branch_prefix
         self._session_prefix = _derive_session_prefix(branch_prefix)
         self._sessions: dict[str, str] = {}
@@ -162,6 +164,7 @@ class AmbientExecutor:
                 repository_url=self._repository_url,
                 project=self._project_name,
                 model=model,
+                max_tokens=self._max_tokens,
             )
 
         session_id = self._retry(_create)
@@ -182,6 +185,7 @@ class AmbientExecutor:
                 repository_url=self._repository_url,
                 project=self._project_name,
                 model=model,
+                max_tokens=self._max_tokens,
             )
 
         head_before = self._git("rev-parse", tmp_branch).stdout.strip()
