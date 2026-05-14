@@ -73,12 +73,39 @@ class GitPlanStore:
         return result.returncode == 0
 
     def _fetch_plan_branch(self) -> None:
+        tracking = f"refs/remotes/{self._remote}/{self._plan_branch}"
         self._git(
             "fetch",
             self._remote,
-            f"+refs/heads/{self._plan_branch}:refs/heads/{self._plan_branch}",
+            f"+refs/heads/{self._plan_branch}:{tracking}",
             check=False,
         )
+
+        remote_exists = self._git("rev-parse", "--verify", tracking, check=False)
+        if remote_exists.returncode != 0:
+            return
+
+        remote_sha = remote_exists.stdout.strip()
+
+        if not self._branch_exists():
+            self._git("update-ref", f"refs/heads/{self._plan_branch}", remote_sha)
+            return
+
+        local_sha = self._git("rev-parse", self._plan_branch).stdout.strip()
+        if local_sha == remote_sha:
+            return
+
+        local_ahead = self._git(
+            "merge-base",
+            "--is-ancestor",
+            tracking,
+            self._plan_branch,
+            check=False,
+        )
+        if local_ahead.returncode == 0:
+            return
+
+        self._git("update-ref", f"refs/heads/{self._plan_branch}", remote_sha)
 
     def _push_plan_branch(self) -> None:
         self._git("push", self._remote, self._plan_branch, check=False)

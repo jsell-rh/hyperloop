@@ -395,6 +395,46 @@ class TestConcurrentAccess:
         paths = {sp.path for sp in refreshed.spec_plans}
         assert paths == {"auth.spec.md", "users.spec.md"}
 
+    def test_preserves_local_when_ahead_of_remote(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        store = _make_store(local)
+        plan = Plan()
+        plan.add_spec("auth.spec.md", "abc123")
+        store.write_plan(plan)
+
+        updated = Plan()
+        updated.add_spec("auth.spec.md", "abc123")
+        updated.add_spec("users.spec.md", "xyz789")
+        updated_json = updated.model_dump_json(indent=2) + "\n"
+        blob = _git(
+            local, "hash-object", "-w", "--stdin", input=updated_json
+        ).stdout.strip()
+        tree_entry = f"100644 blob {blob}\t{PLAN_FILE}"
+        tree_sha = _git(local, "mktree", input=tree_entry).stdout.strip()
+        parent = _git(local, "rev-parse", PLAN_BRANCH).stdout.strip()
+        commit = _git(
+            local,
+            "commit-tree",
+            tree_sha,
+            "-p",
+            parent,
+            "-m",
+            "Local update",
+        ).stdout.strip()
+        _git(
+            local,
+            "update-ref",
+            f"refs/heads/{PLAN_BRANCH}",
+            commit,
+        )
+
+        refreshed = store.get_plan()
+        assert len(refreshed.spec_plans) == 2
+        paths = {sp.path for sp in refreshed.spec_plans}
+        assert paths == {"auth.spec.md", "users.spec.md"}
+
 
 class TestProtocolConformance:
     def test_has_get_plan_method(self) -> None:
