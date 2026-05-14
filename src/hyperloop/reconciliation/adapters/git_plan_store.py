@@ -73,7 +73,7 @@ class GitPlanStore:
         )
 
     def _push_plan_branch(self) -> None:
-        self._git("push", self._remote, self._plan_branch)
+        self._git("push", self._remote, self._plan_branch, check=False)
 
     def _git(
         self,
