@@ -178,10 +178,16 @@ class AmbientExecutor:
 
         session_name = f"{self._session_prefix}sync-{tmp_suffix}"
 
+        push_instruction = (
+            f"\n\nIMPORTANT: After creating your commit, push it with:\n"
+            f"git push origin HEAD:refs/heads/{tmp_branch}\n"
+        )
+        full_prompt = prompt + push_instruction
+
         def _create() -> str:
             return self._platform_runner.create_session(
                 name=session_name,
-                prompt=prompt,
+                prompt=full_prompt,
                 repository_url=self._repository_url,
                 project=self._project_name,
                 model=model,
