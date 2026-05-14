@@ -1107,6 +1107,88 @@ class TestDecompositionDispatch:
         assert len(set(all_ids)) == 3
 
 
+class TestDecompositionSpecContent:
+    def test_decomposition_receives_spec_content_for_new_spec(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec(
+            "auth.spec.md", "abc123", content="# Auth Spec\nRequirements here."
+        )
+        agent_runtime.set_decomposition_result([])
+
+        reconciler.run_cycle()
+
+        diffs, _, _ = agent_runtime.decomposition_calls[0]
+        assert diffs[0].content == "# Auth Spec\nRequirements here."
+
+    def test_decomposition_receives_diff_text_for_modified_spec(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        plan = plan_store.get_plan()
+        old_sp = plan.add_spec("auth.spec.md", "old_sha")
+        old_sp.status = SpecPlanStatus.SYNCED
+
+        spec_source.add_spec("auth.spec.md", "new_sha", content="# Auth Spec v2")
+        spec_source.set_diff(
+            "auth.spec.md",
+            "old_sha",
+            "new_sha",
+            "@@ -1 +1 @@\n-# Auth Spec v1\n+# Auth Spec v2",
+        )
+        agent_runtime.set_decomposition_result([])
+
+        reconciler.run_cycle()
+
+        diffs, _, _ = agent_runtime.decomposition_calls[0]
+        assert diffs[0].content == "# Auth Spec v2"
+        assert diffs[0].diff_text == "@@ -1 +1 @@\n-# Auth Spec v1\n+# Auth Spec v2"
+
+    def test_decomposition_receives_full_content_as_diff_for_new_spec(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec(
+            "auth.spec.md", "abc123", content="# Auth Spec\nNew content."
+        )
+        spec_source.set_diff(
+            "auth.spec.md", None, "abc123", "# Auth Spec\nNew content."
+        )
+        agent_runtime.set_decomposition_result([])
+
+        reconciler.run_cycle()
+
+        diffs, _, _ = agent_runtime.decomposition_calls[0]
+        assert diffs[0].diff_text == "# Auth Spec\nNew content."
+
+    def test_multiple_specs_each_get_their_own_content_and_diff(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        spec_source.add_spec("auth.spec.md", "sha1", content="Auth content")
+        spec_source.add_spec("users.spec.md", "sha2", content="Users content")
+        spec_source.set_diff("auth.spec.md", None, "sha1", "Auth content")
+        spec_source.set_diff("users.spec.md", None, "sha2", "Users content")
+        agent_runtime.set_decomposition_result([])
+
+        reconciler.run_cycle()
+
+        diffs, _, _ = agent_runtime.decomposition_calls[0]
+        by_path = {d.spec_path: d for d in diffs}
+        assert by_path["auth.spec.md"].content == "Auth content"
+        assert by_path["users.spec.md"].content == "Users content"
+
+
 def _build_reconciling_spec_plan(
     plan_store: FakePlanStore,
     spec_source: FakeSpecSource,

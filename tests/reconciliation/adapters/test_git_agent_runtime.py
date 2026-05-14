@@ -778,6 +778,8 @@ class TestLaunchDecomposition:
                 spec_path="specs/auth.spec.md",
                 blob_sha=BLOB_SHA,
                 old_blob_sha=None,
+                content="",
+                diff_text="",
             ),
         ]
         result = runtime.launch_decomposition(spec_diffs, [], [])
@@ -794,6 +796,8 @@ class TestLaunchDecomposition:
                 spec_path="specs/auth.spec.md",
                 blob_sha=BLOB_SHA,
                 old_blob_sha=None,
+                content="",
+                diff_text="",
             ),
         ]
         runtime.launch_decomposition(spec_diffs, [], [])
@@ -811,6 +815,8 @@ class TestLaunchDecomposition:
                 spec_path="specs/auth.spec.md",
                 blob_sha=BLOB_SHA,
                 old_blob_sha=None,
+                content="",
+                diff_text="",
             ),
         ]
         runtime.launch_decomposition(spec_diffs, [], [])
@@ -827,6 +833,8 @@ class TestLaunchDecomposition:
                 spec_path="specs/auth.spec.md",
                 blob_sha=BLOB_SHA,
                 old_blob_sha=None,
+                content="",
+                diff_text="",
             ),
         ]
         runtime.launch_decomposition(spec_diffs, [], [])
@@ -848,6 +856,8 @@ class TestLaunchDecomposition:
                 spec_path="specs/auth.spec.md",
                 blob_sha=BLOB_SHA,
                 old_blob_sha="old_sha_123",
+                content="",
+                diff_text="",
             ),
         ]
         runtime.launch_decomposition(spec_diffs, [], [])
@@ -866,11 +876,15 @@ class TestLaunchDecomposition:
                 spec_path="specs/auth.spec.md",
                 blob_sha="sha1",
                 old_blob_sha=None,
+                content="",
+                diff_text="",
             ),
             SpecDiff(
                 spec_path="specs/users.spec.md",
                 blob_sha="sha2",
                 old_blob_sha=None,
+                content="",
+                diff_text="",
             ),
         ]
         runtime.launch_decomposition(spec_diffs, [], [])
@@ -935,6 +949,8 @@ class TestLaunchDecomposition:
                 spec_path="specs/auth.spec.md",
                 blob_sha=BLOB_SHA,
                 old_blob_sha=None,
+                content="",
+                diff_text="",
             ),
         ]
 
@@ -943,6 +959,108 @@ class TestLaunchDecomposition:
             assert False, "Expected RuntimeError"
         except RuntimeError as exc:
             assert "LLM unavailable" in str(exc)
+
+
+class TestDecompositionSpecContent:
+    def test_includes_spec_content_section(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha=BLOB_SHA,
+                old_blob_sha=None,
+                content="# Auth Spec\nRequirements here.",
+                diff_text="# Auth Spec\nRequirements here.",
+            ),
+        ]
+        runtime.launch_decomposition(spec_diffs, [], [])
+
+        sections = composer.calls[0].sections
+        content_sections = [s for s in sections if s.heading == "Spec Content"]
+        assert len(content_sections) == 1
+        assert "specs/auth.spec.md" in content_sections[0].content
+        assert "# Auth Spec" in content_sections[0].content
+
+    def test_includes_spec_diff_section_for_modified_spec(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha=BLOB_SHA,
+                old_blob_sha="old_sha_123",
+                content="# Auth Spec v2",
+                diff_text="@@ -1 +1 @@\n-# Auth Spec v1\n+# Auth Spec v2",
+            ),
+        ]
+        runtime.launch_decomposition(spec_diffs, [], [])
+
+        sections = composer.calls[0].sections
+        diff_sections = [s for s in sections if s.heading == "Spec Diffs"]
+        assert len(diff_sections) == 1
+        assert "-# Auth Spec v1" in diff_sections[0].content
+        assert "+# Auth Spec v2" in diff_sections[0].content
+
+    def test_multiple_specs_content_and_diffs(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha="sha1",
+                old_blob_sha=None,
+                content="Auth content",
+                diff_text="Auth content",
+            ),
+            SpecDiff(
+                spec_path="specs/users.spec.md",
+                blob_sha="sha2",
+                old_blob_sha="old_sha",
+                content="Users content",
+                diff_text="@@ Users diff @@",
+            ),
+        ]
+        runtime.launch_decomposition(spec_diffs, [], [])
+
+        sections = composer.calls[0].sections
+        content_sections = [s for s in sections if s.heading == "Spec Content"]
+        assert len(content_sections) == 1
+        assert "Auth content" in content_sections[0].content
+        assert "Users content" in content_sections[0].content
+
+    def test_spec_content_section_before_existing_tasks(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        tasks = [
+            Task(
+                id=1,
+                spec_path="specs/auth.spec.md",
+                spec_blob_sha=BLOB_SHA,
+                name="implement-auth",
+                description="Add auth endpoint",
+            ),
+        ]
+        spec_diffs = [
+            SpecDiff(
+                spec_path="specs/auth.spec.md",
+                blob_sha=BLOB_SHA,
+                old_blob_sha=None,
+                content="# Auth Spec",
+                diff_text="# Auth Spec",
+            ),
+        ]
+        runtime.launch_decomposition(spec_diffs, tasks, [])
+
+        sections = composer.calls[0].sections
+        headings = [s.heading for s in sections]
+        content_idx = headings.index("Spec Content")
+        tasks_idx = headings.index("Existing Tasks")
+        assert content_idx < tasks_idx
 
 
 class TestLaunchVerification:
@@ -1230,6 +1348,8 @@ class TestModelSelection:
                 spec_path="specs/auth.spec.md",
                 blob_sha=BLOB_SHA,
                 old_blob_sha=None,
+                content="",
+                diff_text="",
             ),
         ]
         runtime.launch_decomposition(spec_diffs, [], [])

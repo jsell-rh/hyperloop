@@ -175,11 +175,15 @@ class Reconciler:
         spec_diffs: list[SpecDiff] = []
         for sp in out_of_sync:
             old_sha = self._find_last_synced_sha(plan, sp.path)
+            content = self._spec_source.read_at(sp.path, sp.blob_sha)
+            diff_text = self._spec_source.diff(sp.path, old_sha, sp.blob_sha)
             spec_diffs.append(
                 SpecDiff(
                     spec_path=sp.path,
                     blob_sha=sp.blob_sha,
                     old_blob_sha=old_sha,
+                    content=content,
+                    diff_text=diff_text,
                 )
             )
 

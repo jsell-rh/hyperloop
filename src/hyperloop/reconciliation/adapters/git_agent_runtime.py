@@ -118,6 +118,27 @@ def _format_spec_refs(diffs: list[SpecDiff]) -> str:
     return "\n".join(lines)
 
 
+def _format_spec_contents(diffs: list[SpecDiff]) -> str:
+    parts: list[str] = []
+    for diff in diffs:
+        parts.append(
+            f"### {diff.spec_path} (blob_sha={diff.blob_sha})\n\n{diff.content}"
+        )
+    return "\n\n".join(parts)
+
+
+def _format_spec_diffs(diffs: list[SpecDiff]) -> str:
+    parts: list[str] = []
+    for diff in diffs:
+        label = (
+            "(new)"
+            if diff.old_blob_sha is None
+            else f"({diff.old_blob_sha}..{diff.blob_sha})"
+        )
+        parts.append(f"### {diff.spec_path} {label}\n\n{diff.diff_text}")
+    return "\n\n".join(parts)
+
+
 def _format_tasks(tasks: list[Task]) -> str:
     return "\n".join(f"- [{t.status}] {t.name}: {t.description}" for t in tasks)
 
@@ -214,6 +235,18 @@ class GitAgentRuntime:
             PromptSection(
                 heading="Spec References",
                 content=_format_spec_refs(spec_diffs),
+            )
+        )
+        sections.append(
+            PromptSection(
+                heading="Spec Content",
+                content=_format_spec_contents(spec_diffs),
+            )
+        )
+        sections.append(
+            PromptSection(
+                heading="Spec Diffs",
+                content=_format_spec_diffs(spec_diffs),
             )
         )
         if existing_tasks:
