@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from collections.abc import Callable
 
 from hyperloop.reconciliation.models.executor_timeout_error import ExecutorTimeoutError
@@ -66,9 +67,33 @@ class AcpctlPlatformRunner:
             check=False,
         )
 
+    _SSE_BACKOFF = (2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0, 30.0)
+
     def wait_for_completion(
         self, session_id: str, *, timeout_seconds: int, branch: str = ""
     ) -> str:
+        deadline = time.monotonic() + timeout_seconds
+        last_message_text: str = ""
+
+        for delay in self._SSE_BACKOFF:
+            if time.monotonic() >= deadline:
+                break
+
+            finished, text = self._stream_events(session_id, branch, deadline)
+            if text:
+                last_message_text = text
+            if finished:
+                return last_message_text
+
+            time.sleep(min(delay, max(0, deadline - time.monotonic())))
+
+        raise ExecutorTimeoutError(
+            f"Session {session_id} timed out after {timeout_seconds}s"
+        )
+
+    def _stream_events(
+        self, session_id: str, branch: str, deadline: float
+    ) -> tuple[bool, str]:
         proc = subprocess.Popen(
             [self._acpctl_path, "session", "events", session_id],
             stdout=subprocess.PIPE,
@@ -77,6 +102,7 @@ class AcpctlPlatformRunner:
         )
         last_message_text: str = ""
         current_message: list[str] = []
+        finished = False
         try:
             assert proc.stdout is not None
             for line in proc.stdout:
@@ -98,16 +124,15 @@ class AcpctlPlatformRunner:
                 elif event_type == "TEXT_MESSAGE_END":
                     last_message_text = "".join(current_message)
                     current_message = []
+                elif event_type == "RUN_FINISHED":
+                    finished = True
 
-            proc.wait(timeout=timeout_seconds)
+            remaining = max(0, deadline - time.monotonic())
+            proc.wait(timeout=remaining or 1)
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
-            raise ExecutorTimeoutError(
-                f"Session {session_id} timed out after {timeout_seconds}s"
-            )
-
-        return last_message_text
+        return finished, last_message_text
 
     def _dispatch_event(
         self, event_type: str, event: dict[str, object], branch: str
