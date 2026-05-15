@@ -336,6 +336,7 @@ class GitAgentRuntime:
         self._git(
             "branch",
             "-D",
+            "--",
             handle.id,
             check=False,
         )
@@ -343,6 +344,7 @@ class GitAgentRuntime:
             "push",
             self._remote,
             "--delete",
+            "--",
             handle.id,
             check=False,
         )
