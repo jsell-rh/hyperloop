@@ -445,6 +445,21 @@ class TestVerifierWorkflowConcerns:
             ]
         ), "Verifier prompt must instruct the agent to run the test suite"
 
+    def test_addresses_test_result_reporting(self, verifier_prompt: str) -> None:
+        prompt_lower = verifier_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "report the results",
+                "include the results",
+                "report results",
+                "include results",
+            ]
+        ), (
+            "Verifier prompt must instruct the agent to report or include "
+            "the test results in its assessment"
+        )
+
     def test_addresses_actionable_rationale(self, verifier_prompt: str) -> None:
         prompt_lower = verifier_prompt.lower()
         assert any(
@@ -464,6 +479,23 @@ class TestVerifierWorkflowConcerns:
         prompt_lower = verifier_prompt.lower()
         assert "pass" in prompt_lower and "fail" in prompt_lower, (
             "Verifier prompt must instruct the agent to report PASS or FAIL"
+        )
+
+    def test_verdict_fail_includes_per_requirement_rationale(
+        self, verifier_prompt: str
+    ) -> None:
+        prompt_lower = verifier_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "rationale per unmet requirement",
+                "per unmet requirement",
+                "per requirement",
+                "each unmet requirement",
+            ]
+        ), (
+            "Verifier prompt must instruct the agent to provide detailed "
+            "rationale per unmet requirement when reporting FAIL"
         )
 
     def test_verdict_requires_all_requirements_met_for_pass(
@@ -506,6 +538,9 @@ class TestVerifierWorkflowConcerns:
             if idx >= 0:
                 verdict_pos = max(verdict_pos, idx)
 
+        assert enumeration_pos < len(prompt_lower) and verdict_pos > 0, (
+            "Verifier prompt must contain both enumeration and verdict phases"
+        )
         assert enumeration_pos < verdict_pos, (
             "Requirement enumeration must appear before the verdict instruction"
         )
