@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 from pathlib import Path
 
@@ -31,6 +33,7 @@ class KustomizePromptComposer:
         self._observer = observer
         self._templates: dict[str, AgentTemplate] = {}
         self._build()
+        self._overlay_fingerprint = _compute_overlay_fingerprint(self._overlay_path)
 
     def compose(
         self,
@@ -72,6 +75,12 @@ class KustomizePromptComposer:
         except Exception as exc:
             self._observer.composer_rebuild_failed(reason=str(exc))
 
+    def rebuild_if_changed(self) -> None:
+        current = _compute_overlay_fingerprint(self._overlay_path)
+        if current != self._overlay_fingerprint:
+            self.rebuild()
+            self._overlay_fingerprint = _compute_overlay_fingerprint(self._overlay_path)
+
     def _build(self) -> None:
         raw = self._runner.build(self._overlay_path)
         templates = _parse_templates(raw)
@@ -85,6 +94,21 @@ def _substitute(template: str, substitutions: dict[str, str]) -> str:
     if unknown:
         raise ComposeError(unknown)
     return _PLACEHOLDER_RE.sub(lambda m: substitutions[m.group(1)], template)
+
+
+def _compute_overlay_fingerprint(overlay_path: Path) -> str:
+    entries: list[tuple[str, int, int]] = []
+    for root, _dirs, files in os.walk(overlay_path):
+        for name in files:
+            full = Path(root) / name
+            stat = full.stat()
+            rel = str(full.relative_to(overlay_path))
+            entries.append((rel, stat.st_mtime_ns, stat.st_size))
+    entries.sort()
+    hasher = hashlib.sha256()
+    for rel_path, mtime_ns, size in entries:
+        hasher.update(f"{rel_path}:{mtime_ns}:{size}\n".encode())
+    return hasher.hexdigest()
 
 
 def _parse_templates(raw_yaml: str) -> list[AgentTemplate]:

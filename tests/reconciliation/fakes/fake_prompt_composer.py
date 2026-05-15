@@ -22,12 +22,17 @@ class FakePromptComposer:
             t.name: t for t in (templates or [])
         }
         self._rebuild_failure: str | None = None
+        self._overlay_changed: bool = False
+        self.rebuild_if_changed_count: int = 0
 
     def set_templates(self, templates: list[AgentTemplate]) -> None:
         self._templates = {t.name: t for t in templates}
 
     def set_rebuild_failure(self, reason: str) -> None:
         self._rebuild_failure = reason
+
+    def set_overlay_changed(self, changed: bool) -> None:
+        self._overlay_changed = changed
 
     def compose(
         self,
@@ -58,3 +63,9 @@ class FakePromptComposer:
     def rebuild(self) -> None:
         if self._rebuild_failure is not None:
             raise RuntimeError(self._rebuild_failure)
+
+    def rebuild_if_changed(self) -> None:
+        self.rebuild_if_changed_count += 1
+        if self._overlay_changed:
+            self.rebuild()
+            self._overlay_changed = False

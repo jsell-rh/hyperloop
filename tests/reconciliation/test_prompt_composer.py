@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -493,3 +494,125 @@ class TestHotReload:
         rebuilt = observer.calls_for("composer_rebuilt")
         assert len(rebuilt) == 1
         assert rebuilt[0]["template_count"] == 1
+
+    def test_rebuild_if_changed_skips_when_unchanged(self, tmp_path: Path) -> None:
+        overlay = tmp_path / "agents"
+        overlay.mkdir()
+        (overlay / "kustomization.yaml").write_text("resources: []")
+
+        runner = FakeKustomizeBuildRunner(
+            [AgentTemplate(name="implementer", prompt="P.", guidelines=[])]
+        )
+        observer = FakeObserver()
+        composer = KustomizePromptComposer(
+            overlay_path=overlay, kustomize_runner=runner, observer=observer
+        )
+
+        initial_build_count = runner.build_count
+        composer.rebuild_if_changed()
+
+        assert runner.build_count == initial_build_count
+
+    def test_rebuild_if_changed_rebuilds_when_file_modified(
+        self, tmp_path: Path
+    ) -> None:
+        overlay = tmp_path / "agents"
+        overlay.mkdir()
+        target = overlay / "kustomization.yaml"
+        target.write_text("resources: []")
+
+        runner = FakeKustomizeBuildRunner(
+            [AgentTemplate(name="implementer", prompt="Old.", guidelines=[])]
+        )
+        observer = FakeObserver()
+        composer = KustomizePromptComposer(
+            overlay_path=overlay, kustomize_runner=runner, observer=observer
+        )
+
+        initial_build_count = runner.build_count
+
+        time.sleep(0.01)
+        target.write_text("resources: [base]")
+
+        runner.set_templates(
+            [AgentTemplate(name="implementer", prompt="New.", guidelines=[])]
+        )
+        composer.rebuild_if_changed()
+
+        assert runner.build_count == initial_build_count + 1
+        result = composer.compose(
+            "implementer", substitutions={}, sections=[], epilogue=""
+        )
+        assert "New." in result
+
+    def test_rebuild_if_changed_rebuilds_when_file_added(self, tmp_path: Path) -> None:
+        overlay = tmp_path / "agents"
+        overlay.mkdir()
+        (overlay / "kustomization.yaml").write_text("resources: []")
+
+        runner = FakeKustomizeBuildRunner(
+            [AgentTemplate(name="implementer", prompt="P.", guidelines=[])]
+        )
+        observer = FakeObserver()
+        composer = KustomizePromptComposer(
+            overlay_path=overlay, kustomize_runner=runner, observer=observer
+        )
+
+        initial_build_count = runner.build_count
+
+        time.sleep(0.01)
+        (overlay / "implementer-patch.yaml").write_text("guidelines: [test]")
+
+        composer.rebuild_if_changed()
+
+        assert runner.build_count == initial_build_count + 1
+
+    def test_rebuild_if_changed_rebuilds_when_file_deleted(
+        self, tmp_path: Path
+    ) -> None:
+        overlay = tmp_path / "agents"
+        overlay.mkdir()
+        (overlay / "kustomization.yaml").write_text("resources: []")
+        extra = overlay / "extra.yaml"
+        extra.write_text("kind: Agent")
+
+        runner = FakeKustomizeBuildRunner(
+            [AgentTemplate(name="implementer", prompt="P.", guidelines=[])]
+        )
+        observer = FakeObserver()
+        composer = KustomizePromptComposer(
+            overlay_path=overlay, kustomize_runner=runner, observer=observer
+        )
+
+        initial_build_count = runner.build_count
+        extra.unlink()
+
+        composer.rebuild_if_changed()
+
+        assert runner.build_count == initial_build_count + 1
+
+    def test_rebuild_if_changed_failure_retains_templates(self, tmp_path: Path) -> None:
+        overlay = tmp_path / "agents"
+        overlay.mkdir()
+        target = overlay / "kustomization.yaml"
+        target.write_text("resources: []")
+
+        runner = FakeKustomizeBuildRunner(
+            [AgentTemplate(name="implementer", prompt="Good.", guidelines=[])]
+        )
+        observer = FakeObserver()
+        composer = KustomizePromptComposer(
+            overlay_path=overlay, kustomize_runner=runner, observer=observer
+        )
+
+        time.sleep(0.01)
+        target.write_text("invalid yaml trigger")
+        runner.set_failure("kustomize build failed")
+
+        composer.rebuild_if_changed()
+
+        result = composer.compose(
+            "implementer", substitutions={}, sections=[], epilogue=""
+        )
+        assert "Good." in result
+        assert len(observer.calls_for("composer_rebuild_failed")) == 1
