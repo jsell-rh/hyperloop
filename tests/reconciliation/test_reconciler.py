@@ -17,7 +17,6 @@ from hyperloop.reconciliation.models.poll_result import (
     PollResult,
 )
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
-from hyperloop.reconciliation.models.task_briefing import TaskBriefing
 from hyperloop.reconciliation.models.spec_plan import SpecPlan
 from hyperloop.reconciliation.ports.observer import ChangeType
 from hyperloop.reconciliation.reconciler import Reconciler
@@ -1492,7 +1491,7 @@ class TestTaskDispatch:
         completed = observer.calls_for("cycle_completed")
         assert completed[0]["tasks_dispatched"] == 2
 
-    def test_launch_failure_skips_task_and_fires_event(
+    def test_launch_failure_fires_agent_launch_failed_event(
         self,
         reconciler: Reconciler,
         spec_source: FakeSpecSource,
@@ -1501,25 +1500,117 @@ class TestTaskDispatch:
         observer: FakeObserver,
     ) -> None:
         _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
-        original_launch = agent_runtime.launch_task
-
-        def failing_launch(briefing: TaskBriefing) -> AgentHandle:
-            raise RuntimeError("Agent unavailable")
-
-        agent_runtime.launch_task = failing_launch  # type: ignore[assignment]
+        agent_runtime.set_launch_task_error(RuntimeError("Agent unavailable"))
 
         reconciler.run_cycle()
 
-        plan = plan_store.get_plan()
-        sp = next(sp for sp in plan.spec_plans if sp.path == "auth.spec.md")
-        assert sp.tasks[0].status == TaskStatus.BACKLOG
         events = observer.calls_for("agent_launch_failed")
         assert len(events) == 1
-        assert events[0]["task_id"] == sp.tasks[0].id
         assert events[0]["role"] == "task"
         assert "Agent unavailable" in events[0]["reason"]
 
-        agent_runtime.launch_task = original_launch  # type: ignore[assignment]
+
+class TestLaunchFailure:
+    def test_launch_failure_marks_task_for_retry(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+        agent_runtime.set_launch_task_error(RuntimeError("worktree add failed"))
+
+        reconciler.run_cycle()
+
+        assert tasks[0].status == TaskStatus.BACKLOG
+        assert tasks[0].retry_count == 1
+
+    def test_launch_failure_increments_retry_count(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+        agent_runtime.set_launch_task_error(RuntimeError("worktree add failed"))
+
+        reconciler.run_cycle()
+        reconciler.run_cycle()
+
+        assert tasks[0].retry_count == 2
+
+    def test_launch_failure_fires_task_failed_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+        agent_runtime.set_launch_task_error(RuntimeError("worktree add failed"))
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("task_failed")
+        assert len(events) == 1
+        assert events[0]["task_id"] == tasks[0].id
+        assert "worktree add failed" in events[0]["reason"]
+
+    def test_launch_failure_clears_workspace_id(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+        agent_runtime.set_launch_task_error(RuntimeError("worktree add failed"))
+
+        reconciler.run_cycle()
+
+        assert tasks[0].workspace_id is None
+
+    def test_launch_failure_exhausts_retries(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=2,
+        )
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+        agent_runtime.set_launch_task_error(RuntimeError("worktree add failed"))
+
+        for _ in range(3):
+            reconciler.run_cycle()
+
+        assert tasks[0].status == TaskStatus.FAILED
+        assert tasks[0].retry_count == 2
+
+    def test_launch_failure_does_not_set_agent_handle(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        _, tasks = _build_reconciling_spec_plan(plan_store, spec_source, task_count=1)
+        agent_runtime.set_launch_task_error(RuntimeError("worktree add failed"))
+
+        reconciler.run_cycle()
+
+        assert tasks[0].agent_handle is None
 
 
 class TestResultCollection:

@@ -14,6 +14,7 @@ class FakeAgentRuntime:
     def __init__(self) -> None:
         self._decomposition_result: list[ProposedTask] = []
         self._decomposition_error: Exception | None = None
+        self._launch_task_error: Exception | None = None
         self._poll_results: dict[str, PollResult] = {}
         self._cancelled: set[str] = set()
         self._stale: list[AgentHandle] = []
@@ -37,6 +38,9 @@ class FakeAgentRuntime:
 
     def set_decomposition_error(self, error: Exception) -> None:
         self._decomposition_error = error
+
+    def set_launch_task_error(self, error: Exception) -> None:
+        self._launch_task_error = error
 
     def set_poll_result(self, handle: AgentHandle, result: PollResult) -> None:
         self._poll_results[handle.id] = result
@@ -66,6 +70,8 @@ class FakeAgentRuntime:
         return self._decomposition_result
 
     def launch_task(self, briefing: TaskBriefing) -> AgentHandle:
+        if self._launch_task_error is not None:
+            raise self._launch_task_error
         handle = AgentHandle(id=f"agent-{self._next_handle_id}")
         self._next_handle_id += 1
         self._poll_results[handle.id] = PollResult(status=AgentStatus.RUNNING)

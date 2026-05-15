@@ -401,6 +401,8 @@ class Reconciler:
                     reason=str(exc),
                     cycle=self._cycle,
                 )
+                task.workspace_id = None
+                self._mark_task_failed(task, f"Launch failed: {exc}")
                 continue
             task.status = TaskStatus.IN_PROGRESS
             task.agent_handle = handle
