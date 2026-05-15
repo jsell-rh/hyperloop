@@ -23,6 +23,7 @@ from hyperloop.reconciliation.models.task_briefing import TaskBriefing
 from hyperloop.reconciliation.ports.agent_runtime import AgentRuntime
 from hyperloop.reconciliation.ports.observer import ChangeType, Observer
 from hyperloop.reconciliation.ports.plan_store import PlanStore
+from hyperloop.reconciliation.ports.prompt_composer import PromptComposer
 from hyperloop.reconciliation.ports.spec_source import SpecSource
 from hyperloop.reconciliation.ports.workspace_manager import WorkspaceManager
 
@@ -36,6 +37,7 @@ class Reconciler:
         observer: Observer,
         agent_runtime: AgentRuntime,
         workspace_manager: WorkspaceManager,
+        prompt_composer: PromptComposer | None = None,
         max_concurrent_tasks: int = 5,
         convergence_bound: int = 3,
         max_integration_retries: int = 3,
@@ -48,6 +50,7 @@ class Reconciler:
         self._observer = observer
         self._agent_runtime = agent_runtime
         self._workspace_manager = workspace_manager
+        self._prompt_composer = prompt_composer
         self._max_concurrent_tasks = max_concurrent_tasks
         self._convergence_bound = convergence_bound
         self._max_integration_retries = max_integration_retries
@@ -125,6 +128,8 @@ class Reconciler:
         start = time.monotonic()
 
         self._spec_source.sync()
+        if self._prompt_composer is not None:
+            self._prompt_composer.rebuild_if_changed()
         plan = self._plan_store.get_plan()
         entries = self._spec_source.list_specs()
 

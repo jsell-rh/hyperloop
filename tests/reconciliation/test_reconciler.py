@@ -24,6 +24,7 @@ from hyperloop.reconciliation.reconciler import Reconciler
 from tests.reconciliation.fakes.fake_agent_runtime import FakeAgentRuntime
 from tests.reconciliation.fakes.fake_observer import FakeObserver
 from tests.reconciliation.fakes.fake_plan_store import FakePlanStore
+from tests.reconciliation.fakes.fake_prompt_composer import FakePromptComposer
 from tests.reconciliation.fakes.fake_spec_source import FakeSpecSource
 from tests.reconciliation.fakes.fake_workspace_manager import FakeWorkspaceManager
 
@@ -5373,3 +5374,48 @@ class TestCyclicDependencyRejection:
         for sp in plan.spec_plans:
             assert sp.tasks == []
             assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+
+
+class TestPromptHotReload:
+    def test_cycle_calls_rebuild_if_changed(self) -> None:
+        prompt_composer = FakePromptComposer()
+        reconciler = Reconciler(
+            spec_source=FakeSpecSource(),
+            plan_store=FakePlanStore(),
+            observer=FakeObserver(),
+            agent_runtime=FakeAgentRuntime(),
+            workspace_manager=FakeWorkspaceManager(),
+            prompt_composer=prompt_composer,
+        )
+
+        reconciler.run_cycle()
+
+        assert prompt_composer.rebuild_if_changed_count == 1
+
+    def test_cycle_calls_rebuild_if_changed_each_cycle(self) -> None:
+        prompt_composer = FakePromptComposer()
+        reconciler = Reconciler(
+            spec_source=FakeSpecSource(),
+            plan_store=FakePlanStore(),
+            observer=FakeObserver(),
+            agent_runtime=FakeAgentRuntime(),
+            workspace_manager=FakeWorkspaceManager(),
+            prompt_composer=prompt_composer,
+        )
+
+        reconciler.run_cycle()
+        reconciler.run_cycle()
+        reconciler.run_cycle()
+
+        assert prompt_composer.rebuild_if_changed_count == 3
+
+    def test_cycle_without_composer_does_not_fail(self) -> None:
+        reconciler = Reconciler(
+            spec_source=FakeSpecSource(),
+            plan_store=FakePlanStore(),
+            observer=FakeObserver(),
+            agent_runtime=FakeAgentRuntime(),
+            workspace_manager=FakeWorkspaceManager(),
+        )
+
+        reconciler.run_cycle()

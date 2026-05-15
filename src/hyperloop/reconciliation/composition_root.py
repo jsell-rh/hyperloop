@@ -163,6 +163,7 @@ def create_reconciler(
         observer=observer,
         agent_runtime=agent_runtime,
         workspace_manager=workspace_manager,
+        prompt_composer=prompt_composer,
         max_concurrent_tasks=config.max_concurrent_tasks,
         convergence_bound=config.convergence_bound,
         max_integration_retries=config.max_integration_retries,
