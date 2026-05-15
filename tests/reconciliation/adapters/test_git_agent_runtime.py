@@ -494,6 +494,80 @@ class TestDetectStale:
         assert TASK_BRANCH in stale_ids
 
 
+class TestDetectStaleExecutorResources:
+    def test_includes_executor_stale_resources(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        executor = FakeAgentExecutor()
+        executor.set_stale_branches([TASK_BRANCH])
+        runtime = _make_runtime(local, executor)
+
+        stale = runtime.detect_stale()
+
+        stale_ids = {h.id for h in stale}
+        assert TASK_BRANCH in stale_ids
+
+    def test_combines_git_and_executor_stale(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        git_stale_branch = f"hyperloop/spec/{BLOB_SHA}/task/5"
+        executor_stale_branch = f"hyperloop/spec/{BLOB_SHA}/task/6"
+
+        _create_branch_from(local, git_stale_branch, "main")
+        _create_work_commit(local, git_stale_branch, "Work on task 5")
+        _push_branch(local, git_stale_branch)
+
+        executor = FakeAgentExecutor()
+        executor.set_stale_branches([executor_stale_branch])
+        runtime = _make_runtime(local, executor)
+
+        stale = runtime.detect_stale()
+
+        stale_ids = {h.id for h in stale}
+        assert git_stale_branch in stale_ids
+        assert executor_stale_branch in stale_ids
+
+    def test_deduplicates_branches_found_by_both(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        _create_branch_from(local, TASK_BRANCH, "main")
+        _create_work_commit(local, TASK_BRANCH, "Work")
+        _push_branch(local, TASK_BRANCH)
+
+        executor = FakeAgentExecutor()
+        executor.set_stale_branches([TASK_BRANCH])
+        runtime = _make_runtime(local, executor)
+
+        stale = runtime.detect_stale()
+
+        stale_ids = [h.id for h in stale]
+        assert stale_ids.count(TASK_BRANCH) == 1
+
+    def test_executor_only_stale_no_git_branches(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        executor = FakeAgentExecutor()
+        orphan_branch = f"hyperloop/spec/{BLOB_SHA}/task/99"
+        executor.set_stale_branches([orphan_branch])
+        runtime = _make_runtime(local, executor)
+
+        stale = runtime.detect_stale()
+
+        stale_ids = {h.id for h in stale}
+        assert orphan_branch in stale_ids
+
+    def test_empty_when_both_sources_empty(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(local, executor)
+
+        stale = runtime.detect_stale()
+
+        assert stale == []
+
+
 class TestCancel:
     def test_deletes_local_branch(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env

@@ -175,6 +175,7 @@ class GitAgentRuntime:
     def detect_stale(self) -> list[AgentHandle]:
         self._fetch_all_managed_branches()
         branches = self._list_remote_managed_branches()
+        seen: set[str] = set()
         stale: list[AgentHandle] = []
 
         for branch in branches:
@@ -188,7 +189,13 @@ class GitAgentRuntime:
             is_empty = self._is_empty_commit_remote(branch)
 
             if not is_empty or not self._has_signal(message):
+                seen.add(branch)
                 stale.append(AgentHandle(id=branch))
+
+        for executor_branch in self._executor.detect_stale():
+            if executor_branch not in seen:
+                seen.add(executor_branch)
+                stale.append(AgentHandle(id=executor_branch))
 
         return stale
 
