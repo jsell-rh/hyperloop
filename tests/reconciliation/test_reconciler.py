@@ -2069,6 +2069,183 @@ class TestTaskRetry:
         assert events[0]["reason"] == "Compilation error"
 
 
+_DEAD_AGENT_RATIONALE = "Agent died without producing a signal commit"
+
+
+class TestDeadAgentHandling:
+    def test_dead_task_agent_resets_to_backlog_for_retry(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.tasks[0].status == TaskStatus.BACKLOG
+        assert sp.tasks[0].retry_count == 1
+
+    def test_dead_task_agent_records_failure_event_with_rationale(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
+        failed_events = [
+            e for e in sp.tasks[0].events if e.reason == EventReason.TASK_FAILED
+        ]
+        assert len(failed_events) == 1
+        assert _DEAD_AGENT_RATIONALE in failed_events[0].message
+
+    def test_dead_task_agent_clears_handle(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.tasks[0].agent_handle is None
+
+    def test_dead_task_agent_fires_observer_events(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
+        failed_events = observer.calls_for("task_failed")
+        assert len(failed_events) == 1
+        assert failed_events[0]["task_id"] == sp.tasks[0].id
+        assert failed_events[0]["reason"] == _DEAD_AGENT_RATIONALE
+
+        retried_events = observer.calls_for("task_retried")
+        assert len(retried_events) == 1
+        assert retried_events[0]["task_id"] == sp.tasks[0].id
+
+    def test_dead_task_agent_at_retry_limit_marks_failed(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=2,
+        )
+        sp = _build_in_progress_spec_plan(plan_store, workspace_manager, agent_runtime)
+        sp.tasks[0].retry_count = 2
+        spec_source.add_spec("auth.spec.md", "abc123")
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.tasks[0].status == TaskStatus.FAILED
+
+    def test_dead_task_agent_retry_exhaustion_triggers_redecomposition(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=2,
+            max_redecompositions=1,
+        )
+        sp, _ = _build_retry_exhausted_spec_plan(
+            plan_store, spec_source, agent_runtime, workspace_manager
+        )
+        agent_runtime.set_poll_result(
+            sp.tasks[0].agent_handle,  # type: ignore[arg-type]
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        assert sp.redecomposition_count == 1
+
+    def test_dead_verification_agent_transitions_spec_to_out_of_sync(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp, verification_handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            verification_handle,
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        assert sp.verification_handle is None
+        failed_events = observer.calls_for("verification_failed")
+        assert len(failed_events) == 1
+        assert failed_events[0]["rationale"] == _DEAD_AGENT_RATIONALE
+
+
 def _build_all_tasks_complete_spec_plan(
     plan_store: FakePlanStore,
     spec_source: FakeSpecSource,
