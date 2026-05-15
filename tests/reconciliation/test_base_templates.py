@@ -372,6 +372,145 @@ class TestDecomposerWorkflowPhases:
         assert read_pos < gap_pos, "Reading phases must appear before gap analysis"
 
 
+class TestVerifierWorkflowConcerns:
+    """agent-prompts.spec.md — Requirement: Verifier Workflow.
+
+    The verifier base prompt SHALL instruct the agent to systematically
+    check every spec requirement against the implementation.
+    """
+
+    @pytest.fixture()
+    def verifier_prompt(self) -> str:
+        doc = yaml.safe_load((BASE_DIR / "verifier.yaml").read_text())
+        return doc["prompt"]
+
+    def test_addresses_requirement_enumeration(self, verifier_prompt: str) -> None:
+        prompt_lower = verifier_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "every requirement",
+                "every scenario",
+                "each requirement",
+                "each scenario",
+                "all requirements",
+                "all scenarios",
+            ]
+        ), (
+            "Verifier prompt must instruct the agent to check every requirement "
+            "and every scenario in the spec, not just a sample"
+        )
+
+    def test_addresses_not_just_a_sample(self, verifier_prompt: str) -> None:
+        prompt_lower = verifier_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "not a sample",
+                "not just a sample",
+                "do not skip",
+                "do not sample",
+                "none may be skipped",
+            ]
+        ), (
+            "Verifier prompt must explicitly instruct against sampling or "
+            "skipping requirements"
+        )
+
+    def test_addresses_evidence_based_assessment(self, verifier_prompt: str) -> None:
+        prompt_lower = verifier_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "cite",
+                "reference",
+                "specific code location",
+                "specific file",
+                "evidence",
+            ]
+        ), (
+            "Verifier prompt must instruct the agent to cite specific code "
+            "locations that satisfy or violate each requirement"
+        )
+
+    def test_addresses_test_execution(self, verifier_prompt: str) -> None:
+        prompt_lower = verifier_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "run the test",
+                "run tests",
+                "execute the test",
+                "execute tests",
+            ]
+        ), "Verifier prompt must instruct the agent to run the test suite"
+
+    def test_addresses_actionable_rationale(self, verifier_prompt: str) -> None:
+        prompt_lower = verifier_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "actionable",
+                "corrective task",
+                "targeted task",
+                "decomposer",
+            ]
+        ), (
+            "Verifier prompt must instruct the agent to provide actionable "
+            "rationale that can drive targeted corrective tasks"
+        )
+
+    def test_addresses_verdict(self, verifier_prompt: str) -> None:
+        prompt_lower = verifier_prompt.lower()
+        assert "pass" in prompt_lower and "fail" in prompt_lower, (
+            "Verifier prompt must instruct the agent to report PASS or FAIL"
+        )
+
+    def test_verdict_requires_all_requirements_met_for_pass(
+        self, verifier_prompt: str
+    ) -> None:
+        prompt_lower = verifier_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "pass only if all",
+                "pass only when all",
+                "all requirements are met",
+                "all requirements are satisfied",
+            ]
+        ), (
+            "Verifier prompt must instruct the agent to report PASS only if "
+            "all requirements are met"
+        )
+
+    def test_requirement_enumeration_appears_before_verdict(
+        self, verifier_prompt: str
+    ) -> None:
+        prompt_lower = verifier_prompt.lower()
+        enumeration_phrases = [
+            "every requirement",
+            "each requirement",
+            "all requirements and",
+        ]
+        verdict_phrases = ["verdict", "report pass", "report fail"]
+
+        enumeration_pos = len(prompt_lower)
+        for phrase in enumeration_phrases:
+            idx = prompt_lower.find(phrase)
+            if idx >= 0:
+                enumeration_pos = min(enumeration_pos, idx)
+
+        verdict_pos = 0
+        for phrase in verdict_phrases:
+            idx = prompt_lower.find(phrase)
+            if idx >= 0:
+                verdict_pos = max(verdict_pos, idx)
+
+        assert enumeration_pos < verdict_pos, (
+            "Requirement enumeration must appear before the verdict instruction"
+        )
+
+
 class TestGenericPrompts:
     """agent-prompts.spec.md — Requirement: Generic Prompts.
 

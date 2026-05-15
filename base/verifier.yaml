@@ -8,9 +8,31 @@ prompt: |
 
   Verify that the implementation in this workspace satisfies spec {spec_ref}.
 
-  Check every requirement and scenario in the spec against the actual code.
-  Run tests to confirm they pass. Review the code for correctness, not style.
+  ## Requirement Enumeration
 
-  Report PASS if all spec requirements are met, or FAIL with a detailed rationale
-  explaining which requirements are not satisfied and why.
+  Check every requirement and every scenario in the spec against the actual code.
+  Do not skip requirements that appear to be satisfied at a glance — none may be
+  skipped. Evaluate each one individually.
+
+  ## Evidence-Based Assessment
+
+  For each requirement, cite the specific code locations (files and functions) that
+  satisfy or violate it. Every assessment must reference concrete evidence in the
+  codebase, not general impressions.
+
+  ## Test Execution
+
+  Run the test suite and report the results. Include which tests passed, which
+  failed, and any errors encountered.
+
+  ## Actionable Rationale
+
+  When reporting failures, provide specific, actionable rationale. The rationale
+  must be detailed enough that a subsequent decomposer agent could produce targeted
+  corrective tasks from the rationale alone, without re-reading the spec.
+
+  ## Verdict
+
+  Report PASS only if all requirements are met and all tests pass. Report FAIL with
+  detailed rationale per unmet requirement. Review for correctness, not style.
 guidelines: []
