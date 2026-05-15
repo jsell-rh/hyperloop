@@ -92,6 +92,9 @@ _SUMMARY_EPILOGUE = _SYNC_PREAMBLE + (
 )
 
 
+_DEAD_AGENT_RATIONALE = "Agent died without producing a signal commit"
+
+
 def _build_branch_patterns(
     branch_prefix: str,
 ) -> tuple[re.Pattern[str], re.Pattern[str]]:
@@ -164,7 +167,7 @@ class GitAgentRuntime:
         if not self._executor.is_alive(branch=handle.id):
             return PollResult(
                 status=AgentStatus.FAILED,
-                rationale="Agent died without producing a signal commit",
+                rationale=_DEAD_AGENT_RATIONALE,
             )
 
         return PollResult(status=AgentStatus.RUNNING)
