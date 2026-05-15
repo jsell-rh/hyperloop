@@ -117,6 +117,46 @@ The executor SHALL support detection of stale resources left behind by a process
 - THEN the executor returns a list of branch identifiers associated with stale resources
 - AND these branches can be passed to cancel for cleanup
 
+### Requirement: Async Agent Liveness
+
+The executor SHALL expose a liveness check for async agents (task and verification agents). The liveness check accepts a branch identifier and returns whether the agent associated with that branch is still actively running. Liveness checking is adapter-specific — each executor implementation uses the mechanism natural to its runtime. The liveness check MUST NOT impose a timeout; agents MAY run for an unbounded duration as long as they remain alive.
+
+The liveness check is a complement to signal-based completion detection (git polling). An agent that is alive but has not yet produced a signal is still working. An agent that is not alive and has not produced a signal has failed silently. The AgentRuntime SHALL incorporate the liveness check into its poll operation — when git polling finds no signal commit and the executor reports the agent is not alive, the poll result SHALL indicate failure.
+
+#### Scenario: Alive agent reports alive
+
+- GIVEN a task agent was started on branch "hyperloop/spec/abc123/task/5"
+- AND the agent is still actively running
+- WHEN is_alive is called with the branch
+- THEN it returns true
+
+#### Scenario: Dead agent reports not alive
+
+- GIVEN a task agent was started on branch "hyperloop/spec/abc123/task/5"
+- AND the agent process or session has terminated without producing a signal commit
+- WHEN is_alive is called with the branch
+- THEN it returns false
+
+#### Scenario: Unknown branch reports not alive
+
+- GIVEN no agent was started on branch "hyperloop/spec/abc123/task/99"
+- WHEN is_alive is called with the branch
+- THEN it returns false
+
+#### Scenario: Claude Agent SDK liveness
+
+- GIVEN a task agent is running in a background thread via the Claude Agent SDK executor
+- WHEN is_alive is called with the agent's branch
+- THEN the executor checks whether the agent's thread is alive
+- AND returns the result
+
+#### Scenario: Ambient Code Platform liveness
+
+- GIVEN a task agent is running as a platform session via the Ambient executor
+- WHEN is_alive is called with the agent's branch
+- THEN the executor checks the session's health status via the platform
+- AND returns true if the session is active, false otherwise
+
 ### Requirement: Execution Isolation
 
 Agents MUST execute in isolated contexts. An agent's execution context MUST NOT interfere with the main repository, other running agents, or the orchestrator process.

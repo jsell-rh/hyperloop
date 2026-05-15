@@ -133,6 +133,15 @@ Each cycle, the reconciler SHALL poll all InProgress tasks for completion and pr
 - AND if the merge agent succeeds, the merge is completed
 - AND if the merge agent fails, the task is treated as Failed
 
+#### Scenario: Dead agent without signal treated as failed
+
+- GIVEN task 3 is InProgress and its agent was launched
+- WHEN the reconciler polls the task via the AgentRuntime port
+- AND the agent has not produced a signal commit
+- AND the agent is no longer alive (detected via executor liveness check within poll)
+- THEN poll returns Failed with a rationale indicating the agent died without signaling
+- AND the task follows the normal failure and retry path
+
 #### Scenario: Failed task triggers retry
 
 - GIVEN task 3 has status Failed with retry attempts remaining
