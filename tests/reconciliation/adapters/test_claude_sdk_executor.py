@@ -539,6 +539,52 @@ class TestEnvironmentIsolation:
         assert "GIT_DIR" not in env
 
 
+class TestIsAlive:
+    def test_returns_true_when_session_is_alive(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, _ = git_env
+        runner = FakeSDKRunner()
+        executor = _make_executor(repo, runner)
+        _create_branch(repo, TASK_BRANCH)
+
+        executor.start_task_agent(branch=TASK_BRANCH, prompt="Work")
+
+        assert executor.is_alive(branch=TASK_BRANCH) is True
+
+    def test_returns_false_when_session_has_been_stopped(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, _ = git_env
+        runner = FakeSDKRunner()
+        executor = _make_executor(repo, runner)
+        _create_branch(repo, TASK_BRANCH)
+
+        executor.start_task_agent(branch=TASK_BRANCH, prompt="Work")
+        executor.cancel(branch=TASK_BRANCH)
+
+        assert executor.is_alive(branch=TASK_BRANCH) is False
+
+    def test_returns_false_for_unknown_branch(self, git_env: tuple[Path, Path]) -> None:
+        repo, _ = git_env
+        runner = FakeSDKRunner()
+        executor = _make_executor(repo, runner)
+
+        assert executor.is_alive(branch="nonexistent/branch") is False
+
+    def test_returns_true_for_verification_agent(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, _ = git_env
+        runner = FakeSDKRunner()
+        executor = _make_executor(repo, runner)
+        _create_branch(repo, VERIFIER_BRANCH)
+
+        executor.start_verification_agent(branch=VERIFIER_BRANCH, prompt="Verify")
+
+        assert executor.is_alive(branch=VERIFIER_BRANCH) is True
+
+
 class TestParallelIsolation:
     def test_two_agents_get_separate_worktrees(
         self, git_env: tuple[Path, Path]

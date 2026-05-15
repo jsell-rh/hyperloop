@@ -16,6 +16,7 @@ class FakeAgentExecutor:
         )
         self._integration_summary_error: Exception | None = None
         self._stale_branches: list[str] = []
+        self._alive_branches: set[str] = set()
         self.started_tasks: list[tuple[str, str, str | None]] = []
         self.started_verifications: list[tuple[str, str, str | None]] = []
         self.decomposition_calls: list[tuple[str, str | None]] = []
@@ -43,6 +44,12 @@ class FakeAgentExecutor:
     def set_stale_branches(self, branches: list[str]) -> None:
         self._stale_branches = list(branches)
 
+    def set_alive(self, branch: str) -> None:
+        self._alive_branches.add(branch)
+
+    def set_not_alive(self, branch: str) -> None:
+        self._alive_branches.discard(branch)
+
     def set_start_task_error(self, error: Exception) -> None:
         self._start_task_error = error
 
@@ -55,6 +62,7 @@ class FakeAgentExecutor:
         if self._start_task_error is not None:
             raise self._start_task_error
         self.started_tasks.append((branch, prompt, model))
+        self._alive_branches.add(branch)
 
     def start_verification_agent(
         self, *, branch: str, prompt: str, model: str | None = None
@@ -62,6 +70,7 @@ class FakeAgentExecutor:
         if self._start_verification_error is not None:
             raise self._start_verification_error
         self.started_verifications.append((branch, prompt, model))
+        self._alive_branches.add(branch)
 
     def run_decomposition(
         self, *, prompt: str, model: str | None = None
@@ -92,6 +101,10 @@ class FakeAgentExecutor:
 
     def cancel(self, *, branch: str) -> None:
         self.cancelled_branches.append(branch)
+        self._alive_branches.discard(branch)
 
     def detect_stale(self) -> list[str]:
         return list(self._stale_branches)
+
+    def is_alive(self, *, branch: str) -> bool:
+        return branch in self._alive_branches

@@ -90,3 +90,6 @@ class FakeSDKRunner:
     def stop(self, session_id: str) -> None:
         self.stopped_sessions.append(session_id)
         self._running_sessions.discard(session_id)
+
+    def is_session_alive(self, session_id: str) -> bool:
+        return session_id in self._running_sessions

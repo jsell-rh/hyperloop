@@ -126,6 +126,12 @@ class ClaudeSDKExecutor:
                 stale.append(branch)
         return stale
 
+    def is_alive(self, *, branch: str) -> bool:
+        session_id = self._sessions.get(branch)
+        if session_id is None:
+            return False
+        return self._sdk_runner.is_session_alive(session_id)
+
     def _start_async_agent(
         self, *, branch: str, prompt: str, model: str | None
     ) -> None:

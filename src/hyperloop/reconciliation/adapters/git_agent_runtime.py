@@ -156,10 +156,18 @@ class GitAgentRuntime:
         message = self._latest_commit_message(handle.id)
         is_empty = self._is_empty_commit(handle.id)
 
-        if not is_empty:
-            return PollResult(status=AgentStatus.RUNNING)
+        if is_empty:
+            signal = self._parse_signal(message)
+            if signal.status != AgentStatus.RUNNING:
+                return signal
 
-        return self._parse_signal(message)
+        if not self._executor.is_alive(branch=handle.id):
+            return PollResult(
+                status=AgentStatus.FAILED,
+                rationale="Agent died without producing a signal commit",
+            )
+
+        return PollResult(status=AgentStatus.RUNNING)
 
     def detect_stale(self) -> list[AgentHandle]:
         self._fetch_all_managed_branches()

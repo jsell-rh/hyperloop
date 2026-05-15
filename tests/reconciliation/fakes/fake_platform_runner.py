@@ -20,6 +20,7 @@ class FakePlatformRunner:
         self.wait_calls: list[dict[str, object]] = []
         self.list_calls: list[str] = []
         self._running_sessions: dict[str, str] = {}
+        self._session_statuses: dict[str, SessionStatus] = {}
 
     def set_sync_result(self, result: str) -> None:
         self._sync_commit_message = f"Agent result\n\n```json\n{result}\n```"
@@ -143,7 +144,12 @@ class FakePlatformRunner:
             for sid, name in self._running_sessions.items()
         ]
 
+    def set_session_status(self, session_id: str, status: SessionStatus) -> None:
+        self._session_statuses[session_id] = status
+
     def get_session_status(self, session_id: str) -> SessionStatus:
+        if session_id in self._session_statuses:
+            return self._session_statuses[session_id]
         if session_id in self._running_sessions:
             return SessionStatus.RUNNING
         return SessionStatus.STOPPED

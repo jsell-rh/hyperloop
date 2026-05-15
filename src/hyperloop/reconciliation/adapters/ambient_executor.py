@@ -128,6 +128,13 @@ class AmbientExecutor:
                 terminated.append(branch)
         return terminated
 
+    def is_alive(self, *, branch: str) -> bool:
+        session_id = self._sessions.get(branch)
+        if session_id is None:
+            return False
+        status = self._platform_runner.get_session_status(session_id)
+        return status not in (SessionStatus.STOPPED, SessionStatus.FAILED)
+
     def cancel(self, *, branch: str) -> None:
         session_id = self._sessions.pop(branch, None)
         if session_id is not None:

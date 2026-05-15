@@ -105,7 +105,9 @@ class TestPollRunningTask:
         _create_work_commit(local, TASK_BRANCH, "Implement login endpoint")
         _push_branch(local, TASK_BRANCH)
 
-        runtime = _make_runtime(local)
+        executor = FakeAgentExecutor()
+        executor.set_alive(TASK_BRANCH)
+        runtime = _make_runtime(local, executor)
         handle = AgentHandle(id=TASK_BRANCH)
         result = runtime.poll(handle)
 
@@ -121,7 +123,9 @@ class TestPollRunningTask:
         _create_signal_commit(local, TASK_BRANCH, "WIP: still working on it")
         _push_branch(local, TASK_BRANCH)
 
-        runtime = _make_runtime(local)
+        executor = FakeAgentExecutor()
+        executor.set_alive(TASK_BRANCH)
+        runtime = _make_runtime(local, executor)
         handle = AgentHandle(id=TASK_BRANCH)
         result = runtime.poll(handle)
 
@@ -234,6 +238,88 @@ class TestPollVerificationFail:
         assert result.status != AgentStatus.FAILED
         assert result.rationale is not None
         assert "input validation" in result.rationale
+
+
+class TestPollDeadAgent:
+    def test_returns_failed_when_no_signal_and_agent_not_alive(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        _create_branch_from(local, TASK_BRANCH, "main")
+        _create_work_commit(local, TASK_BRANCH, "Some work")
+        _push_branch(local, TASK_BRANCH)
+
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(local, executor)
+        handle = AgentHandle(id=TASK_BRANCH)
+        result = runtime.poll(handle)
+
+        assert result.status == AgentStatus.FAILED
+        assert result.rationale is not None
+        assert (
+            "died" in result.rationale.lower() or "signal" in result.rationale.lower()
+        )
+
+    def test_returns_running_when_no_signal_and_agent_alive(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        _create_branch_from(local, TASK_BRANCH, "main")
+        _create_work_commit(local, TASK_BRANCH, "Some work")
+        _push_branch(local, TASK_BRANCH)
+
+        executor = FakeAgentExecutor()
+        executor.set_alive(TASK_BRANCH)
+        runtime = _make_runtime(local, executor)
+        handle = AgentHandle(id=TASK_BRANCH)
+        result = runtime.poll(handle)
+
+        assert result.status == AgentStatus.RUNNING
+
+    def test_returns_complete_when_signal_present_regardless_of_liveness(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        _create_branch_from(local, TASK_BRANCH, "main")
+        _create_signal_commit(local, TASK_BRANCH, "All done\n\nTask-Status: Complete")
+        _push_branch(local, TASK_BRANCH)
+
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(local, executor)
+        handle = AgentHandle(id=TASK_BRANCH)
+        result = runtime.poll(handle)
+
+        assert result.status == AgentStatus.COMPLETE
+
+    def test_returns_failed_when_empty_commit_no_signal_and_agent_dead(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        _create_branch_from(local, TASK_BRANCH, "main")
+        _create_signal_commit(local, TASK_BRANCH, "WIP: still working")
+        _push_branch(local, TASK_BRANCH)
+
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(local, executor)
+        handle = AgentHandle(id=TASK_BRANCH)
+        result = runtime.poll(handle)
+
+        assert result.status == AgentStatus.FAILED
+        assert result.rationale is not None
+
+    def test_dead_verifier_returns_failed(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        _create_branch_from(local, VERIFIER_BRANCH, "main")
+        _create_work_commit(local, VERIFIER_BRANCH, "Checking specs")
+        _push_branch(local, VERIFIER_BRANCH)
+
+        executor = FakeAgentExecutor()
+        runtime = _make_runtime(local, executor)
+        handle = AgentHandle(id=VERIFIER_BRANCH)
+        result = runtime.poll(handle)
+
+        assert result.status == AgentStatus.FAILED
+        assert result.rationale is not None
 
 
 class TestPollFetchesRemote:
