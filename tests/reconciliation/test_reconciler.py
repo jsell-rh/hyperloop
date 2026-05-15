@@ -2888,6 +2888,31 @@ class TestVerificationPass:
 
         assert sp.verification_handle is None
 
+    def test_verification_workspace_cleaned_up_on_pass(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        workspace_manager._verification_workspaces.add("abc123")
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="All checks pass",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert not workspace_manager.has_verification_workspace("abc123")
+
 
 class TestVerificationFail:
     def test_verification_fail_transitions_to_out_of_sync(

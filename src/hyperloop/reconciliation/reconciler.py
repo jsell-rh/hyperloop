@@ -637,6 +637,7 @@ class Reconciler:
                     rationale=rationale,
                     cycle=self._cycle,
                 )
+                self._workspace_manager.cleanup_verification(sp.blob_sha)
                 self._integrate_to_trunk(sp)
             else:
                 rationale = result.rationale or "Verification failed"
