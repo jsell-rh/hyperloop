@@ -546,6 +546,189 @@ class TestVerifierWorkflowConcerns:
         )
 
 
+class TestMergeResolverWorkflowConcerns:
+    """agent-prompts.spec.md — Requirement: Merge Resolver Workflow.
+
+    The merge resolver base prompt SHALL instruct the agent to resolve
+    conflicts while preserving the intent of both contributions.
+    """
+
+    @pytest.fixture()
+    def merge_resolver_prompt(self) -> str:
+        doc = yaml.safe_load((BASE_DIR / "merge-resolver.yaml").read_text())
+        return doc["prompt"]
+
+    def test_addresses_intent_preservation(self, merge_resolver_prompt: str) -> None:
+        prompt_lower = merge_resolver_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "intent",
+                "purpose of changes",
+                "understand",
+                "both sides",
+            ]
+        ), (
+            "Merge resolver prompt must instruct the agent to understand "
+            "the intent/purpose of changes on both sides before resolving"
+        )
+
+    def test_addresses_correctness_verification(
+        self, merge_resolver_prompt: str
+    ) -> None:
+        prompt_lower = merge_resolver_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "tests pass",
+                "test suite",
+                "compiles",
+                "builds",
+            ]
+        ), (
+            "Merge resolver prompt must instruct the agent to ensure the "
+            "merged result builds successfully and tests pass"
+        )
+
+    def test_addresses_newer_wins_tiebreaker(self, merge_resolver_prompt: str) -> None:
+        prompt_lower = merge_resolver_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "newer",
+                "latest",
+                "most recent",
+            ]
+        ), (
+            "Merge resolver prompt must instruct the agent to prefer the "
+            "newer task's intent when contributions are genuinely incompatible"
+        )
+
+    def test_addresses_preserving_both_contributions(
+        self, merge_resolver_prompt: str
+    ) -> None:
+        prompt_lower = merge_resolver_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "preserve",
+                "both contributions",
+                "do not discard",
+                "both sides",
+            ]
+        ), (
+            "Merge resolver prompt must instruct the agent to preserve "
+            "both contributions rather than discarding one side"
+        )
+
+    def test_intent_understanding_appears_before_resolution(
+        self, merge_resolver_prompt: str
+    ) -> None:
+        prompt_lower = merge_resolver_prompt.lower()
+        understanding_phrases = ["understanding", "understand", "intent"]
+        resolution_phrases = ["resolve", "ensure", "after resolving"]
+
+        understanding_pos = len(prompt_lower)
+        for phrase in understanding_phrases:
+            idx = prompt_lower.find(phrase)
+            if idx >= 0:
+                understanding_pos = min(understanding_pos, idx)
+
+        resolution_pos = 0
+        for phrase in resolution_phrases:
+            idx = prompt_lower.find(phrase)
+            if idx >= 0:
+                resolution_pos = max(resolution_pos, idx)
+
+        assert understanding_pos < len(prompt_lower) and resolution_pos > 0, (
+            "Merge resolver prompt must contain both understanding and "
+            "resolution phases"
+        )
+        assert understanding_pos < resolution_pos, (
+            "Understanding intent must appear before resolution/verification "
+            "instructions"
+        )
+
+
+class TestIntegrationSummarizerWorkflowConcerns:
+    """agent-prompts.spec.md — Requirement: Integration Summarizer Workflow.
+
+    The integration summarizer base prompt SHALL instruct the agent to
+    produce a structured summary suitable for a pull request.
+    """
+
+    @pytest.fixture()
+    def summarizer_prompt(self) -> str:
+        doc = yaml.safe_load((BASE_DIR / "integration-summarizer.yaml").read_text())
+        return doc["prompt"]
+
+    def test_addresses_audience(self, summarizer_prompt: str) -> None:
+        prompt_lower = summarizer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "reviewer",
+                "human",
+                "reader",
+            ]
+        ), (
+            "Integration summarizer prompt must address the audience — "
+            "human reviewers who have not seen the individual tasks"
+        )
+
+    def test_addresses_structure(self, summarizer_prompt: str) -> None:
+        prompt_lower = summarizer_prompt.lower()
+        assert "title" in prompt_lower and "body" in prompt_lower, (
+            "Integration summarizer prompt must instruct the agent to "
+            "produce a PR title and body"
+        )
+
+    def test_addresses_scope_clarity(self, summarizer_prompt: str) -> None:
+        prompt_lower = summarizer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "what changed",
+                "scope",
+                "explains",
+                "understand",
+            ]
+        ), (
+            "Integration summarizer prompt must instruct the agent to explain "
+            "what changed and why, without requiring the reader to inspect "
+            "every file"
+        )
+
+    def test_addresses_traceability(self, summarizer_prompt: str) -> None:
+        prompt_lower = summarizer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "spec",
+                "task",
+                "reference",
+            ]
+        ), (
+            "Integration summarizer prompt must instruct the agent to "
+            "reference the spec and completed tasks that drove the changes"
+        )
+
+    def test_summary_described_as_for_pull_request(
+        self, summarizer_prompt: str
+    ) -> None:
+        prompt_lower = summarizer_prompt.lower()
+        assert any(
+            phrase in prompt_lower
+            for phrase in [
+                "pull request",
+                "pr",
+            ]
+        ), (
+            "Integration summarizer prompt must describe the output as "
+            "suitable for a pull request"
+        )
+
+
 class TestGenericPrompts:
     """agent-prompts.spec.md — Requirement: Generic Prompts.
 
