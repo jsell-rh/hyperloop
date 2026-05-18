@@ -779,6 +779,7 @@ class Reconciler:
                     integration_id=sp.integration_id,
                 )
                 sp.integration_id = None
+                sp.integration_summary = None
                 self._observer.spec_synced(
                     spec_path=sp.path,
                     spec_blob_sha=sp.blob_sha,
@@ -796,6 +797,7 @@ class Reconciler:
             elif result.status == IntegrationPollStatus.CLOSED:
                 sp.status = SpecPlanStatus.FAILED
                 sp.integration_id = None
+                sp.integration_summary = None
                 sp.record_event(
                     reason=EventReason.PR_CLOSED,
                     message="PR closed without merging",
@@ -821,6 +823,7 @@ class Reconciler:
         except Exception as exc:
             sp.status = SpecPlanStatus.OUT_OF_SYNC
             sp.integration_id = None
+            sp.integration_summary = None
             sp.record_event(
                 reason=EventReason.REBASE_FAILED,
                 message=str(exc),
@@ -849,6 +852,7 @@ class Reconciler:
         else:
             sp.status = SpecPlanStatus.OUT_OF_SYNC
             sp.integration_id = None
+            sp.integration_summary = None
             reason = rebase_result.conflict_details or "Rebase conflict"
             sp.record_event(
                 reason=EventReason.REBASE_FAILED,
@@ -883,6 +887,7 @@ class Reconciler:
         except Exception as exc:
             sp.status = SpecPlanStatus.OUT_OF_SYNC
             sp.integration_id = None
+            sp.integration_summary = None
             self._observer.verification_launch_failed(
                 spec_path=sp.path,
                 spec_blob_sha=sp.blob_sha,
@@ -892,6 +897,7 @@ class Reconciler:
             return
         sp.status = SpecPlanStatus.VERIFYING
         sp.integration_id = None
+        sp.integration_summary = None
         sp.verification_handle = handle
         sp.integration_attempts += 1
         self._observer.verification_launched(
@@ -916,6 +922,7 @@ class Reconciler:
         if sp.integration_attempts >= self._max_integration_retries:
             sp.status = SpecPlanStatus.FAILED
             sp.integration_id = None
+            sp.integration_summary = None
             self._observer.spec_failed(
                 spec_path=sp.path,
                 spec_blob_sha=sp.blob_sha,

@@ -32,6 +32,7 @@ A SpecPlan SHALL be uniquely identified by the combination of spec path and blob
 | blob_sha | Content-addressable identifier for the exact spec version |
 | status | Current reconciliation state (OutOfSync, Reconciling, Verifying, PendingIntegration, Synced, Failed) |
 | integration_id | Identifier for the pending integration (PR URL or synthetic ID). Present only when status is PendingIntegration |
+| integration_summary | Title and body for the integration PR. Present only during integration attempts |
 | superseded | Whether this SpecPlan has been superseded by a newer blob SHA |
 | reconciliation_attempts | Number of times this spec has cycled through verification failure back to OutOfSync |
 | redecomposition_count | Number of re-decompositions performed for the current reconciliation attempt |
@@ -73,6 +74,19 @@ A SpecPlan SHALL be uniquely identified by the combination of spec path and blob
 - GIVEN a SpecPlan with status OutOfSync, Reconciling, Verifying, Synced, or Failed
 - WHEN the SpecPlan is examined
 - THEN integration_id SHALL be null
+
+#### Scenario: integration_summary cleared on transition out of PendingIntegration
+
+- GIVEN a SpecPlan in PendingIntegration with integration_summary set
+- WHEN the spec transitions to Synced, Failed, or OutOfSync
+- THEN integration_summary SHALL be cleared (set to null)
+- AND subsequent integration attempts SHALL compose a fresh summary
+
+#### Scenario: integration_summary absent in non-PendingIntegration states
+
+- GIVEN a SpecPlan with status OutOfSync, Reconciling, Verifying, Synced, or Failed
+- WHEN the SpecPlan is examined
+- THEN integration_summary SHALL be null
 
 #### Scenario: SpecPlan identity is path plus SHA
 
