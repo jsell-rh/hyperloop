@@ -260,14 +260,6 @@ Each cycle, the reconciler SHALL poll all PendingIntegration specs for integrati
 - AND the reconciler SHALL NOT re-open or re-submit the integration
 - AND the only way to retry is for a human to modify the spec (producing a new blob SHA)
 
-#### Scenario: Integration pending too long
-
-- GIVEN a spec has been in PendingIntegration for longer than a configurable timeout
-- WHEN the reconciler evaluates the spec
-- THEN the integration is treated as Failed
-- AND integration_attempts is incremented
-- AND the spec follows the normal integration failure path
-
 #### Scenario: Integration polling added to cycle
 
 - GIVEN the reconciliation cycle step ordering
