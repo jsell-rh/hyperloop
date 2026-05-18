@@ -290,6 +290,100 @@ class TestDeletedSpecDetected:
         assert observer.calls_for("spec_divergence_detected") == []
 
 
+class TestSyncedSpecNotSuperseded:
+    def test_modified_synced_spec_preserves_synced_plan(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+    ) -> None:
+        sp = plan_store.get_plan().add_spec("auth.spec.md", "abc123")
+        sp.status = SpecPlanStatus.SYNCED
+        spec_source.add_spec("auth.spec.md", "def456")
+
+        reconciler.run_cycle()
+
+        plan = plan_store.get_plan()
+        synced = [s for s in plan.spec_plans if s.blob_sha == "abc123"][0]
+        new = [s for s in plan.spec_plans if s.blob_sha == "def456"][0]
+        assert synced.superseded is False
+        assert synced.status == SpecPlanStatus.SYNCED
+        assert new.superseded is False
+        assert new.status != SpecPlanStatus.SYNCED
+
+    def test_modified_synced_spec_fires_divergence_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+    ) -> None:
+        sp = plan_store.get_plan().add_spec("auth.spec.md", "abc123")
+        sp.status = SpecPlanStatus.SYNCED
+        spec_source.add_spec("auth.spec.md", "def456")
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("spec_divergence_detected")
+        assert len(events) == 1
+        assert events[0]["change_type"] == ChangeType.MODIFIED
+
+    def test_synced_spec_not_retriggered_on_subsequent_cycles(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+    ) -> None:
+        sp = plan_store.get_plan().add_spec("auth.spec.md", "abc123")
+        sp.status = SpecPlanStatus.SYNCED
+        spec_source.add_spec("auth.spec.md", "def456")
+
+        reconciler.run_cycle()
+        observer.calls.clear()
+
+        reconciler.run_cycle()
+
+        assert observer.calls_for("spec_divergence_detected") == []
+        assert observer.calls_for("spec_superseded") == []
+
+    def test_synced_spec_still_provides_last_synced_sha(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp = plan_store.get_plan().add_spec("auth.spec.md", "abc123")
+        sp.status = SpecPlanStatus.SYNCED
+        spec_source.add_spec("auth.spec.md", "def456")
+        agent_runtime.set_decomposition_result([])
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.decomposition_calls) == 1
+        diffs = agent_runtime.decomposition_calls[0][0]
+        assert len(diffs) == 1
+        assert diffs[0].old_blob_sha == "abc123"
+
+    def test_synced_spec_workspaces_cleaned_on_new_sha(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = plan_store.get_plan().add_spec("auth.spec.md", "abc123")
+        sp.status = SpecPlanStatus.SYNCED
+        sp.delivery_workspace_id = "delivery/abc123"
+        workspace_manager.create_delivery_workspace("abc123")
+        spec_source.add_spec("auth.spec.md", "def456")
+
+        reconciler.run_cycle()
+
+        assert not workspace_manager.has_delivery_workspace("abc123")
+
+
 class TestIdempotentCycles:
     def test_running_twice_with_no_changes_is_idempotent(
         self,

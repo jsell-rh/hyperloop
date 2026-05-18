@@ -36,7 +36,7 @@ class Plan(BaseModel):
                 return sp
 
         for sp in self.spec_plans:
-            if sp.path == path:
+            if sp.path == path and sp.status != SpecPlanStatus.SYNCED:
                 sp.superseded = True
 
         new_sp = SpecPlan(path=path, blob_sha=blob_sha)

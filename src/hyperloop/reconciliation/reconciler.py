@@ -1043,10 +1043,13 @@ class Reconciler:
             )
 
     def _find_active_spec_plan(self, plan: Plan, path: str) -> SpecPlan | None:
+        synced: SpecPlan | None = None
         for sp in plan.spec_plans:
             if sp.path == path and not sp.superseded:
-                return sp
-        return None
+                if sp.status != SpecPlanStatus.SYNCED:
+                    return sp
+                synced = sp
+        return synced
 
     def _count_out_of_sync(self, plan: Plan) -> int:
         return sum(

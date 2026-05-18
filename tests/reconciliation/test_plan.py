@@ -124,6 +124,53 @@ class TestIdempotentSpecAddition:
         old = [sp for sp in plan.spec_plans if sp.blob_sha == "abc123"][0]
         assert old.superseded is True
 
+    def test_synced_spec_plan_never_superseded(self) -> None:
+        plan = Plan()
+        plan.add_spec("auth.spec.md", "abc123")
+        plan.spec_plans[0].status = SpecPlanStatus.SYNCED
+        plan.add_spec("auth.spec.md", "def456")
+
+        synced = [sp for sp in plan.spec_plans if sp.blob_sha == "abc123"][0]
+        new = [sp for sp in plan.spec_plans if sp.blob_sha == "def456"][0]
+
+        assert synced.superseded is False
+        assert synced.status == SpecPlanStatus.SYNCED
+        assert new.superseded is False
+        assert new.status == SpecPlanStatus.OUT_OF_SYNC
+
+    def test_synced_preserved_alongside_superseded(self) -> None:
+        plan = Plan()
+        plan.add_spec("auth.spec.md", "abc123")
+        plan.spec_plans[0].status = SpecPlanStatus.SYNCED
+        plan.add_spec("auth.spec.md", "bbb222")
+        plan.add_spec("auth.spec.md", "ccc333")
+
+        synced = [sp for sp in plan.spec_plans if sp.blob_sha == "abc123"][0]
+        middle = [sp for sp in plan.spec_plans if sp.blob_sha == "bbb222"][0]
+        latest = [sp for sp in plan.spec_plans if sp.blob_sha == "ccc333"][0]
+
+        assert synced.superseded is False
+        assert middle.superseded is True
+        assert latest.superseded is False
+
+    def test_add_spec_with_verifying_status_supersedes(self) -> None:
+        plan = Plan()
+        plan.add_spec("auth.spec.md", "abc123")
+        plan.spec_plans[0].status = SpecPlanStatus.VERIFYING
+        plan.add_spec("auth.spec.md", "def456")
+
+        old = [sp for sp in plan.spec_plans if sp.blob_sha == "abc123"][0]
+        assert old.superseded is True
+
+    def test_add_spec_with_pending_integration_supersedes(self) -> None:
+        plan = Plan()
+        plan.add_spec("auth.spec.md", "abc123")
+        plan.spec_plans[0].status = SpecPlanStatus.PENDING_INTEGRATION
+        plan.add_spec("auth.spec.md", "def456")
+
+        old = [sp for sp in plan.spec_plans if sp.blob_sha == "abc123"][0]
+        assert old.superseded is True
+
 
 class TestTaskAddition:
     def test_adding_tasks_transitions_to_reconciling(self) -> None:
