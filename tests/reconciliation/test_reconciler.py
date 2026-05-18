@@ -6311,3 +6311,204 @@ class TestIntegrationConflictRebase:
         assert sp.superseded is True
         superseded_events = observer.calls_for("spec_superseded")
         assert len(superseded_events) == 1
+
+
+class TestIntegrationIdClearedOnTransition:
+    def test_merged_clears_integration_id(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.MERGED),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.SYNCED
+        assert sp.integration_id is None
+
+    def test_closed_clears_integration_id(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CLOSED),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.FAILED
+        assert sp.integration_id is None
+
+    def test_failed_exhaustion_clears_integration_id(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_integration_retries=1,
+        )
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.FAILED),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.FAILED
+        assert sp.integration_id is None
+
+    def test_conflict_rebase_exception_clears_integration_id(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+        original = workspace_manager.rebase_delivery
+
+        def failing_rebase(blob_sha: str) -> RebaseResult:
+            raise RuntimeError("Git error during rebase")
+
+        workspace_manager.rebase_delivery = failing_rebase  # type: ignore[assignment]
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        assert sp.integration_id is None
+
+        workspace_manager.rebase_delivery = original  # type: ignore[assignment]
+
+    def test_conflict_rebase_conflict_clears_integration_id(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+        workspace_manager.set_rebase_result(
+            "abc123",
+            RebaseResult(
+                outcome=RebaseOutcome.CONFLICT,
+                conflict_details="Conflicting changes",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        assert sp.integration_id is None
+
+    def test_conflict_successful_rebase_clears_integration_id(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.VERIFYING
+        assert sp.integration_id is None
+
+    def test_conflict_verification_launch_failure_clears_integration_id(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+        original = agent_runtime.launch_verification
+
+        def failing_launch(
+            spec_content: str,
+            spec_path: str,
+            spec_blob_sha: str,
+            workspace_id: str,
+            rebase_context: RebaseContext | None = None,
+        ) -> AgentHandle:
+            raise RuntimeError("Verification launch failed")
+
+        agent_runtime.launch_verification = failing_launch  # type: ignore[assignment]
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        assert sp.integration_id is None
+
+        agent_runtime.launch_verification = original  # type: ignore[assignment]
+
+    def test_failed_not_exhausted_retains_integration_id(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.FAILED),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.PENDING_INTEGRATION
+        assert sp.integration_id is not None
