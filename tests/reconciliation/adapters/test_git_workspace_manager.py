@@ -5,6 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 
 from hyperloop.reconciliation.adapters.git_workspace_manager import (
     GitWorkspaceManager,
@@ -89,6 +90,15 @@ def _setup_fake_gh_multi(tmp_path: Path, response: str) -> Path:
     script.chmod(0o755)
     os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
     return args_log
+
+
+def _setup_failing_gh(tmp_path: Path, stderr_message: str) -> None:
+    bin_dir = tmp_path / "fakebin"
+    bin_dir.mkdir(exist_ok=True)
+    script = bin_dir / "gh"
+    script.write_text(f'#!/bin/bash\necho "{stderr_message}" >&2\nexit 1\n')
+    script.chmod(0o755)
+    os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
 
 
 def _make_manager(
@@ -506,6 +516,43 @@ class TestIntegrate:
         )
 
         assert url == self._PR_URL
+
+
+class TestIntegrateGhFailure:
+    def test_gh_failure_includes_stderr_in_error(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        _setup_failing_gh(tmp_path, "pull request already exists for branch")
+
+        with pytest.raises(RuntimeError, match="pull request already exists"):
+            manager.integrate(
+                BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+            )
+
+    def test_gh_failure_does_not_expose_full_command(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        _setup_failing_gh(tmp_path, "not found")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            manager.integrate(
+                BLOB_SHA,
+                "specs/auth.spec.md",
+                "Title",
+                "Very long body that should not appear in the error message",
+            )
+
+        error_msg = str(exc_info.value)
+        assert "Very long body" not in error_msg
+        assert "not found" in error_msg
 
 
 class TestIntegratePrAutomerge:

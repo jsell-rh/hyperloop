@@ -361,11 +361,17 @@ class GitWorkspaceManager:
         *args: str,
         check: bool = True,
     ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
+        result = subprocess.run(
             ["gh", *args],
             cwd=self._repo_path,
             capture_output=True,
             text=True,
             encoding="utf-8",
-            check=check,
         )
+        if check and result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            cmd_preview = " ".join(args[:2])
+            raise RuntimeError(
+                f"gh {cmd_preview} failed (exit {result.returncode}): {detail}"
+            )
+        return result
