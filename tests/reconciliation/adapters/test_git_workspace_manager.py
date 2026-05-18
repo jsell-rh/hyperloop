@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -8,7 +9,12 @@ from pathlib import Path
 from hyperloop.reconciliation.adapters.git_workspace_manager import (
     GitWorkspaceManager,
 )
+from hyperloop.reconciliation.models.integration_poll_result import (
+    IntegrationPollResult,
+    IntegrationPollStatus,
+)
 from hyperloop.reconciliation.models.merge_result import MergeOutcome, MergeResult
+from hyperloop.reconciliation.models.rebase_result import RebaseOutcome, RebaseResult
 
 
 def _git(
@@ -42,6 +48,13 @@ def _create_work_commit(repo: Path, branch: str, filename: str, content: str) ->
     _git(repo, "checkout", "main")
 
 
+def _create_trunk_commit(repo: Path, filename: str, content: str) -> None:
+    (repo / filename).write_text(content)
+    _git(repo, "add", filename)
+    _git(repo, "commit", "-m", f"Add {filename}")
+    _git(repo, "push", "origin", "main")
+
+
 def _push_branch(repo: Path, branch: str) -> None:
     _git(repo, "push", "origin", branch)
 
@@ -49,6 +62,19 @@ def _push_branch(repo: Path, branch: str) -> None:
 BRANCH_PREFIX = "hyperloop/"
 TRUNK = "main"
 BLOB_SHA = "abc123"
+
+
+def _setup_fake_gh(tmp_path: Path, response: str) -> Path:
+    bin_dir = tmp_path / "fakebin"
+    bin_dir.mkdir(exist_ok=True)
+    args_file = tmp_path / "gh_args.txt"
+    response_file = tmp_path / "gh_response.txt"
+    response_file.write_text(response)
+    script = bin_dir / "gh"
+    script.write_text(f'#!/bin/bash\necho "$@" > {args_file}\ncat "{response_file}"\n')
+    script.chmod(0o755)
+    os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
+    return args_file
 
 
 def _make_manager(repo_path: Path) -> GitWorkspaceManager:
@@ -381,6 +407,8 @@ class TestMergeTask:
 
 
 class TestIntegrate:
+    _PR_URL = "https://github.com/test/repo/pull/1"
+
     def test_pushes_delivery_branch_to_remote(
         self, git_env: tuple[Path, Path], tmp_path: Path
     ) -> None:
@@ -391,7 +419,7 @@ class TestIntegrate:
         delivery_branch = _delivery(BLOB_SHA)
         _create_work_commit(local, delivery_branch, "login.py", "def login(): pass")
 
-        self._setup_fake_gh(tmp_path)
+        _setup_fake_gh(tmp_path, self._PR_URL)
         integration_id = manager.integrate(
             BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
         )
@@ -411,7 +439,7 @@ class TestIntegrate:
         manager = _make_manager(local)
         manager.create_delivery_workspace(BLOB_SHA)
 
-        args_file = self._setup_fake_gh(tmp_path)
+        args_file = _setup_fake_gh(tmp_path, self._PR_URL)
         manager.integrate(
             BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
         )
@@ -425,7 +453,7 @@ class TestIntegrate:
         manager = _make_manager(local)
         manager.create_delivery_workspace(BLOB_SHA)
 
-        args_file = self._setup_fake_gh(tmp_path)
+        args_file = _setup_fake_gh(tmp_path, self._PR_URL)
         manager.integrate(
             BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
         )
@@ -441,7 +469,7 @@ class TestIntegrate:
         manager.create_delivery_workspace(BLOB_SHA)
 
         long_title = "A" * 500
-        args_file = self._setup_fake_gh(tmp_path)
+        args_file = _setup_fake_gh(tmp_path, self._PR_URL)
         manager.integrate(BLOB_SHA, "specs/auth.spec.md", long_title, "body")
 
         captured_args = args_file.read_text()
@@ -453,27 +481,12 @@ class TestIntegrate:
         manager = _make_manager(local)
         manager.create_delivery_workspace(BLOB_SHA)
 
-        self._setup_fake_gh(tmp_path)
+        _setup_fake_gh(tmp_path, self._PR_URL)
         url = manager.integrate(
             BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
         )
 
-        assert url == "https://github.com/test/repo/pull/1"
-
-    @staticmethod
-    def _setup_fake_gh(tmp_path: Path) -> Path:
-        bin_dir = tmp_path / "fakebin"
-        bin_dir.mkdir(exist_ok=True)
-        args_file = tmp_path / "gh_args.txt"
-        script = bin_dir / "gh"
-        script.write_text(
-            "#!/bin/bash\n"
-            f'echo "$@" > {args_file}\n'
-            'echo "https://github.com/test/repo/pull/1"\n'
-        )
-        script.chmod(0o755)
-        os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
-        return args_file
+        assert url == self._PR_URL
 
 
 class TestCleanup:
@@ -691,6 +704,20 @@ class TestProtocolConformance:
         assert hints["blob_sha"] is str
         assert hints["return"] is type(None)
 
+    def test_has_poll_integration(self) -> None:
+        from typing import get_type_hints
+
+        hints = get_type_hints(GitWorkspaceManager.poll_integration)
+        assert hints["integration_id"] is str
+        assert hints["return"] is IntegrationPollResult
+
+    def test_has_rebase_delivery(self) -> None:
+        from typing import get_type_hints
+
+        hints = get_type_hints(GitWorkspaceManager.rebase_delivery)
+        assert hints["blob_sha"] is str
+        assert hints["return"] is RebaseResult
+
     def test_adapter_imports_from_domain(self) -> None:
         import inspect
 
@@ -698,3 +725,223 @@ class TestProtocolConformance:
 
         source = inspect.getsource(module)
         assert "hyperloop.reconciliation.models" in source
+
+
+class TestPollIntegration:
+    def test_pending_pr_returns_pending(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+
+        _setup_fake_gh(
+            tmp_path,
+            json.dumps({"state": "OPEN", "mergeable": "MERGEABLE"}),
+        )
+
+        result = manager.poll_integration("https://github.com/test/repo/pull/1")
+
+        assert result.status == IntegrationPollStatus.PENDING
+        assert result.conflict_details is None
+
+    def test_merged_pr_returns_merged(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+
+        _setup_fake_gh(
+            tmp_path,
+            json.dumps({"state": "MERGED", "mergeable": "UNKNOWN"}),
+        )
+
+        result = manager.poll_integration("https://github.com/test/repo/pull/1")
+
+        assert result.status == IntegrationPollStatus.MERGED
+
+    def test_conflicting_pr_returns_conflict(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+
+        _setup_fake_gh(
+            tmp_path,
+            json.dumps({"state": "OPEN", "mergeable": "CONFLICTING"}),
+        )
+
+        result = manager.poll_integration("https://github.com/test/repo/pull/1")
+
+        assert result.status == IntegrationPollStatus.CONFLICT
+        assert result.conflict_details is not None
+
+    def test_closed_pr_returns_closed(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+
+        _setup_fake_gh(
+            tmp_path,
+            json.dumps({"state": "CLOSED", "mergeable": "UNKNOWN"}),
+        )
+
+        result = manager.poll_integration("https://github.com/test/repo/pull/1")
+
+        assert result.status == IntegrationPollStatus.CLOSED
+
+    def test_direct_integration_returns_merged(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+
+        result = manager.poll_integration("direct:abc123def456")
+
+        assert result.status == IntegrationPollStatus.MERGED
+
+    def test_passes_pr_url_to_gh(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+
+        pr_url = "https://github.com/test/repo/pull/42"
+        args_file = _setup_fake_gh(
+            tmp_path,
+            json.dumps({"state": "OPEN", "mergeable": "MERGEABLE"}),
+        )
+
+        manager.poll_integration(pr_url)
+
+        captured_args = args_file.read_text()
+        assert pr_url in captured_args
+
+    def test_gh_failure_returns_failed(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+
+        bin_dir = tmp_path / "fakebin"
+        bin_dir.mkdir(exist_ok=True)
+        script = bin_dir / "gh"
+        script.write_text("#!/bin/bash\nexit 1\n")
+        script.chmod(0o755)
+        os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
+
+        result = manager.poll_integration("https://github.com/test/repo/pull/1")
+
+        assert result.status == IntegrationPollStatus.FAILED
+
+
+class TestRebaseDelivery:
+    def test_clean_rebase_returns_success(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        _create_work_commit(
+            local, _delivery(BLOB_SHA), "feature.py", "def feature(): pass"
+        )
+        _push_branch(local, _delivery(BLOB_SHA))
+        _create_trunk_commit(local, "hotfix.py", "def hotfix(): pass")
+
+        result = manager.rebase_delivery(BLOB_SHA)
+
+        assert result.outcome == RebaseOutcome.SUCCESS
+        assert result.conflict_details is None
+
+    def test_rebase_updates_delivery_onto_trunk(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, remote = git_env
+        manager = _make_manager(local)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        _create_work_commit(
+            local, _delivery(BLOB_SHA), "feature.py", "def feature(): pass"
+        )
+        _push_branch(local, _delivery(BLOB_SHA))
+        _create_trunk_commit(local, "hotfix.py", "def hotfix(): pass")
+        trunk_head = _git(local, "rev-parse", TRUNK).stdout.strip()
+
+        manager.rebase_delivery(BLOB_SHA)
+
+        delivery_head = _git(local, "rev-parse", _delivery(BLOB_SHA)).stdout.strip()
+        merge_base = _git(
+            local, "merge-base", TRUNK, _delivery(BLOB_SHA)
+        ).stdout.strip()
+        assert merge_base == trunk_head
+        assert delivery_head != trunk_head
+
+        file_content = _git(
+            local, "show", f"{_delivery(BLOB_SHA)}:feature.py"
+        ).stdout.strip()
+        assert "def feature(): pass" in file_content
+
+    def test_rebase_pushes_to_remote(self, git_env: tuple[Path, Path]) -> None:
+        local, remote = git_env
+        manager = _make_manager(local)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        _create_work_commit(
+            local, _delivery(BLOB_SHA), "feature.py", "def feature(): pass"
+        )
+        _push_branch(local, _delivery(BLOB_SHA))
+        _create_trunk_commit(local, "hotfix.py", "def hotfix(): pass")
+
+        manager.rebase_delivery(BLOB_SHA)
+
+        local_head = _git(local, "rev-parse", _delivery(BLOB_SHA)).stdout.strip()
+        remote_head = _git(
+            remote, "rev-parse", f"refs/heads/{_delivery(BLOB_SHA)}"
+        ).stdout.strip()
+        assert local_head == remote_head
+
+    def test_rebase_conflict_returns_conflict(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        _create_work_commit(local, _delivery(BLOB_SHA), "shared.py", "delivery version")
+        _push_branch(local, _delivery(BLOB_SHA))
+        _create_trunk_commit(local, "shared.py", "trunk version")
+
+        result = manager.rebase_delivery(BLOB_SHA)
+
+        assert result.outcome == RebaseOutcome.CONFLICT
+        assert result.conflict_details is not None
+
+    def test_already_up_to_date_returns_success(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        _create_work_commit(
+            local, _delivery(BLOB_SHA), "feature.py", "def feature(): pass"
+        )
+        _push_branch(local, _delivery(BLOB_SHA))
+
+        result = manager.rebase_delivery(BLOB_SHA)
+
+        assert result.outcome == RebaseOutcome.SUCCESS
+
+    def test_preserves_all_delivery_commits(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        _create_work_commit(local, _delivery(BLOB_SHA), "a.py", "a")
+        _create_work_commit(local, _delivery(BLOB_SHA), "b.py", "b")
+        _push_branch(local, _delivery(BLOB_SHA))
+        _create_trunk_commit(local, "hotfix.py", "fix")
+
+        manager.rebase_delivery(BLOB_SHA)
+
+        a_content = _git(local, "show", f"{_delivery(BLOB_SHA)}:a.py").stdout.strip()
+        b_content = _git(local, "show", f"{_delivery(BLOB_SHA)}:b.py").stdout.strip()
+        assert a_content == "a"
+        assert b_content == "b"

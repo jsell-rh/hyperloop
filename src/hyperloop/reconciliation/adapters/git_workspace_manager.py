@@ -1,9 +1,28 @@
 from __future__ import annotations
 
+import json
 import subprocess
+from enum import StrEnum
 from pathlib import Path
 
+from hyperloop.reconciliation.models.integration_poll_result import (
+    IntegrationPollResult,
+    IntegrationPollStatus,
+)
 from hyperloop.reconciliation.models.merge_result import MergeOutcome, MergeResult
+from hyperloop.reconciliation.models.rebase_result import RebaseOutcome, RebaseResult
+
+
+class _PrState(StrEnum):
+    OPEN = "OPEN"
+    MERGED = "MERGED"
+    CLOSED = "CLOSED"
+
+
+class _PrMergeable(StrEnum):
+    MERGEABLE = "MERGEABLE"
+    CONFLICTING = "CONFLICTING"
+    UNKNOWN = "UNKNOWN"
 
 
 class GitWorkspaceManager:
@@ -107,6 +126,103 @@ class GitWorkspaceManager:
         )
         return result.stdout.strip()
 
+    _DIRECT_INTEGRATION_PREFIX = "direct:"
+
+    def poll_integration(self, integration_id: str) -> IntegrationPollResult:
+        if integration_id.startswith(self._DIRECT_INTEGRATION_PREFIX):
+            return IntegrationPollResult(status=IntegrationPollStatus.MERGED)
+
+        result = self._gh(
+            "pr",
+            "view",
+            integration_id,
+            "--json",
+            "state,mergeable",
+            check=False,
+        )
+
+        if result.returncode != 0:
+            return IntegrationPollResult(status=IntegrationPollStatus.FAILED)
+
+        data = json.loads(result.stdout)
+        state = _PrState(data["state"])
+        mergeable = _PrMergeable(data.get("mergeable", _PrMergeable.UNKNOWN))
+
+        if state == _PrState.MERGED:
+            return IntegrationPollResult(status=IntegrationPollStatus.MERGED)
+        if state == _PrState.CLOSED:
+            return IntegrationPollResult(status=IntegrationPollStatus.CLOSED)
+        if mergeable == _PrMergeable.CONFLICTING:
+            return IntegrationPollResult(
+                status=IntegrationPollStatus.CONFLICT,
+                conflict_details="Pull request has merge conflicts",
+            )
+        return IntegrationPollResult(status=IntegrationPollStatus.PENDING)
+
+    def rebase_delivery(self, blob_sha: str) -> RebaseResult:
+        delivery = self._delivery_branch(blob_sha)
+
+        self._git("fetch", self._remote, self._trunk_branch)
+        trunk_head = self._git(
+            "rev-parse", f"{self._remote}/{self._trunk_branch}"
+        ).stdout.strip()
+        delivery_head = self._git("rev-parse", delivery).stdout.strip()
+
+        merge_base = self._git("merge-base", trunk_head, delivery_head).stdout.strip()
+
+        if merge_base == trunk_head:
+            return RebaseResult(outcome=RebaseOutcome.SUCCESS)
+
+        commits = (
+            self._git("rev-list", "--reverse", f"{merge_base}..{delivery_head}")
+            .stdout.strip()
+            .splitlines()
+        )
+
+        if not commits:
+            self._git("update-ref", f"refs/heads/{delivery}", trunk_head)
+            self._force_push_branch(delivery)
+            return RebaseResult(outcome=RebaseOutcome.SUCCESS)
+
+        current_parent = trunk_head
+        for commit_sha in commits:
+            original_parent = self._git("rev-parse", f"{commit_sha}^").stdout.strip()
+
+            merge_result = self._git(
+                "merge-tree",
+                "--write-tree",
+                f"--merge-base={original_parent}",
+                current_parent,
+                commit_sha,
+                check=False,
+            )
+
+            if merge_result.returncode != 0:
+                lines = merge_result.stdout.strip().splitlines()
+                conflict_info = "\n".join(lines[1:]) if len(lines) > 1 else None
+                return RebaseResult(
+                    outcome=RebaseOutcome.CONFLICT,
+                    conflict_details=conflict_info,
+                )
+
+            tree_sha = merge_result.stdout.strip().splitlines()[0]
+            message = self._git("log", "-1", "--format=%B", commit_sha).stdout.strip()
+
+            new_commit = self._git(
+                "commit-tree",
+                tree_sha,
+                "-p",
+                current_parent,
+                "-m",
+                message,
+            ).stdout.strip()
+
+            current_parent = new_commit
+
+        self._git("update-ref", f"refs/heads/{delivery}", current_parent)
+        self._force_push_branch(delivery)
+        return RebaseResult(outcome=RebaseOutcome.SUCCESS)
+
     def cleanup(self, blob_sha: str) -> None:
         branches = self._list_branches_for_spec(blob_sha)
         for branch in branches:
@@ -140,6 +256,9 @@ class GitWorkspaceManager:
 
     def _push_branch(self, branch: str) -> None:
         self._git("push", self._remote, branch, check=False)
+
+    def _force_push_branch(self, branch: str) -> None:
+        self._git("push", "--force", self._remote, branch, check=False)
 
     def _delete_branch(self, branch: str) -> None:
         self._git("branch", "-D", branch, check=False)
