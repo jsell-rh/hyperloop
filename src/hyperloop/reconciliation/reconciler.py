@@ -772,13 +772,13 @@ class Reconciler:
                 continue
             elif result.status == IntegrationPollStatus.MERGED:
                 sp.status = SpecPlanStatus.SYNCED
-                sp.integration_id = None
                 sp.integration_attempts = 0
                 self._observer.trunk_integration_completed(
                     spec_path=sp.path,
                     spec_blob_sha=sp.blob_sha,
                     integration_id=sp.integration_id,
                 )
+                sp.integration_id = None
                 self._observer.spec_synced(
                     spec_path=sp.path,
                     spec_blob_sha=sp.blob_sha,
