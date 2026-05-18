@@ -15,7 +15,7 @@ _WARNING_EVENTS = frozenset(
         "verification_failed",
         "spec_failed",
         "trunk_integration_failed",
-        "delivery_rebase_failed",
+        "delivery_rebase_conflict",
         "agent_launch_failed",
         "stale_agent_detected",
         "composer_rebuild_failed",
@@ -289,11 +289,11 @@ class StructlogObserver:
             spec_blob_sha=spec_blob_sha,
         )
 
-    def delivery_rebase_failed(
+    def delivery_rebase_conflict(
         self, *, spec_path: str, spec_blob_sha: str, reason: str
     ) -> None:
         self._emit(
-            "delivery_rebase_failed",
+            "delivery_rebase_conflict",
             spec_path=spec_path,
             spec_blob_sha=spec_blob_sha,
             reason=reason,

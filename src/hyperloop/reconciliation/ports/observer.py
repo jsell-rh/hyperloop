@@ -150,7 +150,7 @@ class Observer(Protocol):
         self, *, spec_path: str, spec_blob_sha: str
     ) -> None: ...
 
-    def delivery_rebase_failed(
+    def delivery_rebase_conflict(
         self, *, spec_path: str, spec_blob_sha: str, reason: str
     ) -> None: ...
 

@@ -102,7 +102,7 @@ EXPECTED_METHODS: dict[str, dict[str, type]] = {
     },
     "delivery_rebase_started": {"spec_path": str, "spec_blob_sha": str},
     "delivery_rebase_completed": {"spec_path": str, "spec_blob_sha": str},
-    "delivery_rebase_failed": {"spec_path": str, "spec_blob_sha": str, "reason": str},
+    "delivery_rebase_conflict": {"spec_path": str, "spec_blob_sha": str, "reason": str},
     "verification_launched": {"spec_path": str, "spec_blob_sha": str, "cycle": int},
     "verification_launch_failed": {
         "spec_path": str,

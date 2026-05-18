@@ -146,7 +146,7 @@ class NullProbe:
     def delivery_rebase_completed(self, *, spec_path: str, spec_blob_sha: str) -> None:
         pass
 
-    def delivery_rebase_failed(
+    def delivery_rebase_conflict(
         self, *, spec_path: str, spec_blob_sha: str, reason: str
     ) -> None:
         pass

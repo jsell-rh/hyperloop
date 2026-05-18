@@ -6035,7 +6035,7 @@ class TestIntegrationConflictRebase:
 
         reconciler.run_cycle()
 
-        events = observer.calls_for("delivery_rebase_failed")
+        events = observer.calls_for("delivery_rebase_conflict")
         assert len(events) == 1
 
     def test_superseded_pending_integration_not_polled(
@@ -6212,7 +6212,7 @@ class TestIntegrationConflictRebase:
         assert sp.status == SpecPlanStatus.OUT_OF_SYNC
         rebase_failed = [e for e in sp.events if e.reason == EventReason.REBASE_FAILED]
         assert len(rebase_failed) == 1
-        events = observer.calls_for("delivery_rebase_failed")
+        events = observer.calls_for("delivery_rebase_conflict")
         assert len(events) == 1
 
         workspace_manager.rebase_delivery = original  # type: ignore[assignment]

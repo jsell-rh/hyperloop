@@ -823,7 +823,7 @@ class Reconciler:
                 event_type=EventType.WARNING,
                 timestamp=datetime.now(timezone.utc),
             )
-            self._observer.delivery_rebase_failed(
+            self._observer.delivery_rebase_conflict(
                 spec_path=sp.path,
                 spec_blob_sha=sp.blob_sha,
                 reason=str(exc),
@@ -851,7 +851,7 @@ class Reconciler:
                 event_type=EventType.WARNING,
                 timestamp=datetime.now(timezone.utc),
             )
-            self._observer.delivery_rebase_failed(
+            self._observer.delivery_rebase_conflict(
                 spec_path=sp.path,
                 spec_blob_sha=sp.blob_sha,
                 reason=reason,

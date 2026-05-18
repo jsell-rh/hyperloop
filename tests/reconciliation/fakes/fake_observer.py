@@ -270,11 +270,11 @@ class FakeObserver:
             spec_blob_sha=spec_blob_sha,
         )
 
-    def delivery_rebase_failed(
+    def delivery_rebase_conflict(
         self, *, spec_path: str, spec_blob_sha: str, reason: str
     ) -> None:
         self._record(
-            "delivery_rebase_failed",
+            "delivery_rebase_conflict",
             spec_path=spec_path,
             spec_blob_sha=spec_blob_sha,
             reason=reason,
