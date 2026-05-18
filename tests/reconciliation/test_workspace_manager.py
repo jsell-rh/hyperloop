@@ -51,6 +51,8 @@ class TestWorkspaceManagerProtocol:
             "create_verification_workspace",
             "merge_task",
             "integrate",
+            "poll_integration",
+            "rebase_delivery",
             "cleanup",
             "cleanup_verification",
         }

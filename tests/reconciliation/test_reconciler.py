@@ -9,6 +9,10 @@ from hyperloop.reconciliation.models.agent_handle import AgentHandle
 from hyperloop.reconciliation.models.cancellation_reason import CancellationReason
 from hyperloop.reconciliation.models.event import EventType
 from hyperloop.reconciliation.models.event_reason import EventReason
+from hyperloop.reconciliation.models.integration_poll_result import (
+    IntegrationPollResult,
+    IntegrationPollStatus,
+)
 from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.merge_result import MergeOutcome, MergeResult
 from hyperloop.reconciliation.models.poll_result import (
@@ -2672,7 +2676,7 @@ class TestVerificationLaunch:
 
 
 class TestVerificationPass:
-    def test_verification_pass_transitions_to_synced(
+    def test_verification_pass_transitions_to_pending_integration(
         self,
         reconciler: Reconciler,
         spec_source: FakeSpecSource,
@@ -2694,7 +2698,8 @@ class TestVerificationPass:
 
         reconciler.run_cycle()
 
-        assert sp.status == SpecPlanStatus.SYNCED
+        assert sp.status == SpecPlanStatus.PENDING_INTEGRATION
+        assert sp.integration_id is not None
 
     def test_verification_passed_event_recorded(
         self,
@@ -2800,6 +2805,13 @@ class TestVerificationPass:
         )
 
         reconciler.run_cycle()
+        assert sp.status == SpecPlanStatus.PENDING_INTEGRATION
+
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.MERGED),
+        )
+        reconciler.run_cycle()
 
         events = observer.calls_for("trunk_integration_completed")
         assert len(events) == 1
@@ -2857,12 +2869,18 @@ class TestVerificationPass:
 
         reconciler.run_cycle()
 
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.MERGED),
+        )
+        reconciler.run_cycle()
+
         events = observer.calls_for("spec_synced")
         assert len(events) == 1
         assert events[0]["spec_path"] == "auth.spec.md"
         assert events[0]["spec_blob_sha"] == "abc123"
         assert events[0]["total_tasks"] == 2
-        assert events[0]["cycle"] == 1
+        assert events[0]["cycle"] == 2
 
     def test_verification_handle_cleared_on_pass(
         self,
@@ -3370,7 +3388,7 @@ class TestIntegrationFailure:
 
         reconciler.run_cycle()
 
-        assert sp.status == SpecPlanStatus.SYNCED
+        assert sp.status == SpecPlanStatus.PENDING_INTEGRATION
 
     def test_integration_failure_increments_attempts(
         self,
@@ -4761,7 +4779,7 @@ class TestIntegrationSummary:
 
         reconciler.run_cycle()
 
-        assert sp.status == SpecPlanStatus.SYNCED
+        assert sp.status == SpecPlanStatus.PENDING_INTEGRATION
         assert len(agent_runtime.compose_summary_calls) == 1
         _, _, title, body = workspace_manager.integrations[0]
         assert title == "Auth feature"
@@ -4799,7 +4817,7 @@ class TestIntegrationSummary:
 
         reconciler.run_cycle()
 
-        assert sp.status == SpecPlanStatus.SYNCED
+        assert sp.status == SpecPlanStatus.PENDING_INTEGRATION
         assert len(agent_runtime.compose_summary_calls) == 2
 
     def test_only_complete_tasks_in_summaries(

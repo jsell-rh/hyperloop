@@ -11,10 +11,14 @@ from hyperloop.reconciliation.models.cyclic_dependency_error import (
 from hyperloop.reconciliation.models.event import Event, EventType
 from hyperloop.reconciliation.models.event_reason import EventReason
 from hyperloop.reconciliation.models.halt_reason import HaltReason
+from hyperloop.reconciliation.models.integration_poll_result import (
+    IntegrationPollStatus,
+)
 from hyperloop.reconciliation.models.merge_result import MergeOutcome
 from hyperloop.reconciliation.models.plan import Plan
 from hyperloop.reconciliation.models.poll_result import AgentStatus, AgentVerdict
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
+from hyperloop.reconciliation.models.rebase_result import RebaseOutcome
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
 from hyperloop.reconciliation.models.spec_entry import SpecEntry
 from hyperloop.reconciliation.models.spec_plan import SpecPlan, SpecPlanStatus
@@ -149,6 +153,7 @@ class Reconciler:
         self._handle_retry_exhaustion(plan)
         self._collect_verification_results(plan)
         self._launch_verification(plan)
+        self._poll_integration(plan)
 
         self._plan_store.write_plan(plan)
         self._observer.plan_synced(cycle=self._cycle)
@@ -694,22 +699,11 @@ class Reconciler:
                 spec_blob_sha=sp.blob_sha,
                 integration_id=integration_id,
             )
-            sp.status = SpecPlanStatus.SYNCED
-            sp.integration_attempts = 0
-            self._observer.trunk_integration_completed(
-                spec_path=sp.path,
-                spec_blob_sha=sp.blob_sha,
-                integration_id=integration_id,
-            )
-            self._observer.spec_synced(
-                spec_path=sp.path,
-                spec_blob_sha=sp.blob_sha,
-                total_tasks=len(sp.tasks),
-                cycle=self._cycle,
-            )
+            sp.status = SpecPlanStatus.PENDING_INTEGRATION
+            sp.integration_id = integration_id
             sp.record_event(
-                reason=EventReason.SPEC_SYNCED,
-                message=f"Integrated to trunk ({len(sp.tasks)} tasks)",
+                reason=EventReason.INTEGRATION_SUBMITTED,
+                message=f"Integration submitted: {integration_id}",
                 event_type=EventType.NORMAL,
                 timestamp=datetime.now(timezone.utc),
             )
@@ -746,6 +740,164 @@ class Reconciler:
         has_passed = any(e.reason == EventReason.VERIFICATION_PASSED for e in sp.events)
         if has_passed:
             self._integrate_to_trunk(sp)
+
+    def _poll_integration(self, plan: Plan) -> None:
+        for sp in plan.spec_plans:
+            if sp.superseded or sp.status != SpecPlanStatus.PENDING_INTEGRATION:
+                continue
+            if sp.integration_id is None:
+                continue
+
+            try:
+                result = self._workspace_manager.poll_integration(sp.integration_id)
+            except Exception:
+                continue
+
+            self._observer.integration_polled(
+                spec_path=sp.path,
+                spec_blob_sha=sp.blob_sha,
+                integration_id=sp.integration_id,
+                status=result.status,
+            )
+
+            if result.status == IntegrationPollStatus.PENDING:
+                continue
+            elif result.status == IntegrationPollStatus.MERGED:
+                sp.status = SpecPlanStatus.SYNCED
+                sp.integration_attempts = 0
+                self._observer.trunk_integration_completed(
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    integration_id=sp.integration_id,
+                )
+                self._observer.spec_synced(
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    total_tasks=len(sp.tasks),
+                    cycle=self._cycle,
+                )
+                sp.record_event(
+                    reason=EventReason.INTEGRATION_MERGED,
+                    message=f"Integrated to trunk ({len(sp.tasks)} tasks)",
+                    event_type=EventType.NORMAL,
+                    timestamp=datetime.now(timezone.utc),
+                )
+            elif result.status == IntegrationPollStatus.CONFLICT:
+                self._handle_integration_conflict(sp)
+            elif result.status == IntegrationPollStatus.CLOSED:
+                sp.status = SpecPlanStatus.FAILED
+                sp.record_event(
+                    reason=EventReason.PR_CLOSED,
+                    message="PR closed without merging",
+                    event_type=EventType.WARNING,
+                    timestamp=datetime.now(timezone.utc),
+                )
+                self._observer.spec_failed(
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    reason="PR closed without merging",
+                    cycle=self._cycle,
+                )
+            elif result.status == IntegrationPollStatus.FAILED:
+                self._handle_integration_failure(sp)
+
+    def _handle_integration_conflict(self, sp: SpecPlan) -> None:
+        self._observer.delivery_rebase_started(
+            spec_path=sp.path,
+            spec_blob_sha=sp.blob_sha,
+        )
+        try:
+            rebase_result = self._workspace_manager.rebase_delivery(sp.blob_sha)
+        except Exception as exc:
+            sp.status = SpecPlanStatus.OUT_OF_SYNC
+            sp.record_event(
+                reason=EventReason.REBASE_FAILED,
+                message=str(exc),
+                event_type=EventType.WARNING,
+                timestamp=datetime.now(timezone.utc),
+            )
+            self._observer.delivery_rebase_failed(
+                spec_path=sp.path,
+                spec_blob_sha=sp.blob_sha,
+                reason=str(exc),
+            )
+            return
+
+        if rebase_result.outcome == RebaseOutcome.SUCCESS:
+            sp.record_event(
+                reason=EventReason.DELIVERY_REBASED,
+                message="Delivery branch rebased onto trunk",
+                event_type=EventType.NORMAL,
+                timestamp=datetime.now(timezone.utc),
+            )
+            self._observer.delivery_rebase_completed(
+                spec_path=sp.path,
+                spec_blob_sha=sp.blob_sha,
+            )
+            self._launch_post_rebase_verification(sp)
+        else:
+            sp.status = SpecPlanStatus.OUT_OF_SYNC
+            reason = rebase_result.conflict_details or "Rebase conflict"
+            sp.record_event(
+                reason=EventReason.REBASE_FAILED,
+                message=reason,
+                event_type=EventType.WARNING,
+                timestamp=datetime.now(timezone.utc),
+            )
+            self._observer.delivery_rebase_failed(
+                spec_path=sp.path,
+                spec_blob_sha=sp.blob_sha,
+                reason=reason,
+            )
+
+    def _launch_post_rebase_verification(self, sp: SpecPlan) -> None:
+        try:
+            workspace_id = self._workspace_manager.create_verification_workspace(
+                sp.blob_sha
+            )
+            spec_content = self._spec_source.read_at(sp.path, sp.blob_sha)
+            handle = self._agent_runtime.launch_verification(
+                spec_content, sp.path, sp.blob_sha, workspace_id
+            )
+        except Exception as exc:
+            sp.status = SpecPlanStatus.OUT_OF_SYNC
+            self._observer.verification_launch_failed(
+                spec_path=sp.path,
+                spec_blob_sha=sp.blob_sha,
+                reason=str(exc),
+                cycle=self._cycle,
+            )
+            return
+        sp.status = SpecPlanStatus.VERIFYING
+        sp.verification_handle = handle
+        sp.integration_attempts += 1
+        self._observer.verification_launched(
+            spec_path=sp.path,
+            spec_blob_sha=sp.blob_sha,
+            cycle=self._cycle,
+        )
+
+    def _handle_integration_failure(self, sp: SpecPlan) -> None:
+        sp.integration_attempts += 1
+        sp.record_event(
+            reason=EventReason.INTEGRATION_FAILED,
+            message="Integration failed (transient)",
+            event_type=EventType.WARNING,
+            timestamp=datetime.now(timezone.utc),
+        )
+        self._observer.trunk_integration_failed(
+            spec_path=sp.path,
+            spec_blob_sha=sp.blob_sha,
+            reason="Integration failed (transient)",
+        )
+        if sp.integration_attempts >= self._max_integration_retries:
+            sp.status = SpecPlanStatus.FAILED
+            self._observer.spec_failed(
+                spec_path=sp.path,
+                spec_blob_sha=sp.blob_sha,
+                reason=f"Integration retry limit ({self._max_integration_retries}) exceeded",
+                cycle=self._cycle,
+            )
 
     def _detect_divergence(self, plan: Plan, entries: list[SpecEntry]) -> None:
         source_paths: set[str] = set()

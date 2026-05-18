@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from hyperloop.reconciliation.models.integration_poll_result import (
+    IntegrationPollResult,
+    IntegrationPollStatus,
+)
 from hyperloop.reconciliation.models.merge_result import (
     MergeOutcome,
     MergeResult,
 )
+from hyperloop.reconciliation.models.rebase_result import RebaseOutcome, RebaseResult
 
 
 class FakeWorkspaceManager:
@@ -14,6 +19,8 @@ class FakeWorkspaceManager:
         self._verification_workspaces: set[str] = set()
         self._merge_results: dict[tuple[str, int], MergeResult] = {}
         self._integration_ids: dict[str, str] = {}
+        self._poll_results: dict[str, IntegrationPollResult] = {}
+        self._rebase_results: dict[str, RebaseResult] = {}
         self.integrations: list[tuple[str, str, str, str]] = []
 
     def set_merge_result(
@@ -23,6 +30,14 @@ class FakeWorkspaceManager:
 
     def set_integration_id(self, blob_sha: str, integration_id: str) -> None:
         self._integration_ids[blob_sha] = integration_id
+
+    def set_poll_integration_result(
+        self, integration_id: str, result: IntegrationPollResult
+    ) -> None:
+        self._poll_results[integration_id] = result
+
+    def set_rebase_result(self, blob_sha: str, result: RebaseResult) -> None:
+        self._rebase_results[blob_sha] = result
 
     def create_delivery_workspace(self, blob_sha: str) -> str:
         self._delivery_workspaces.add(blob_sha)
@@ -64,6 +79,18 @@ class FakeWorkspaceManager:
         self.integrations.append((blob_sha, spec_path, title, body))
         return self._integration_ids.get(
             blob_sha, f"https://github.com/example/repo/pull/fake-{blob_sha}"
+        )
+
+    def poll_integration(self, integration_id: str) -> IntegrationPollResult:
+        return self._poll_results.get(
+            integration_id,
+            IntegrationPollResult(status=IntegrationPollStatus.PENDING),
+        )
+
+    def rebase_delivery(self, blob_sha: str) -> RebaseResult:
+        return self._rebase_results.get(
+            blob_sha,
+            RebaseResult(outcome=RebaseOutcome.SUCCESS),
         )
 
     def cleanup(self, blob_sha: str) -> None:
