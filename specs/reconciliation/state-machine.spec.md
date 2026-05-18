@@ -46,7 +46,7 @@ The system SHALL enforce the following state transitions. No other transitions a
 | PendingIntegration | OutOfSync | Trunk merge conflict detected; rebase failed (conflict too complex for automatic rebase) |
 | PendingIntegration | Failed | Integration retry limit exceeded |
 | OutOfSync, Reconciling, Verifying | Failed | Convergence bound exceeded |
-| Reconciling, Verifying, PendingIntegration | OutOfSync | Spec is superseded by a new blob SHA |
+| Reconciling, Verifying, PendingIntegration, Failed | OutOfSync | Spec is superseded by a new blob SHA |
 
 #### Scenario: OutOfSync to Reconciling
 
@@ -155,7 +155,7 @@ A reconciliation attempt is counted each time a spec cycles from Verifying back 
 
 ### Requirement: Superseding
 
-When a spec's blob SHA changes while it is in Reconciling, Verifying, or PendingIntegration state, the old blob SHA's SpecPlan SHALL be marked as superseded and all in-flight work SHALL be cancelled. Synced SpecPlans are never superseded — a new SpecPlan is created alongside them with status OutOfSync.
+When a spec's blob SHA changes while it is in Reconciling, Verifying, PendingIntegration, or Failed state, the old blob SHA's SpecPlan SHALL be marked as superseded and all in-flight work SHALL be cancelled. Synced SpecPlans are never superseded — a new SpecPlan is created alongside them with status OutOfSync.
 
 #### Scenario: Spec changes during Reconciling
 
@@ -171,6 +171,13 @@ When a spec's blob SHA changes while it is in Reconciling, Verifying, or Pending
 - WHEN the spec is modified, producing blob SHA def456
 - THEN the verification agent for abc123 SHALL be cancelled
 - AND the SpecPlan for abc123 SHALL be marked as superseded
+- AND a new SpecPlan for def456 SHALL be created with status OutOfSync
+
+#### Scenario: Spec changes while Failed
+
+- GIVEN a spec at path "auth.spec.md" with status Failed at blob SHA abc123
+- WHEN the spec is modified, producing blob SHA def456
+- THEN the SpecPlan for abc123 SHALL be marked as superseded
 - AND a new SpecPlan for def456 SHALL be created with status OutOfSync
 
 #### Scenario: Superseded work is discarded
