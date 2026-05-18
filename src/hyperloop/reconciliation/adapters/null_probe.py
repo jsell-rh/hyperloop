@@ -130,6 +130,27 @@ class NullProbe:
     ) -> None:
         pass
 
+    def integration_polled(
+        self,
+        *,
+        spec_path: str,
+        spec_blob_sha: str,
+        integration_id: str,
+        status: str,
+    ) -> None:
+        pass
+
+    def delivery_rebase_started(self, *, spec_path: str, spec_blob_sha: str) -> None:
+        pass
+
+    def delivery_rebase_completed(self, *, spec_path: str, spec_blob_sha: str) -> None:
+        pass
+
+    def delivery_rebase_failed(
+        self, *, spec_path: str, spec_blob_sha: str, reason: str
+    ) -> None:
+        pass
+
     def verification_launched(
         self, *, spec_path: str, spec_blob_sha: str, cycle: int
     ) -> None:

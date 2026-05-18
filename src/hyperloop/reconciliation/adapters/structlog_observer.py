@@ -15,6 +15,7 @@ _WARNING_EVENTS = frozenset(
         "verification_failed",
         "spec_failed",
         "trunk_integration_failed",
+        "delivery_rebase_failed",
         "agent_launch_failed",
         "stale_agent_detected",
         "composer_rebuild_failed",
@@ -253,6 +254,46 @@ class StructlogObserver:
     ) -> None:
         self._emit(
             "trunk_integration_failed",
+            spec_path=spec_path,
+            spec_blob_sha=spec_blob_sha,
+            reason=reason,
+        )
+
+    def integration_polled(
+        self,
+        *,
+        spec_path: str,
+        spec_blob_sha: str,
+        integration_id: str,
+        status: str,
+    ) -> None:
+        self._emit(
+            "integration_polled",
+            spec_path=spec_path,
+            spec_blob_sha=spec_blob_sha,
+            integration_id=integration_id,
+            status=status,
+        )
+
+    def delivery_rebase_started(self, *, spec_path: str, spec_blob_sha: str) -> None:
+        self._emit(
+            "delivery_rebase_started",
+            spec_path=spec_path,
+            spec_blob_sha=spec_blob_sha,
+        )
+
+    def delivery_rebase_completed(self, *, spec_path: str, spec_blob_sha: str) -> None:
+        self._emit(
+            "delivery_rebase_completed",
+            spec_path=spec_path,
+            spec_blob_sha=spec_blob_sha,
+        )
+
+    def delivery_rebase_failed(
+        self, *, spec_path: str, spec_blob_sha: str, reason: str
+    ) -> None:
+        self._emit(
+            "delivery_rebase_failed",
             spec_path=spec_path,
             spec_blob_sha=spec_blob_sha,
             reason=reason,

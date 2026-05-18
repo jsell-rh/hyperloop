@@ -131,6 +131,29 @@ class Observer(Protocol):
         self, *, spec_path: str, spec_blob_sha: str, reason: str
     ) -> None: ...
 
+    # Integration Polling
+
+    def integration_polled(
+        self,
+        *,
+        spec_path: str,
+        spec_blob_sha: str,
+        integration_id: str,
+        status: str,
+    ) -> None: ...
+
+    def delivery_rebase_started(
+        self, *, spec_path: str, spec_blob_sha: str
+    ) -> None: ...
+
+    def delivery_rebase_completed(
+        self, *, spec_path: str, spec_blob_sha: str
+    ) -> None: ...
+
+    def delivery_rebase_failed(
+        self, *, spec_path: str, spec_blob_sha: str, reason: str
+    ) -> None: ...
+
     # Verification
 
     def verification_launched(

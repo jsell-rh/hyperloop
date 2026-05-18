@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from hyperloop.reconciliation.models.integration_poll_result import (
+    IntegrationPollResult,
+)
 from hyperloop.reconciliation.models.merge_result import MergeResult
+from hyperloop.reconciliation.models.rebase_result import RebaseResult
 
 
 class WorkspaceManager(Protocol):
@@ -19,6 +23,10 @@ class WorkspaceManager(Protocol):
     def integrate(
         self, blob_sha: str, spec_path: str, title: str, body: str
     ) -> str: ...
+
+    def poll_integration(self, integration_id: str) -> IntegrationPollResult: ...
+
+    def rebase_delivery(self, blob_sha: str) -> RebaseResult: ...
 
     def cleanup(self, blob_sha: str) -> None: ...
 

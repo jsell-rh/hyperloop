@@ -15,6 +15,7 @@ class SpecPlanStatus(StrEnum):
     OUT_OF_SYNC = "OutOfSync"
     RECONCILING = "Reconciling"
     VERIFYING = "Verifying"
+    PENDING_INTEGRATION = "PendingIntegration"
     SYNCED = "Synced"
     FAILED = "Failed"
 
@@ -31,6 +32,7 @@ class SpecPlan(BaseModel):
     verification_handle: AgentHandle | None = None
     delivery_workspace_id: str | None = None
     integration_summary: IntegrationSummary | None = None
+    integration_id: str | None = None
     tasks: list[Task] = []
     events: list[Event] = []
 
