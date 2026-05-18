@@ -15,6 +15,7 @@ from hyperloop.reconciliation.models.integration_poll_result import (
 )
 from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.merge_result import MergeOutcome, MergeResult
+from hyperloop.reconciliation.models.rebase_result import RebaseOutcome, RebaseResult
 from hyperloop.reconciliation.models.poll_result import (
     AgentStatus,
     AgentVerdict,
@@ -5553,3 +5554,623 @@ class TestPromptHotReload:
         )
 
         reconciler.run_cycle()
+
+
+def _build_pending_integration_spec_plan(
+    plan_store: FakePlanStore,
+    spec_source: FakeSpecSource,
+    workspace_manager: FakeWorkspaceManager,
+    path: str = "auth.spec.md",
+    blob_sha: str = "abc123",
+    integration_id: str = "https://github.com/example/repo/pull/42",
+) -> SpecPlan:
+    plan = plan_store.get_plan()
+    sp = plan.add_spec(path, blob_sha)
+    spec_source.add_spec(path, blob_sha)
+    workspace_manager.create_delivery_workspace(blob_sha)
+    sp.delivery_workspace_id = f"delivery/{blob_sha}"
+    task_id = plan.next_task_id()
+    plan.add_tasks(
+        sp,
+        [
+            Task(
+                id=task_id,
+                spec_path=path,
+                spec_blob_sha=blob_sha,
+                name="task-1",
+                description="Implement auth",
+                status=TaskStatus.COMPLETE,
+                workspace_id=f"task/{blob_sha}/{task_id}",
+            ),
+        ],
+    )
+    sp.status = SpecPlanStatus.PENDING_INTEGRATION
+    sp.integration_id = integration_id
+    return sp
+
+
+class TestIntegrationPolling:
+    def test_merged_transitions_to_synced(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.MERGED),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.SYNCED
+
+    def test_merged_records_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.MERGED),
+        )
+
+        reconciler.run_cycle()
+
+        merged_events = [
+            e for e in sp.events if e.reason == EventReason.INTEGRATION_MERGED
+        ]
+        assert len(merged_events) == 1
+
+    def test_merged_fires_spec_synced_observer(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.MERGED),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("spec_synced")
+        assert len(events) == 1
+        assert events[0]["spec_path"] == "auth.spec.md"
+
+    def test_merged_resets_integration_attempts(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        sp.integration_attempts = 2
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.MERGED),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.integration_attempts == 0
+
+    def test_pending_remains_pending(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.PENDING_INTEGRATION
+
+    def test_pending_fires_integration_polled_observer(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("integration_polled")
+        assert len(events) == 1
+        assert events[0]["integration_id"] == sp.integration_id
+        assert events[0]["status"] == IntegrationPollStatus.PENDING
+
+    def test_closed_transitions_to_failed(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CLOSED),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.FAILED
+
+    def test_closed_records_pr_closed_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CLOSED),
+        )
+
+        reconciler.run_cycle()
+
+        pr_closed_events = [e for e in sp.events if e.reason == EventReason.PR_CLOSED]
+        assert len(pr_closed_events) == 1
+
+    def test_closed_fires_spec_failed_observer(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CLOSED),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("spec_failed")
+        assert len(events) == 1
+        assert "closed" in events[0]["reason"].lower()
+
+    def test_failed_increments_attempts(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.FAILED),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.integration_attempts == 1
+        assert sp.status == SpecPlanStatus.PENDING_INTEGRATION
+
+    def test_failed_exhaustion_transitions_to_failed(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_integration_retries=2,
+        )
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        sp.integration_attempts = 1
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.FAILED),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.FAILED
+        assert sp.integration_attempts == 2
+
+    def test_failed_exhaustion_fires_spec_failed(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_integration_retries=1,
+        )
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.FAILED),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("spec_failed")
+        assert len(events) == 1
+        assert "retry limit" in events[0]["reason"].lower()
+
+
+class TestIntegrationConflictRebase:
+    def test_conflict_with_successful_rebase_transitions_to_verifying(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.VERIFYING
+
+    def test_conflict_rebase_launches_verification(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.verification_handle is not None
+        events = observer.calls_for("verification_launched")
+        assert len(events) == 1
+
+    def test_conflict_rebase_records_delivery_rebased_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+
+        reconciler.run_cycle()
+
+        rebased_events = [
+            e for e in sp.events if e.reason == EventReason.DELIVERY_REBASED
+        ]
+        assert len(rebased_events) == 1
+
+    def test_conflict_rebase_fires_observer_probes(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+
+        reconciler.run_cycle()
+
+        started = observer.calls_for("delivery_rebase_started")
+        assert len(started) == 1
+        completed = observer.calls_for("delivery_rebase_completed")
+        assert len(completed) == 1
+
+    def test_conflict_rebase_increments_integration_attempts(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.integration_attempts == 1
+
+    def test_conflict_rebase_failure_transitions_to_out_of_sync(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+        workspace_manager.set_rebase_result(
+            "abc123",
+            RebaseResult(
+                outcome=RebaseOutcome.CONFLICT,
+                conflict_details="Conflicting changes in auth.py",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+
+    def test_conflict_rebase_failure_records_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+        workspace_manager.set_rebase_result(
+            "abc123",
+            RebaseResult(
+                outcome=RebaseOutcome.CONFLICT,
+                conflict_details="Conflicting changes in auth.py",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        rebase_failed = [e for e in sp.events if e.reason == EventReason.REBASE_FAILED]
+        assert len(rebase_failed) == 1
+        assert "Conflicting changes" in rebase_failed[0].message
+
+    def test_conflict_rebase_failure_fires_observer(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+        workspace_manager.set_rebase_result(
+            "abc123",
+            RebaseResult(
+                outcome=RebaseOutcome.CONFLICT,
+                conflict_details="Conflicting changes",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        events = observer.calls_for("delivery_rebase_failed")
+        assert len(events) == 1
+
+    def test_superseded_pending_integration_not_polled(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        sp.superseded = True
+
+        reconciler.run_cycle()
+
+        assert observer.calls_for("integration_polled") == []
+
+    def test_no_integration_id_skips_polling(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        sp.integration_id = None
+
+        reconciler.run_cycle()
+
+        assert observer.calls_for("integration_polled") == []
+
+    def test_poll_exception_is_swallowed(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        original = workspace_manager.poll_integration
+
+        def failing_poll(integration_id: str) -> IntegrationPollResult:
+            raise RuntimeError("Network error")
+
+        workspace_manager.poll_integration = failing_poll  # type: ignore[assignment]
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.PENDING_INTEGRATION
+
+        workspace_manager.poll_integration = original  # type: ignore[assignment]
+
+    def test_crash_recovery_preserves_pending_integration(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        observer: FakeObserver,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+        )
+
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.MERGED),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.SYNCED
+
+    def test_full_flow_verification_to_pending_to_synced(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+
+        reconciler.run_cycle()
+        assert sp.status == SpecPlanStatus.PENDING_INTEGRATION
+
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.MERGED),
+        )
+
+        reconciler.run_cycle()
+        assert sp.status == SpecPlanStatus.SYNCED
+
+    def test_new_sha_during_pending_integration_supersedes(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+
+        spec_source.add_spec("auth.spec.md", "def456")
+
+        reconciler.run_cycle()
+
+        assert sp.superseded is True
+        superseded_events = observer.calls_for("spec_superseded")
+        assert len(superseded_events) == 1
