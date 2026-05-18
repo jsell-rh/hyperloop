@@ -18,7 +18,8 @@ from hyperloop.reconciliation.models.merge_result import MergeOutcome
 from hyperloop.reconciliation.models.plan import Plan
 from hyperloop.reconciliation.models.poll_result import AgentStatus, AgentVerdict
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
-from hyperloop.reconciliation.models.rebase_result import RebaseOutcome
+from hyperloop.reconciliation.models.rebase_context import RebaseContext
+from hyperloop.reconciliation.models.rebase_result import RebaseOutcome, RebaseResult
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
 from hyperloop.reconciliation.models.spec_entry import SpecEntry
 from hyperloop.reconciliation.models.spec_plan import SpecPlan, SpecPlanStatus
@@ -841,7 +842,7 @@ class Reconciler:
                 spec_path=sp.path,
                 spec_blob_sha=sp.blob_sha,
             )
-            self._launch_post_rebase_verification(sp)
+            self._launch_post_rebase_verification(sp, rebase_result)
         else:
             sp.status = SpecPlanStatus.OUT_OF_SYNC
             reason = rebase_result.conflict_details or "Rebase conflict"
@@ -857,14 +858,23 @@ class Reconciler:
                 reason=reason,
             )
 
-    def _launch_post_rebase_verification(self, sp: SpecPlan) -> None:
+    def _launch_post_rebase_verification(
+        self, sp: SpecPlan, rebase_result: RebaseResult
+    ) -> None:
+        rebase_context = RebaseContext(
+            trunk_changes=rebase_result.trunk_changes or "",
+        )
         try:
             workspace_id = self._workspace_manager.create_verification_workspace(
                 sp.blob_sha
             )
             spec_content = self._spec_source.read_at(sp.path, sp.blob_sha)
             handle = self._agent_runtime.launch_verification(
-                spec_content, sp.path, sp.blob_sha, workspace_id
+                spec_content,
+                sp.path,
+                sp.blob_sha,
+                workspace_id,
+                rebase_context=rebase_context,
             )
         except Exception as exc:
             sp.status = SpecPlanStatus.OUT_OF_SYNC

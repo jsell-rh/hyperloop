@@ -15,6 +15,7 @@ from hyperloop.reconciliation.models.integration_poll_result import (
 )
 from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.merge_result import MergeOutcome, MergeResult
+from hyperloop.reconciliation.models.rebase_context import RebaseContext
 from hyperloop.reconciliation.models.rebase_result import RebaseOutcome, RebaseResult
 from hyperloop.reconciliation.models.poll_result import (
     AgentStatus,
@@ -6037,6 +6038,80 @@ class TestIntegrationConflictRebase:
 
         events = observer.calls_for("delivery_rebase_conflict")
         assert len(events) == 1
+
+    def test_post_rebase_verification_receives_rebase_context(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+        workspace_manager.set_rebase_result(
+            "abc123",
+            RebaseResult(
+                outcome=RebaseOutcome.SUCCESS,
+                trunk_changes="Modified auth.py with new middleware",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.launched_verifications) == 1
+        _, _, _, _, rebase_ctx = agent_runtime.launched_verifications[0]
+        assert rebase_ctx is not None
+        assert isinstance(rebase_ctx, RebaseContext)
+        assert rebase_ctx.trunk_changes == "Modified auth.py with new middleware"
+
+    def test_post_rebase_verification_without_trunk_changes_still_sends_context(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+        workspace_manager.set_rebase_result(
+            "abc123",
+            RebaseResult(outcome=RebaseOutcome.SUCCESS),
+        )
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.launched_verifications) == 1
+        _, _, _, _, rebase_ctx = agent_runtime.launched_verifications[0]
+        assert rebase_ctx is not None
+        assert isinstance(rebase_ctx, RebaseContext)
+
+    def test_initial_verification_has_no_rebase_context(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+    ) -> None:
+        _build_all_tasks_complete_spec_plan(plan_store, spec_source, workspace_manager)
+
+        reconciler.run_cycle()
+
+        assert len(agent_runtime.launched_verifications) == 1
+        _, _, _, _, rebase_ctx = agent_runtime.launched_verifications[0]
+        assert rebase_ctx is None
 
     def test_superseded_pending_integration_not_polled(
         self,
