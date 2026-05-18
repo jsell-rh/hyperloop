@@ -137,6 +137,92 @@ class TestAsyncWorktreeCreation:
         assert len(worktrees) == 1  # only main repo, worktree cleaned up
 
 
+class TestWorktreeRecovery:
+    def test_reuse_branch_after_cancel(self, git_env: tuple[Path, Path]) -> None:
+        repo, _ = git_env
+        runner = FakeSDKRunner()
+        executor = _make_executor(repo, runner)
+        _create_branch(repo, TASK_BRANCH)
+
+        executor.start_task_agent(branch=TASK_BRANCH, prompt="First run")
+        executor.cancel(branch=TASK_BRANCH)
+
+        executor.start_task_agent(branch=TASK_BRANCH, prompt="Second run")
+
+        worktrees = _worktree_paths(repo)
+        assert len(worktrees) == 2  # main + restarted worktree
+
+    def test_stale_directory_does_not_block_worktree_creation(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, _ = git_env
+        runner = FakeSDKRunner()
+        executor = _make_executor(repo, runner)
+        _create_branch(repo, TASK_BRANCH)
+
+        stale_dir = repo / ".hyperloop" / "worktrees" / "hyperloop_spec_abc123_task_5"
+        stale_dir.mkdir(parents=True)
+
+        executor.start_task_agent(branch=TASK_BRANCH, prompt="Work")
+
+        worktrees = _worktree_paths(repo)
+        assert len(worktrees) == 2
+
+    def test_stale_worktree_entry_does_not_block_creation(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, _ = git_env
+        runner = FakeSDKRunner()
+        executor = _make_executor(repo, runner)
+        _create_branch(repo, TASK_BRANCH)
+
+        executor.start_task_agent(branch=TASK_BRANCH, prompt="First")
+        worktree_path = runner.async_calls[0]["cwd"]
+        _git(repo, "worktree", "remove", "--force", str(worktree_path))
+
+        executor.start_task_agent(branch=TASK_BRANCH, prompt="Second")
+
+        worktrees = _worktree_paths(repo)
+        assert len(worktrees) == 2
+
+    def test_pre_existing_worktree_from_prior_process(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, _ = git_env
+        _create_branch(repo, TASK_BRANCH)
+
+        worktree_base = repo / ".hyperloop" / "worktrees"
+        worktree_base.mkdir(parents=True, exist_ok=True)
+        worktree_path = worktree_base / "hyperloop_spec_abc123_task_5"
+        _git(repo, "worktree", "add", str(worktree_path), "--", TASK_BRANCH)
+
+        runner = FakeSDKRunner()
+        fresh_executor = _make_executor(repo, runner)
+
+        fresh_executor.start_task_agent(branch=TASK_BRANCH, prompt="Work")
+
+        assert len(runner.async_calls) == 1
+
+    def test_corrupted_worktree_with_invalid_git_pointer(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        repo, _ = git_env
+        _create_branch(repo, TASK_BRANCH)
+
+        worktree_base = repo / ".hyperloop" / "worktrees"
+        worktree_base.mkdir(parents=True, exist_ok=True)
+        worktree_path = worktree_base / "hyperloop_spec_abc123_task_5"
+        _git(repo, "worktree", "add", str(worktree_path), "--", TASK_BRANCH)
+        (worktree_path / ".git").write_text("garbage")
+
+        runner = FakeSDKRunner()
+        fresh_executor = _make_executor(repo, runner)
+
+        fresh_executor.start_task_agent(branch=TASK_BRANCH, prompt="Work")
+
+        assert len(runner.async_calls) == 1
+
+
 class TestModelSelection:
     def test_model_passed_to_sdk_for_async_agent(
         self, git_env: tuple[Path, Path]

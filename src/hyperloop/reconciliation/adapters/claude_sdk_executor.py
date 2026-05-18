@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 import uuid
@@ -194,8 +195,10 @@ class ClaudeSDKExecutor:
         worktree_path = self._worktree_base / dirname
         if worktree_path.exists():
             self._remove_worktree(worktree_path)
-            self._git("worktree", "prune", check=False)
-        self._git("worktree", "add", str(worktree_path), "--", branch)
+            if worktree_path.exists():
+                shutil.rmtree(worktree_path, ignore_errors=True)
+        self._git("worktree", "prune", check=False)
+        self._git("worktree", "add", "--force", str(worktree_path), "--", branch)
         return worktree_path
 
     def _remove_worktree(self, worktree_path: Path) -> None:
