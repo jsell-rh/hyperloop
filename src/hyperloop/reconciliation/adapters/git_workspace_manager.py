@@ -173,6 +173,8 @@ class GitWorkspaceManager:
         if merge_base == trunk_head:
             return RebaseResult(outcome=RebaseOutcome.SUCCESS)
 
+        trunk_changes = self._summarize_trunk_changes(merge_base, trunk_head)
+
         commits = (
             self._git("rev-list", "--reverse", f"{merge_base}..{delivery_head}")
             .stdout.strip()
@@ -182,7 +184,9 @@ class GitWorkspaceManager:
         if not commits:
             self._git("update-ref", f"refs/heads/{delivery}", trunk_head)
             self._force_push_branch(delivery)
-            return RebaseResult(outcome=RebaseOutcome.SUCCESS)
+            return RebaseResult(
+                outcome=RebaseOutcome.SUCCESS, trunk_changes=trunk_changes
+            )
 
         current_parent = trunk_head
         for commit_sha in commits:
@@ -221,7 +225,7 @@ class GitWorkspaceManager:
 
         self._git("update-ref", f"refs/heads/{delivery}", current_parent)
         self._force_push_branch(delivery)
-        return RebaseResult(outcome=RebaseOutcome.SUCCESS)
+        return RebaseResult(outcome=RebaseOutcome.SUCCESS, trunk_changes=trunk_changes)
 
     def cleanup(self, blob_sha: str) -> None:
         branches = self._list_branches_for_spec(blob_sha)
@@ -263,6 +267,20 @@ class GitWorkspaceManager:
     def _delete_branch(self, branch: str) -> None:
         self._git("branch", "-D", branch, check=False)
         self._git("push", self._remote, "--delete", branch, check=False)
+
+    def _summarize_trunk_changes(self, merge_base: str, trunk_head: str) -> str:
+        log = self._git(
+            "log",
+            "--oneline",
+            f"{merge_base}..{trunk_head}",
+        ).stdout.strip()
+        stat = self._git(
+            "diff",
+            "--stat",
+            merge_base,
+            trunk_head,
+        ).stdout.strip()
+        return f"{log}\n\n{stat}"
 
     def _list_branches_for_spec(self, blob_sha: str) -> list[str]:
         prefix = f"{self._branch_prefix}spec/{blob_sha}/"

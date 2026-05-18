@@ -929,6 +929,40 @@ class TestRebaseDelivery:
 
         assert result.outcome == RebaseOutcome.SUCCESS
 
+    def test_success_includes_trunk_changes(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        _create_work_commit(
+            local, _delivery(BLOB_SHA), "feature.py", "def feature(): pass"
+        )
+        _push_branch(local, _delivery(BLOB_SHA))
+        _create_trunk_commit(local, "hotfix.py", "def hotfix(): pass")
+
+        result = manager.rebase_delivery(BLOB_SHA)
+
+        assert result.outcome == RebaseOutcome.SUCCESS
+        assert result.trunk_changes is not None
+        assert "hotfix.py" in result.trunk_changes
+
+    def test_already_up_to_date_has_no_trunk_changes(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        _create_work_commit(
+            local, _delivery(BLOB_SHA), "feature.py", "def feature(): pass"
+        )
+        _push_branch(local, _delivery(BLOB_SHA))
+
+        result = manager.rebase_delivery(BLOB_SHA)
+
+        assert result.outcome == RebaseOutcome.SUCCESS
+        assert result.trunk_changes is None
+
     def test_preserves_all_delivery_commits(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env
         manager = _make_manager(local)
