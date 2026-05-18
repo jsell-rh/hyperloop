@@ -658,12 +658,12 @@ class TestIntegrationSummarizerWorkflowConcerns:
     """
 
     @pytest.fixture()
-    def summarizer_prompt(self) -> str:
+    def integration_summarizer_prompt(self) -> str:
         doc = yaml.safe_load((BASE_DIR / "integration-summarizer.yaml").read_text())
         return doc["prompt"]
 
-    def test_addresses_audience(self, summarizer_prompt: str) -> None:
-        prompt_lower = summarizer_prompt.lower()
+    def test_addresses_audience(self, integration_summarizer_prompt: str) -> None:
+        prompt_lower = integration_summarizer_prompt.lower()
         assert any(
             phrase in prompt_lower
             for phrase in [
@@ -676,15 +676,15 @@ class TestIntegrationSummarizerWorkflowConcerns:
             "human reviewers who have not seen the individual tasks"
         )
 
-    def test_addresses_structure(self, summarizer_prompt: str) -> None:
-        prompt_lower = summarizer_prompt.lower()
+    def test_addresses_structure(self, integration_summarizer_prompt: str) -> None:
+        prompt_lower = integration_summarizer_prompt.lower()
         assert "title" in prompt_lower and "body" in prompt_lower, (
             "Integration summarizer prompt must instruct the agent to "
             "produce a PR title and body"
         )
 
-    def test_addresses_scope_clarity(self, summarizer_prompt: str) -> None:
-        prompt_lower = summarizer_prompt.lower()
+    def test_addresses_scope_clarity(self, integration_summarizer_prompt: str) -> None:
+        prompt_lower = integration_summarizer_prompt.lower()
         assert any(
             phrase in prompt_lower
             for phrase in [
@@ -699,8 +699,8 @@ class TestIntegrationSummarizerWorkflowConcerns:
             "every file"
         )
 
-    def test_addresses_traceability(self, summarizer_prompt: str) -> None:
-        prompt_lower = summarizer_prompt.lower()
+    def test_addresses_traceability(self, integration_summarizer_prompt: str) -> None:
+        prompt_lower = integration_summarizer_prompt.lower()
         assert any(
             phrase in prompt_lower
             for phrase in [
@@ -714,9 +714,9 @@ class TestIntegrationSummarizerWorkflowConcerns:
         )
 
     def test_summary_described_as_for_pull_request(
-        self, summarizer_prompt: str
+        self, integration_summarizer_prompt: str
     ) -> None:
-        prompt_lower = summarizer_prompt.lower()
+        prompt_lower = integration_summarizer_prompt.lower()
         assert any(
             phrase in prompt_lower
             for phrase in [
