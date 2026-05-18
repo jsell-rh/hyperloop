@@ -20,6 +20,7 @@ from hyperloop.reconciliation.models.poll_result import (
     PollResult,
 )
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
+from hyperloop.reconciliation.models.rebase_context import RebaseContext
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
 from hyperloop.reconciliation.models.task import Task
 from hyperloop.reconciliation.models.task_briefing import TaskBriefing
@@ -1199,6 +1200,43 @@ class TestLaunchVerification:
 
         assert result.status == AgentStatus.COMPLETE
         assert result.verdict == AgentVerdict.PASS
+
+    def test_includes_rebase_context_section_when_provided(
+        self, tmp_path: Path
+    ) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        runtime.launch_verification(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            workspace_id=f"verification/{BLOB_SHA}",
+            rebase_context=RebaseContext(
+                trunk_changes="Modified auth.py with new middleware"
+            ),
+        )
+
+        sections = composer.calls[0].sections
+        rebase_sections = [s for s in sections if s.heading == "Rebase Context"]
+        assert len(rebase_sections) == 1
+        assert "Modified auth.py with new middleware" in rebase_sections[0].content
+        assert "post-rebase re-verification" in rebase_sections[0].content.lower()
+
+    def test_no_rebase_context_section_when_none(self, tmp_path: Path) -> None:
+        composer = FakePromptComposer(_ALL_ROLE_TEMPLATES)
+        runtime = _make_runtime(tmp_path, composer=composer)
+
+        runtime.launch_verification(
+            spec_content="# Auth Spec",
+            spec_path="specs/auth.spec.md",
+            spec_blob_sha=BLOB_SHA,
+            workspace_id=f"verification/{BLOB_SHA}",
+        )
+
+        sections = composer.calls[0].sections
+        rebase_sections = [s for s in sections if s.heading == "Rebase Context"]
+        assert len(rebase_sections) == 0
 
     def test_executor_failure_propagates(self, git_env: tuple[Path, Path]) -> None:
         local, _ = git_env

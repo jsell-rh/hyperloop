@@ -16,6 +16,7 @@ from hyperloop.reconciliation.models.poll_result import (
 )
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
 from hyperloop.reconciliation.models.prompt_section import PromptSection
+from hyperloop.reconciliation.models.rebase_context import RebaseContext
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
 from hyperloop.reconciliation.models.task import Task
 from hyperloop.reconciliation.models.task_briefing import TaskBriefing
@@ -262,11 +263,27 @@ class GitAgentRuntime:
         spec_path: str,
         spec_blob_sha: str,
         workspace_id: str,
+        rebase_context: RebaseContext | None = None,
     ) -> AgentHandle:
         branch = self._workspace_to_branch(workspace_id)
         spec_ref = f"{spec_path}@{spec_blob_sha}"
 
         sections = [PromptSection(heading="Spec", content=spec_content)]
+        if rebase_context is not None:
+            sections.append(
+                PromptSection(
+                    heading="Rebase Context",
+                    content=(
+                        "This is a post-rebase re-verification. "
+                        "The delivery branch was rebased onto trunk after a merge conflict. "
+                        "Focus on integration seams — interactions between the spec's "
+                        "implementation and the trunk changes — rather than re-checking "
+                        "all requirements from scratch.\n\n"
+                        "Trunk changes:\n"
+                        f"{rebase_context.trunk_changes}"
+                    ),
+                )
+            )
 
         prompt = self._prompt_composer.compose(
             AgentRole.VERIFIER,
