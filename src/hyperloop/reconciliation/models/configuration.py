@@ -7,6 +7,7 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 from hyperloop.reconciliation.models.executor_type import ExecutorType
+from hyperloop.reconciliation.models.integration_strategy import IntegrationStrategy
 from hyperloop.reconciliation.models.observer_adapter import ObserverAdapter
 
 
@@ -21,6 +22,8 @@ class Configuration(BaseSettings):
     max_redecompositions: int = 1
     max_integration_retries: int = 3
     max_concurrent_tasks: int = 5
+
+    integration_strategy: IntegrationStrategy = IntegrationStrategy.PR
 
     cycle_interval_seconds: int = 30
 

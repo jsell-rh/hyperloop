@@ -7,6 +7,7 @@ import yaml
 
 from hyperloop.reconciliation.models import Configuration
 from hyperloop.reconciliation.models.executor_type import ExecutorType
+from hyperloop.reconciliation.models.integration_strategy import IntegrationStrategy
 from hyperloop.reconciliation.models.observer_adapter import ObserverAdapter
 
 
@@ -125,6 +126,14 @@ class TestDefaultValues:
             specs_directory=str(specs_dir), overlay_path=str(overlay_dir)
         )
         assert config.executor_type == ExecutorType.CLAUDE_SDK
+
+    def test_integration_strategy_defaults_to_pr(
+        self, specs_dir: Path, overlay_dir: Path
+    ) -> None:
+        config = Configuration(
+            specs_directory=str(specs_dir), overlay_path=str(overlay_dir)
+        )
+        assert config.integration_strategy == IntegrationStrategy.PR
 
     def test_repository_url_defaults_to_none(
         self, specs_dir: Path, overlay_dir: Path
@@ -380,6 +389,16 @@ class TestValidation:
                 overlay_path="/nonexistent/overlay/path",
             )
 
+    def test_invalid_integration_strategy_rejected(
+        self, specs_dir: Path, overlay_dir: Path
+    ) -> None:
+        with pytest.raises(ValueError):
+            Configuration(
+                integration_strategy="webhook",  # type: ignore[arg-type]
+                specs_directory=str(specs_dir),
+                overlay_path=str(overlay_dir),
+            )
+
     def test_valid_configuration_accepted(
         self, specs_dir: Path, overlay_dir: Path
     ) -> None:
@@ -515,6 +534,79 @@ class TestExecutorConfiguration:
         assert config.project_name == "my-project"
 
 
+class TestIntegrationStrategyConfiguration:
+    def test_pr_strategy_accepted(self, specs_dir: Path, overlay_dir: Path) -> None:
+        config = Configuration(
+            integration_strategy=IntegrationStrategy.PR,
+            specs_directory=str(specs_dir),
+            overlay_path=str(overlay_dir),
+        )
+        assert config.integration_strategy == IntegrationStrategy.PR
+
+    def test_pr_automerge_strategy_accepted(
+        self, specs_dir: Path, overlay_dir: Path
+    ) -> None:
+        config = Configuration(
+            integration_strategy=IntegrationStrategy.PR_AUTOMERGE,
+            specs_directory=str(specs_dir),
+            overlay_path=str(overlay_dir),
+        )
+        assert config.integration_strategy == IntegrationStrategy.PR_AUTOMERGE
+
+    def test_direct_strategy_accepted(self, specs_dir: Path, overlay_dir: Path) -> None:
+        config = Configuration(
+            integration_strategy=IntegrationStrategy.DIRECT,
+            specs_directory=str(specs_dir),
+            overlay_path=str(overlay_dir),
+        )
+        assert config.integration_strategy == IntegrationStrategy.DIRECT
+
+    def test_strategy_from_string_in_yaml(
+        self, specs_dir: Path, overlay_dir: Path, tmp_path: Path
+    ) -> None:
+        config_file = tmp_path / "hyperloop.yaml"
+        _write_yaml(
+            config_file,
+            {
+                "integration_strategy": "pr_automerge",
+                "specs_directory": str(specs_dir),
+                "overlay_path": str(overlay_dir),
+            },
+        )
+        config = Configuration.from_yaml(config_file)
+        assert config.integration_strategy == IntegrationStrategy.PR_AUTOMERGE
+
+    def test_direct_strategy_from_yaml(
+        self, specs_dir: Path, overlay_dir: Path, tmp_path: Path
+    ) -> None:
+        config_file = tmp_path / "hyperloop.yaml"
+        _write_yaml(
+            config_file,
+            {
+                "integration_strategy": "direct",
+                "specs_directory": str(specs_dir),
+                "overlay_path": str(overlay_dir),
+            },
+        )
+        config = Configuration.from_yaml(config_file)
+        assert config.integration_strategy == IntegrationStrategy.DIRECT
+
+    def test_invalid_strategy_from_yaml_rejected(
+        self, specs_dir: Path, overlay_dir: Path, tmp_path: Path
+    ) -> None:
+        config_file = tmp_path / "hyperloop.yaml"
+        _write_yaml(
+            config_file,
+            {
+                "integration_strategy": "webhook",
+                "specs_directory": str(specs_dir),
+                "overlay_path": str(overlay_dir),
+            },
+        )
+        with pytest.raises(ValueError):
+            Configuration.from_yaml(config_file)
+
+
 class TestImmutability:
     def test_cannot_modify_convergence_bound(
         self, specs_dir: Path, overlay_dir: Path
@@ -551,6 +643,15 @@ class TestImmutability:
         )
         with pytest.raises(ValueError):
             config.executor_type = ExecutorType.AMBIENT  # type: ignore[misc]
+
+    def test_cannot_modify_integration_strategy(
+        self, specs_dir: Path, overlay_dir: Path
+    ) -> None:
+        config = Configuration(
+            specs_directory=str(specs_dir), overlay_path=str(overlay_dir)
+        )
+        with pytest.raises(ValueError):
+            config.integration_strategy = IntegrationStrategy.DIRECT  # type: ignore[misc]
 
 
 class TestYamlLoading:
