@@ -151,9 +151,14 @@ class Reconciler:
         tasks_dispatched = self._dispatch_tasks(plan)
         tasks_completed, tasks_failed = self._collect_results(plan)
         self._handle_retry_exhaustion(plan)
+        pending_before_verification = {
+            id(sp)
+            for sp in plan.spec_plans
+            if not sp.superseded and sp.status == SpecPlanStatus.PENDING_INTEGRATION
+        }
         self._collect_verification_results(plan)
         self._launch_verification(plan)
-        self._poll_integration(plan)
+        self._poll_integration(plan, pending_before_verification)
 
         self._plan_store.write_plan(plan)
         self._observer.plan_synced(cycle=self._cycle)
@@ -741,8 +746,10 @@ class Reconciler:
         if has_passed:
             self._integrate_to_trunk(sp)
 
-    def _poll_integration(self, plan: Plan) -> None:
+    def _poll_integration(self, plan: Plan, eligible: set[int]) -> None:
         for sp in plan.spec_plans:
+            if id(sp) not in eligible:
+                continue
             if sp.superseded or sp.status != SpecPlanStatus.PENDING_INTEGRATION:
                 continue
             if sp.integration_id is None:

@@ -6155,6 +6155,68 @@ class TestIntegrationConflictRebase:
         reconciler.run_cycle()
         assert sp.status == SpecPlanStatus.SYNCED
 
+    def test_same_cycle_pending_integration_not_polled(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        agent_runtime: FakeAgentRuntime,
+        observer: FakeObserver,
+    ) -> None:
+        sp, handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="Pass",
+            ),
+        )
+        workspace_manager.set_poll_integration_result(
+            "https://github.com/example/repo/pull/fake-abc123",
+            IntegrationPollResult(status=IntegrationPollStatus.MERGED),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.PENDING_INTEGRATION
+        assert observer.calls_for("integration_polled") == []
+
+    def test_rebase_exception_transitions_to_out_of_sync(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp = _build_pending_integration_spec_plan(
+            plan_store, spec_source, workspace_manager
+        )
+        workspace_manager.set_poll_integration_result(
+            sp.integration_id,  # type: ignore[arg-type]
+            IntegrationPollResult(status=IntegrationPollStatus.CONFLICT),
+        )
+        original = workspace_manager.rebase_delivery
+
+        def failing_rebase(blob_sha: str) -> RebaseResult:
+            raise RuntimeError("Git error during rebase")
+
+        workspace_manager.rebase_delivery = failing_rebase  # type: ignore[assignment]
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        rebase_failed = [e for e in sp.events if e.reason == EventReason.REBASE_FAILED]
+        assert len(rebase_failed) == 1
+        events = observer.calls_for("delivery_rebase_failed")
+        assert len(events) == 1
+
+        workspace_manager.rebase_delivery = original  # type: ignore[assignment]
+
     def test_new_sha_during_pending_integration_supersedes(
         self,
         reconciler: Reconciler,
