@@ -75,7 +75,7 @@ The system SHALL support the following configuration values:
 
 | Name | Type | Default | Description |
 |---|---|---|---|
-| integration_strategy | enum | "pr" | How verified work is integrated to trunk. One of: "pr" (open PR, wait for human merge), "pr_automerge" (open PR with automerge, poll until merged), "direct" (merge locally and push). |
+| integration_strategy | IntegrationStrategy | "pr" | How verified work is integrated to trunk. Values: "pr" (open PR, wait for human merge), "pr_automerge" (open PR with automerge, poll until merged), "direct" (merge locally and push) |
 | max_integration_retries | int | 3 | Max retry count for integration failures before transitioning to Failed. Must be >= 1 |
 | integration_timeout_seconds | int | 86400 | Max time a spec may remain in PendingIntegration before the integration is treated as failed. Must be >= 60. Default is 24 hours |
 

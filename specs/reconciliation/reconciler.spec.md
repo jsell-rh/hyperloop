@@ -243,13 +243,22 @@ Each cycle, the reconciler SHALL poll all PendingIntegration specs for integrati
 - AND a RebaseFailed event is recorded with the conflict details
 - AND the next decomposition cycle receives this context
 
-#### Scenario: Integration failure
+#### Scenario: Integration failure (transient)
 
 - GIVEN a spec in PendingIntegration
-- WHEN poll_integration returns Failed
+- WHEN poll_integration returns Failed due to a transient error (CI gate failure, API timeout)
 - THEN integration_attempts is incremented
 - AND if attempts are below max_integration_retries, integration is re-submitted
 - AND if attempts reach max_integration_retries, the SpecPlan transitions to Failed
+
+#### Scenario: PR closed by human
+
+- GIVEN a spec in PendingIntegration with an open PR
+- WHEN poll_integration detects the PR was closed without merging
+- THEN the SpecPlan transitions to Failed
+- AND a human intervention event is recorded indicating the PR was deliberately closed
+- AND the reconciler SHALL NOT re-open or re-submit the integration
+- AND the only way to retry is for a human to modify the spec (producing a new blob SHA)
 
 #### Scenario: Integration pending too long
 

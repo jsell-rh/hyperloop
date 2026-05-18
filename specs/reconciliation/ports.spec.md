@@ -194,8 +194,9 @@ The WorkspaceManager port SHALL manage isolated workspaces for task execution an
 
 - GIVEN a spec in PendingIntegration with an integration identifier
 - WHEN poll_integration is called with the integration identifier
-- THEN it returns the current status: Pending, Merged, Conflict, or Failed
+- THEN it returns the current status: Pending, Merged, Conflict, Closed, or Failed
 - AND for Conflict, the result includes details about the conflicting changes
+- AND Closed indicates the integration was deliberately rejected by a human (e.g., PR closed without merging)
 
 #### Scenario: Rebase delivery workspace onto trunk
 

@@ -349,7 +349,7 @@ The git WorkspaceManager adapter SHALL poll integration status by checking the s
 
 - GIVEN a PR was closed without merging
 - WHEN poll_integration is called
-- THEN it returns Failed
+- THEN it returns Closed
 
 #### Scenario: Poll after direct integration
 
