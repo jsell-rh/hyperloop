@@ -39,6 +39,12 @@ All options live in `.hyperloop.yaml` at the repo root. Missing file or missing 
 | `verification_model` | None | Model for verification agents (should differ from implementation) |
 | `decomposition_model` | None | Model for decomposition agents |
 
+### Integration
+
+| Option | Default | Description |
+|---|---|---|
+| `integration_strategy` | `pr` | How verified work reaches trunk: `pr` (open PR, wait for human merge), `pr_automerge` (open PR with automerge), `direct` (merge locally and push) |
+
 ### Git
 
 | Option | Default | Description |
@@ -80,6 +86,7 @@ All options live in `.hyperloop.yaml` at the repo root. Missing file or missing 
 convergence_bound: 5
 max_concurrent_tasks: 3
 cycle_interval_seconds: 60
+integration_strategy: pr_automerge
 trunk_branch: develop
 verification_model: gemini-pro
 observer_adapters:
