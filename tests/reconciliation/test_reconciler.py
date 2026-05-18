@@ -2466,7 +2466,7 @@ class TestVerificationLaunch:
 
         reconciler.run_cycle()
 
-        spec_content, spec_path, blob_sha, workspace_id = (
+        spec_content, spec_path, blob_sha, workspace_id, _rebase_ctx = (
             agent_runtime.launched_verifications[0]
         )
         assert spec_content == "# Auth\nMUST verify users"

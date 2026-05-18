@@ -7,6 +7,7 @@ from hyperloop.reconciliation.models.event import Event
 from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.poll_result import PollResult
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
+from hyperloop.reconciliation.models.rebase_context import RebaseContext
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
 from hyperloop.reconciliation.models.task import Task
 from hyperloop.reconciliation.models.task_briefing import TaskBriefing
@@ -30,6 +31,7 @@ class AgentRuntime(Protocol):
         spec_path: str,
         spec_blob_sha: str,
         workspace_id: str,
+        rebase_context: RebaseContext | None = None,
     ) -> AgentHandle: ...
 
     def launch_merge_resolution(

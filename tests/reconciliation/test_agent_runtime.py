@@ -13,6 +13,7 @@ from hyperloop.reconciliation.models.poll_result import (
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
 from hyperloop.reconciliation.models.task import Task
+from hyperloop.reconciliation.models.rebase_context import RebaseContext
 from hyperloop.reconciliation.models.task_briefing import TaskBriefing
 from hyperloop.reconciliation.ports.agent_runtime import AgentRuntime
 from tests.reconciliation.fakes.fake_agent_runtime import FakeAgentRuntime
@@ -106,6 +107,10 @@ class TestAgentRuntimeProtocol:
     def test_launch_verification_accepts_workspace_id(self) -> None:
         hints = get_type_hints(AgentRuntime.launch_verification)
         assert hints["workspace_id"] is str
+
+    def test_launch_verification_accepts_optional_rebase_context(self) -> None:
+        hints = get_type_hints(AgentRuntime.launch_verification)
+        assert hints["rebase_context"] == RebaseContext | None
 
     def test_launch_verification_returns_agent_handle(self) -> None:
         hints = get_type_hints(AgentRuntime.launch_verification)
@@ -560,6 +565,28 @@ class TestFakeVerification:
             "auth.spec.md",
             "abc",
             "ws-1",
+            None,
+        )
+
+    def test_records_verification_with_rebase_context(self) -> None:
+        runtime = FakeAgentRuntime()
+        ctx = RebaseContext(trunk_changes="Modified auth.py")
+
+        runtime.launch_verification(
+            spec_content="# Spec",
+            spec_path="auth.spec.md",
+            spec_blob_sha="abc",
+            workspace_id="ws-1",
+            rebase_context=ctx,
+        )
+
+        assert len(runtime.launched_verifications) == 1
+        assert runtime.launched_verifications[0] == (
+            "# Spec",
+            "auth.spec.md",
+            "abc",
+            "ws-1",
+            ctx,
         )
 
 

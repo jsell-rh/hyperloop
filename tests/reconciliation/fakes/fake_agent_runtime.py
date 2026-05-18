@@ -5,6 +5,7 @@ from hyperloop.reconciliation.models.event import Event
 from hyperloop.reconciliation.models.integration_summary import IntegrationSummary
 from hyperloop.reconciliation.models.poll_result import AgentStatus, PollResult
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
+from hyperloop.reconciliation.models.rebase_context import RebaseContext
 from hyperloop.reconciliation.models.spec_diff import SpecDiff
 from hyperloop.reconciliation.models.task import Task
 from hyperloop.reconciliation.models.task_briefing import TaskBriefing
@@ -25,7 +26,9 @@ class FakeAgentRuntime:
         self._integration_summary_error: Exception | None = None
         self._next_handle_id: int = 0
         self.launched_tasks: list[TaskBriefing] = []
-        self.launched_verifications: list[tuple[str, str, str, str]] = []
+        self.launched_verifications: list[
+            tuple[str, str, str, str, RebaseContext | None]
+        ] = []
         self.launched_merge_resolutions: list[tuple[str, str, str]] = []
         self.decomposition_calls: list[
             tuple[list[SpecDiff], list[Task], list[Event]]
@@ -87,12 +90,13 @@ class FakeAgentRuntime:
         spec_path: str,
         spec_blob_sha: str,
         workspace_id: str,
+        rebase_context: RebaseContext | None = None,
     ) -> AgentHandle:
         handle = AgentHandle(id=f"agent-{self._next_handle_id}")
         self._next_handle_id += 1
         self._poll_results[handle.id] = PollResult(status=AgentStatus.RUNNING)
         self.launched_verifications.append(
-            (spec_content, spec_path, spec_blob_sha, workspace_id)
+            (spec_content, spec_path, spec_blob_sha, workspace_id, rebase_context)
         )
         return handle
 

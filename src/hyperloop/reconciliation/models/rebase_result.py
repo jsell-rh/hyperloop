@@ -13,3 +13,4 @@ class RebaseOutcome(StrEnum):
 class RebaseResult(BaseModel, frozen=True):
     outcome: RebaseOutcome
     conflict_details: str | None = None
+    trunk_changes: str | None = None
