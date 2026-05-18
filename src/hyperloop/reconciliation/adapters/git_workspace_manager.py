@@ -9,6 +9,7 @@ from hyperloop.reconciliation.models.integration_poll_result import (
     IntegrationPollResult,
     IntegrationPollStatus,
 )
+from hyperloop.reconciliation.models.integration_strategy import IntegrationStrategy
 from hyperloop.reconciliation.models.merge_result import MergeOutcome, MergeResult
 from hyperloop.reconciliation.models.rebase_result import RebaseOutcome, RebaseResult
 
@@ -33,11 +34,13 @@ class GitWorkspaceManager:
         branch_prefix: str,
         trunk_branch: str,
         remote: str = "origin",
+        integration_strategy: IntegrationStrategy = IntegrationStrategy.PR,
     ) -> None:
         self._repo_path = repo_path
         self._branch_prefix = branch_prefix
         self._trunk_branch = trunk_branch
         self._remote = remote
+        self._integration_strategy = integration_strategy
 
     def create_delivery_workspace(self, blob_sha: str) -> str:
         branch = self._delivery_branch(blob_sha)
@@ -107,6 +110,13 @@ class GitWorkspaceManager:
     _MAX_PR_TITLE_LENGTH = 256
 
     def integrate(self, blob_sha: str, spec_path: str, title: str, body: str) -> str:
+        if self._integration_strategy == IntegrationStrategy.DIRECT:
+            return self._integrate_direct(blob_sha)
+        if self._integration_strategy == IntegrationStrategy.PR_AUTOMERGE:
+            return self._integrate_pr_automerge(blob_sha, title, body)
+        return self._integrate_pr(blob_sha, title, body)
+
+    def _integrate_pr(self, blob_sha: str, title: str, body: str) -> str:
         delivery = self._delivery_branch(blob_sha)
         self._push_branch(delivery)
 
@@ -125,6 +135,42 @@ class GitWorkspaceManager:
             body,
         )
         return result.stdout.strip()
+
+    def _integrate_pr_automerge(self, blob_sha: str, title: str, body: str) -> str:
+        pr_url = self._integrate_pr(blob_sha, title, body)
+        self._gh("pr", "merge", pr_url, "--auto", "--merge")
+        return pr_url
+
+    def _integrate_direct(self, blob_sha: str) -> str:
+        delivery = self._delivery_branch(blob_sha)
+
+        delivery_head = self._git("rev-parse", delivery).stdout.strip()
+        trunk_head = self._git("rev-parse", self._trunk_branch).stdout.strip()
+
+        merge_result = self._git(
+            "merge-tree", "--write-tree", self._trunk_branch, delivery, check=False
+        )
+
+        if merge_result.returncode != 0:
+            raise RuntimeError("Direct integration failed: merge conflict")
+
+        tree_sha = merge_result.stdout.strip().splitlines()[0]
+
+        merge_commit = self._git(
+            "commit-tree",
+            tree_sha,
+            "-p",
+            trunk_head,
+            "-p",
+            delivery_head,
+            "-m",
+            f"Merge {delivery} into {self._trunk_branch}",
+        ).stdout.strip()
+
+        self._git("update-ref", f"refs/heads/{self._trunk_branch}", merge_commit)
+        self._git("push", self._remote, self._trunk_branch)
+
+        return f"{self._DIRECT_INTEGRATION_PREFIX}{merge_commit}"
 
     _DIRECT_INTEGRATION_PREFIX = "direct:"
 

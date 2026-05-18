@@ -13,6 +13,7 @@ from hyperloop.reconciliation.models.integration_poll_result import (
     IntegrationPollResult,
     IntegrationPollStatus,
 )
+from hyperloop.reconciliation.models.integration_strategy import IntegrationStrategy
 from hyperloop.reconciliation.models.merge_result import MergeOutcome, MergeResult
 from hyperloop.reconciliation.models.rebase_result import RebaseOutcome, RebaseResult
 
@@ -77,12 +78,30 @@ def _setup_fake_gh(tmp_path: Path, response: str) -> Path:
     return args_file
 
 
-def _make_manager(repo_path: Path) -> GitWorkspaceManager:
+def _setup_fake_gh_multi(tmp_path: Path, response: str) -> Path:
+    bin_dir = tmp_path / "fakebin"
+    bin_dir.mkdir(exist_ok=True)
+    args_log = tmp_path / "gh_args_log.txt"
+    response_file = tmp_path / "gh_response.txt"
+    response_file.write_text(response)
+    script = bin_dir / "gh"
+    script.write_text(f'#!/bin/bash\necho "$@" >> {args_log}\ncat "{response_file}"\n')
+    script.chmod(0o755)
+    os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
+    return args_log
+
+
+def _make_manager(
+    repo_path: Path,
+    *,
+    integration_strategy: IntegrationStrategy = IntegrationStrategy.PR,
+) -> GitWorkspaceManager:
     return GitWorkspaceManager(
         repo_path,
         branch_prefix=BRANCH_PREFIX,
         trunk_branch=TRUNK,
         remote="origin",
+        integration_strategy=integration_strategy,
     )
 
 
@@ -487,6 +506,128 @@ class TestIntegrate:
         )
 
         assert url == self._PR_URL
+
+
+class TestIntegratePrAutomerge:
+    _PR_URL = "https://github.com/test/repo/pull/1"
+
+    def test_creates_pr_and_enables_automerge(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(
+            local, integration_strategy=IntegrationStrategy.PR_AUTOMERGE
+        )
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        args_log = _setup_fake_gh_multi(tmp_path, self._PR_URL)
+        manager.integrate(
+            BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+        )
+
+        log_content = args_log.read_text()
+        lines = log_content.strip().splitlines()
+        assert len(lines) == 2
+        assert "pr create" in lines[0]
+        assert "pr merge" in lines[1]
+        assert "--auto" in lines[1]
+        assert "--merge" in lines[1]
+
+    def test_returns_pr_url(self, git_env: tuple[Path, Path], tmp_path: Path) -> None:
+        local, _ = git_env
+        manager = _make_manager(
+            local, integration_strategy=IntegrationStrategy.PR_AUTOMERGE
+        )
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        _setup_fake_gh_multi(tmp_path, self._PR_URL)
+        url = manager.integrate(
+            BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+        )
+
+        assert url == self._PR_URL
+
+    def test_forwards_title_and_body(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(
+            local, integration_strategy=IntegrationStrategy.PR_AUTOMERGE
+        )
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        args_log = _setup_fake_gh_multi(tmp_path, self._PR_URL)
+        manager.integrate(
+            BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+        )
+
+        create_line = args_log.read_text().strip().splitlines()[0]
+        assert "Implement auth" in create_line
+        assert "Auth module" in create_line
+
+
+class TestIntegrateDirect:
+    def test_merges_delivery_into_trunk_locally(
+        self, git_env: tuple[Path, Path]
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local, integration_strategy=IntegrationStrategy.DIRECT)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        delivery_branch = _delivery(BLOB_SHA)
+        _create_work_commit(local, delivery_branch, "login.py", "def login(): pass")
+
+        manager.integrate(
+            BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+        )
+
+        content = _git(local, "show", f"{TRUNK}:login.py").stdout.strip()
+        assert "def login(): pass" in content
+
+    def test_pushes_trunk_to_remote(self, git_env: tuple[Path, Path]) -> None:
+        local, remote = git_env
+        manager = _make_manager(local, integration_strategy=IntegrationStrategy.DIRECT)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        delivery_branch = _delivery(BLOB_SHA)
+        _create_work_commit(local, delivery_branch, "login.py", "def login(): pass")
+
+        manager.integrate(
+            BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+        )
+
+        local_head = _git(local, "rev-parse", TRUNK).stdout.strip()
+        remote_head = _git(remote, "rev-parse", f"refs/heads/{TRUNK}").stdout.strip()
+        assert local_head == remote_head
+
+    def test_returns_direct_prefixed_id(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        manager = _make_manager(local, integration_strategy=IntegrationStrategy.DIRECT)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        delivery_branch = _delivery(BLOB_SHA)
+        _create_work_commit(local, delivery_branch, "login.py", "def login(): pass")
+
+        integration_id = manager.integrate(
+            BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+        )
+
+        assert integration_id.startswith("direct:")
+
+    def test_poll_direct_returns_merged(self, git_env: tuple[Path, Path]) -> None:
+        local, _ = git_env
+        manager = _make_manager(local, integration_strategy=IntegrationStrategy.DIRECT)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        delivery_branch = _delivery(BLOB_SHA)
+        _create_work_commit(local, delivery_branch, "login.py", "def login(): pass")
+
+        integration_id = manager.integrate(
+            BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+        )
+
+        result = manager.poll_integration(integration_id)
+        assert result.status == IntegrationPollStatus.MERGED
 
 
 class TestCleanup:

@@ -145,6 +145,7 @@ def create_reconciler(
         repo_path=repo_path,
         branch_prefix=config.branch_prefix,
         trunk_branch=config.trunk_branch,
+        integration_strategy=config.integration_strategy,
     )
 
     agent_runtime = GitAgentRuntime(
