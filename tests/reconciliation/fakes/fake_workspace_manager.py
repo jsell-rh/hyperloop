@@ -22,6 +22,7 @@ class FakeWorkspaceManager:
         self._poll_results: dict[str, IntegrationPollResult] = {}
         self._rebase_results: dict[str, RebaseResult] = {}
         self.integrations: list[tuple[str, str, str, str]] = []
+        self.verification_cleanup_count: int = 0
 
     def set_merge_result(
         self, blob_sha: str, task_id: int, result: MergeResult
@@ -105,6 +106,7 @@ class FakeWorkspaceManager:
 
     def cleanup_verification(self, blob_sha: str) -> None:
         self._verification_workspaces.discard(blob_sha)
+        self.verification_cleanup_count += 1
 
     def has_delivery_workspace(self, blob_sha: str) -> bool:
         return blob_sha in self._delivery_workspaces

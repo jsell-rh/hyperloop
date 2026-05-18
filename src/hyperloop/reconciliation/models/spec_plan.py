@@ -29,6 +29,7 @@ class SpecPlan(BaseModel):
     reconciliation_attempts: int = 0
     integration_attempts: int = 0
     redecomposition_count: int = 0
+    verification_crash_count: int = 0
     verification_handle: AgentHandle | None = None
     delivery_workspace_id: str | None = None
     integration_summary: IntegrationSummary | None = None

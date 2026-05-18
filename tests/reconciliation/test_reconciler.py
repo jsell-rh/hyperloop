@@ -2412,7 +2412,7 @@ class TestDeadAgentHandling:
         assert sp.status == SpecPlanStatus.OUT_OF_SYNC
         assert sp.redecomposition_count == 1
 
-    def test_dead_verification_agent_transitions_spec_to_out_of_sync(
+    def test_dead_verification_agent_retries_verification(
         self,
         reconciler: Reconciler,
         spec_source: FakeSpecSource,
@@ -2431,11 +2431,263 @@ class TestDeadAgentHandling:
 
         reconciler.run_cycle()
 
+        assert sp.status == SpecPlanStatus.VERIFYING
+        assert sp.verification_handle is not None
+        assert sp.reconciliation_attempts == 0
+
+    def test_dead_verification_agent_records_crash_event(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp, verification_handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            verification_handle,
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
+        crash_events = [
+            e for e in sp.events if e.reason == EventReason.VERIFICATION_AGENT_CRASHED
+        ]
+        assert len(crash_events) == 1
+        assert _DEAD_AGENT_RATIONALE in crash_events[0].message
+
+    def test_dead_verification_agent_fires_launch_failed_probe(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp, verification_handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            verification_handle,
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
+        launch_failed = observer.calls_for("verification_launch_failed")
+        assert len(launch_failed) == 1
+        assert launch_failed[0]["reason"] == _DEAD_AGENT_RATIONALE
+        assert not observer.calls_for("verification_failed")
+
+    def test_dead_verification_agent_cleans_verification_workspace(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp, verification_handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        workspace_manager._verification_workspaces.add("abc123")
+        agent_runtime.set_poll_result(
+            verification_handle,
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
+        assert workspace_manager.verification_cleanup_count >= 1
+
+    def test_dead_verification_agent_increments_crash_count(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp, verification_handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            verification_handle,
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.verification_crash_count == 1
+
+    def test_dead_verification_crash_exhaustion_treats_as_failure(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=2,
+        )
+        sp, verification_handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        sp.verification_crash_count = 2
+        agent_runtime.set_poll_result(
+            verification_handle,
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
         assert sp.status == SpecPlanStatus.OUT_OF_SYNC
-        assert sp.verification_handle is None
+        assert sp.reconciliation_attempts == 1
+        assert sp.verification_crash_count == 0
+
+    def test_dead_verification_crash_exhaustion_at_convergence_bound(
+        self,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        reconciler = Reconciler(
+            spec_source=spec_source,
+            plan_store=plan_store,
+            observer=observer,
+            agent_runtime=agent_runtime,
+            workspace_manager=workspace_manager,
+            max_task_retries=1,
+            convergence_bound=1,
+        )
+        sp, verification_handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        sp.verification_crash_count = 1
+        agent_runtime.set_poll_result(
+            verification_handle,
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.FAILED
+        events = observer.calls_for("spec_failed")
+        assert len(events) == 1
+
+    def test_verification_crash_count_resets_on_pass(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp, verification_handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        sp.verification_crash_count = 2
+        agent_runtime.set_poll_result(
+            verification_handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.PASS,
+                rationale="All good",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.verification_crash_count == 0
+
+    def test_verification_crash_count_resets_on_fail(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+    ) -> None:
+        sp, verification_handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        sp.verification_crash_count = 2
+        agent_runtime.set_poll_result(
+            verification_handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.FAIL,
+                rationale="Missing feature",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.verification_crash_count == 0
+
+    def test_dead_verification_agent_relaunches_same_cycle(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp, verification_handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            verification_handle,
+            PollResult(status=AgentStatus.FAILED, rationale=_DEAD_AGENT_RATIONALE),
+        )
+
+        reconciler.run_cycle()
+
+        launched = observer.calls_for("verification_launched")
+        assert len(launched) == 1
+        assert launched[0]["spec_path"] == "auth.spec.md"
+
+    def test_verification_failure_verdict_still_transitions_to_out_of_sync(
+        self,
+        reconciler: Reconciler,
+        spec_source: FakeSpecSource,
+        plan_store: FakePlanStore,
+        agent_runtime: FakeAgentRuntime,
+        workspace_manager: FakeWorkspaceManager,
+        observer: FakeObserver,
+    ) -> None:
+        sp, verification_handle = _build_verifying_spec_plan(
+            plan_store, spec_source, workspace_manager, agent_runtime
+        )
+        agent_runtime.set_poll_result(
+            verification_handle,
+            PollResult(
+                status=AgentStatus.COMPLETE,
+                verdict=AgentVerdict.FAIL,
+                rationale="Missing error handling",
+            ),
+        )
+
+        reconciler.run_cycle()
+
+        assert sp.status == SpecPlanStatus.OUT_OF_SYNC
+        assert sp.reconciliation_attempts == 1
         failed_events = observer.calls_for("verification_failed")
         assert len(failed_events) == 1
-        assert failed_events[0]["rationale"] == _DEAD_AGENT_RATIONALE
+        assert failed_events[0]["rationale"] == "Missing error handling"
 
 
 def _build_all_tasks_complete_spec_plan(

@@ -21,3 +21,4 @@ class EventReason(StrEnum):
     REBASE_FAILED = "RebaseFailed"
     PR_CLOSED = "PRClosed"
     DEPENDENCY_INVALIDATED = "DependencyInvalidated"
+    VERIFICATION_AGENT_CRASHED = "VerificationAgentCrashed"

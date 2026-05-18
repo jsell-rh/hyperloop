@@ -16,7 +16,11 @@ from hyperloop.reconciliation.models.integration_poll_result import (
 )
 from hyperloop.reconciliation.models.merge_result import MergeOutcome
 from hyperloop.reconciliation.models.plan import Plan
-from hyperloop.reconciliation.models.poll_result import AgentStatus, AgentVerdict
+from hyperloop.reconciliation.models.poll_result import (
+    AgentStatus,
+    AgentVerdict,
+    PollResult,
+)
 from hyperloop.reconciliation.models.proposed_task import ProposedTask
 from hyperloop.reconciliation.models.rebase_context import RebaseContext
 from hyperloop.reconciliation.models.rebase_result import RebaseOutcome, RebaseResult
@@ -634,6 +638,10 @@ class Reconciler:
 
             sp.verification_handle = None
 
+            if result.status == AgentStatus.FAILED:
+                self._handle_dead_verification_agent(sp, result)
+                continue
+
             if result.verdict == AgentVerdict.PASS:
                 rationale = result.rationale or "Verification passed"
                 sp.record_event(
@@ -649,6 +657,7 @@ class Reconciler:
                     cycle=self._cycle,
                 )
                 self._workspace_manager.cleanup_verification(sp.blob_sha)
+                sp.verification_crash_count = 0
                 self._integrate_to_trunk(sp)
             else:
                 rationale = result.rationale or "Verification failed"
@@ -665,6 +674,7 @@ class Reconciler:
                     cycle=self._cycle,
                 )
                 self._workspace_manager.cleanup_verification(sp.blob_sha)
+                sp.verification_crash_count = 0
                 sp.reconciliation_attempts += 1
                 sp.redecomposition_count = 0
                 if sp.reconciliation_attempts >= self._convergence_bound:
@@ -677,6 +687,39 @@ class Reconciler:
                     )
                 else:
                     sp.status = SpecPlanStatus.OUT_OF_SYNC
+
+    def _handle_dead_verification_agent(self, sp: SpecPlan, result: PollResult) -> None:
+        rationale = result.rationale or "Verification agent crashed"
+        sp.record_event(
+            reason=EventReason.VERIFICATION_AGENT_CRASHED,
+            message=rationale,
+            event_type=EventType.WARNING,
+            timestamp=datetime.now(timezone.utc),
+        )
+        self._observer.verification_launch_failed(
+            spec_path=sp.path,
+            spec_blob_sha=sp.blob_sha,
+            reason=rationale,
+            cycle=self._cycle,
+        )
+        self._workspace_manager.cleanup_verification(sp.blob_sha)
+        sp.verification_crash_count += 1
+        if sp.verification_crash_count > self._max_task_retries:
+            sp.verification_crash_count = 0
+            sp.reconciliation_attempts += 1
+            sp.redecomposition_count = 0
+            if sp.reconciliation_attempts >= self._convergence_bound:
+                sp.status = SpecPlanStatus.FAILED
+                self._observer.spec_failed(
+                    spec_path=sp.path,
+                    spec_blob_sha=sp.blob_sha,
+                    reason=f"Convergence bound ({self._convergence_bound}) exceeded",
+                    cycle=self._cycle,
+                )
+            else:
+                sp.status = SpecPlanStatus.OUT_OF_SYNC
+        else:
+            sp.status = SpecPlanStatus.RECONCILING
 
     def _integrate_to_trunk(self, sp: SpecPlan) -> None:
         try:
