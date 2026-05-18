@@ -240,7 +240,7 @@ class FakeObserver:
             reason=reason,
         )
 
-    def integration_polled(
+    def trunk_integration_polled(
         self,
         *,
         spec_path: str,
@@ -249,7 +249,7 @@ class FakeObserver:
         status: str,
     ) -> None:
         self._record(
-            "integration_polled",
+            "trunk_integration_polled",
             spec_path=spec_path,
             spec_blob_sha=spec_blob_sha,
             integration_id=integration_id,

@@ -760,7 +760,7 @@ class Reconciler:
             except Exception:
                 continue
 
-            self._observer.integration_polled(
+            self._observer.trunk_integration_polled(
                 spec_path=sp.path,
                 spec_blob_sha=sp.blob_sha,
                 integration_id=sp.integration_id,

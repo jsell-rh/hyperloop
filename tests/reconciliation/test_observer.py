@@ -94,7 +94,7 @@ EXPECTED_METHODS: dict[str, dict[str, type]] = {
         "integration_id": str,
     },
     "trunk_integration_failed": {"spec_path": str, "spec_blob_sha": str, "reason": str},
-    "integration_polled": {
+    "trunk_integration_polled": {
         "spec_path": str,
         "spec_blob_sha": str,
         "integration_id": str,

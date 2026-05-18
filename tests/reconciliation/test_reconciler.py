@@ -5688,7 +5688,7 @@ class TestIntegrationPolling:
 
         assert sp.status == SpecPlanStatus.PENDING_INTEGRATION
 
-    def test_pending_fires_integration_polled_observer(
+    def test_pending_fires_trunk_integration_polled_observer(
         self,
         reconciler: Reconciler,
         spec_source: FakeSpecSource,
@@ -5702,7 +5702,7 @@ class TestIntegrationPolling:
 
         reconciler.run_cycle()
 
-        events = observer.calls_for("integration_polled")
+        events = observer.calls_for("trunk_integration_polled")
         assert len(events) == 1
         assert events[0]["integration_id"] == sp.integration_id
         assert events[0]["status"] == IntegrationPollStatus.PENDING
@@ -6053,7 +6053,7 @@ class TestIntegrationConflictRebase:
 
         reconciler.run_cycle()
 
-        assert observer.calls_for("integration_polled") == []
+        assert observer.calls_for("trunk_integration_polled") == []
 
     def test_no_integration_id_skips_polling(
         self,
@@ -6070,7 +6070,7 @@ class TestIntegrationConflictRebase:
 
         reconciler.run_cycle()
 
-        assert observer.calls_for("integration_polled") == []
+        assert observer.calls_for("trunk_integration_polled") == []
 
     def test_poll_exception_is_swallowed(
         self,
@@ -6183,7 +6183,7 @@ class TestIntegrationConflictRebase:
         reconciler.run_cycle()
 
         assert sp.status == SpecPlanStatus.PENDING_INTEGRATION
-        assert observer.calls_for("integration_polled") == []
+        assert observer.calls_for("trunk_integration_polled") == []
 
     def test_rebase_exception_transitions_to_out_of_sync(
         self,

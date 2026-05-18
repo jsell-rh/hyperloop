@@ -130,7 +130,7 @@ class NullProbe:
     ) -> None:
         pass
 
-    def integration_polled(
+    def trunk_integration_polled(
         self,
         *,
         spec_path: str,

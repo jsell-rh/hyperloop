@@ -259,7 +259,7 @@ class StructlogObserver:
             reason=reason,
         )
 
-    def integration_polled(
+    def trunk_integration_polled(
         self,
         *,
         spec_path: str,
@@ -268,7 +268,7 @@ class StructlogObserver:
         status: str,
     ) -> None:
         self._emit(
-            "integration_polled",
+            "trunk_integration_polled",
             spec_path=spec_path,
             spec_blob_sha=spec_blob_sha,
             integration_id=integration_id,
