@@ -946,7 +946,10 @@ class Reconciler:
                 )
             elif existing.blob_sha != entry.blob_sha:
                 old_sha = existing.blob_sha
-                self._cancel_superseded(existing)
+                if existing.status == SpecPlanStatus.SYNCED:
+                    self._workspace_manager.cleanup(existing.blob_sha)
+                else:
+                    self._cancel_superseded(existing)
                 plan.add_spec(entry.path, entry.blob_sha)
                 self._observer.spec_divergence_detected(
                     spec_path=entry.path,
