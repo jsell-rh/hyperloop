@@ -18,7 +18,8 @@ The reconciler SHALL execute a continuous loop. Each cycle performs the followin
 6. Merge completed task work into spec delivery workspaces
 7. Launch verification for specs with all tasks complete
 8. Collect verification results and apply state transitions
-9. Persist the updated Plan
+9. Poll integration status for PendingIntegration specs
+10. Persist the updated Plan
 
 #### Scenario: Full cycle with no drift
 
@@ -37,7 +38,8 @@ The reconciler SHALL execute a continuous loop. Each cycle performs the followin
 - AND unblocked tasks are dispatched to the inner loop
 - AND on subsequent cycles, completed tasks are merged into the delivery workspace
 - AND when all tasks complete, verification is launched
-- AND on verification pass, the implementation is integrated to trunk and the spec transitions to Synced
+- AND on verification pass, integration is submitted and the spec transitions to PendingIntegration
+- AND on integration confirmation, the spec transitions to Synced
 
 ### Requirement: Divergence Detection
 
@@ -180,7 +182,8 @@ After all tasks for a SpecPlan reach Complete status, the reconciler SHALL launc
 - THEN a VerificationPassed event is recorded
 - AND an integration summary (PR title and body) is generated via the AgentRuntime port
 - AND the delivery workspace is integrated to trunk via the WorkspaceManager port using the generated title and body
-- AND on successful integration, the SpecPlan transitions to Synced
+- AND on successful integration submission, the SpecPlan transitions to PendingIntegration
+- AND if integration submission fails (e.g., push failure, API error), integration_attempts is incremented and the spec remains in Verifying for retry on the next cycle
 
 #### Scenario: Integration summary generation
 
@@ -204,9 +207,68 @@ After all tasks for a SpecPlan reach Complete status, the reconciler SHALL launc
 - WHEN the verification agent returns Fail again
 - THEN the SpecPlan transitions to Failed
 
+### Requirement: Integration Polling
+
+Each cycle, the reconciler SHALL poll all PendingIntegration specs for integration status and apply the appropriate state transition.
+
+#### Scenario: Integration confirmed
+
+- GIVEN a spec in PendingIntegration with an integration identifier
+- WHEN poll_integration returns Merged
+- THEN the SpecPlan transitions to Synced
+- AND a SpecSynced event is recorded
+
+#### Scenario: Integration still pending
+
+- GIVEN a spec in PendingIntegration with an integration identifier
+- WHEN poll_integration returns Pending
+- THEN the SpecPlan remains in PendingIntegration
+- AND no action is taken
+
+#### Scenario: Trunk merge conflict during integration
+
+- GIVEN a spec in PendingIntegration
+- WHEN poll_integration returns Conflict
+- THEN the reconciler rebases the delivery branch onto current trunk via the WorkspaceManager port
+- AND on successful rebase, a new verification agent is launched with rebase context
+- AND the rebase context includes: the fact that this is a post-rebase re-verification, the trunk changes that caused the conflict, and the instruction to focus on integration seams rather than re-checking all requirements
+- AND the SpecPlan transitions to Verifying
+- AND a DeliveryRebased event is recorded
+
+#### Scenario: Rebase failure triggers OutOfSync
+
+- GIVEN a spec in PendingIntegration with a trunk merge conflict
+- WHEN rebasing the delivery branch fails (conflict too complex for automatic rebase)
+- THEN the SpecPlan transitions to OutOfSync
+- AND a RebaseFailed event is recorded with the conflict details
+- AND the next decomposition cycle receives this context
+
+#### Scenario: Integration failure
+
+- GIVEN a spec in PendingIntegration
+- WHEN poll_integration returns Failed
+- THEN integration_attempts is incremented
+- AND if attempts are below max_integration_retries, integration is re-submitted
+- AND if attempts reach max_integration_retries, the SpecPlan transitions to Failed
+
+#### Scenario: Integration pending too long
+
+- GIVEN a spec has been in PendingIntegration for longer than a configurable timeout
+- WHEN the reconciler evaluates the spec
+- THEN the integration is treated as Failed
+- AND integration_attempts is incremented
+- AND the spec follows the normal integration failure path
+
+#### Scenario: Integration polling added to cycle
+
+- GIVEN the reconciliation cycle step ordering
+- WHEN integration polling is executed
+- THEN it runs after collecting verification results and before persisting the Plan
+- AND specs that entered PendingIntegration in the current cycle are not polled until the next cycle
+
 ### Requirement: Superseding Cancellation
 
-When a spec is superseded (new blob SHA detected while Reconciling or Verifying) or deleted, the reconciler SHALL cancel all in-flight agents for the old blob SHA.
+When a spec is superseded (new blob SHA detected while Reconciling, Verifying, or PendingIntegration) or deleted, the reconciler SHALL cancel all in-flight agents for the old blob SHA.
 
 #### Scenario: In-flight tasks cancelled on supersede
 
@@ -222,6 +284,21 @@ When a spec is superseded (new blob SHA detected while Reconciling or Verifying)
 - WHEN SHA def456 is detected
 - THEN the verification agent is cancelled
 - AND the SpecPlan for abc123 is marked superseded
+
+#### Scenario: Rebase-triggered verification cancelled on supersede
+
+- GIVEN a spec was in PendingIntegration, hit a trunk conflict, rebased, and re-launched verification
+- WHEN a new blob SHA is detected during the re-verification
+- THEN the re-verification agent is cancelled
+- AND the SpecPlan is marked superseded
+- AND the pending integration (e.g., open PR) is abandoned
+
+#### Scenario: PendingIntegration cancelled on supersede
+
+- GIVEN a spec is in PendingIntegration with an open PR
+- WHEN a new blob SHA is detected
+- THEN the SpecPlan is marked superseded
+- AND the pending integration is abandoned (PR left open for human cleanup or closed by adapter)
 
 ### Requirement: Cross-Spec Dependency Invalidation
 
@@ -278,6 +355,14 @@ The reconciler SHALL be resumable after a crash. On restart, it reads the persis
 - AND detects stale agents via the AgentRuntime port
 - AND cancels stale agents
 - AND resumes the reconciliation cycle
+
+#### Scenario: Restart with PendingIntegration specs
+
+- GIVEN the reconciler crashes while a spec is in PendingIntegration with a persisted integration_id
+- WHEN the reconciler restarts
+- THEN the Plan is read from the PlanStore with the PendingIntegration status and integration_id intact
+- AND the next reconciliation cycle polls integration status using the persisted integration_id
+- AND no re-submission of integration is needed
 
 #### Scenario: Idempotent cycles
 

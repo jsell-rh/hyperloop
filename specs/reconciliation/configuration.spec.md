@@ -71,6 +71,41 @@ The system SHALL support the following configuration values:
 - WHEN a reconciliation cycle completes
 - THEN the reconciler waits 60 seconds before starting the next cycle
 
+**Integration:**
+
+| Name | Type | Default | Description |
+|---|---|---|---|
+| integration_strategy | enum | "pr" | How verified work is integrated to trunk. One of: "pr" (open PR, wait for human merge), "pr_automerge" (open PR with automerge, poll until merged), "direct" (merge locally and push). |
+| max_integration_retries | int | 3 | Max retry count for integration failures before transitioning to Failed. Must be >= 1 |
+| integration_timeout_seconds | int | 86400 | Max time a spec may remain in PendingIntegration before the integration is treated as failed. Must be >= 60. Default is 24 hours |
+
+#### Scenario: PR strategy (default)
+
+- GIVEN integration_strategy is set to "pr"
+- WHEN a spec passes verification
+- THEN a pull request is opened from the delivery branch to trunk
+- AND the spec remains in PendingIntegration until a human merges the PR
+
+#### Scenario: PR automerge strategy
+
+- GIVEN integration_strategy is set to "pr_automerge"
+- WHEN a spec passes verification
+- THEN a pull request is opened with automerge enabled
+- AND the spec remains in PendingIntegration until the PR is automatically merged
+
+#### Scenario: Direct merge strategy
+
+- GIVEN integration_strategy is set to "direct"
+- WHEN a spec passes verification
+- THEN the delivery branch is merged to trunk locally and pushed
+- AND the spec transitions through PendingIntegration to Synced within the same cycle
+
+#### Scenario: Invalid strategy rejected
+
+- GIVEN integration_strategy is set to "webhook"
+- WHEN the reconciler attempts to start
+- THEN it fails with a validation error listing the valid strategies
+
 **Paths:**
 
 | Name | Type | Default | Description |

@@ -15,7 +15,8 @@ A spec's reconciliation status SHALL be one of five states:
 | OutOfSync | The spec's current content-addressable version has no verified implementation |
 | Reconciling | Decomposition has been performed and work is in progress (or vacuously complete) |
 | Verifying | All tasks are complete; a verification agent is assessing alignment |
-| Synced | A verification agent has confirmed the implementation matches the spec |
+| PendingIntegration | Verification passed, integration submitted, awaiting confirmation that code reached trunk |
+| Synced | The verified implementation has been integrated to trunk |
 | Failed | The system has exhausted its ability to reconcile; human intervention is required |
 
 #### Scenario: New spec enters OutOfSync
@@ -38,10 +39,14 @@ The system SHALL enforce the following state transitions. No other transitions a
 |---|---|---|
 | OutOfSync | Reconciling | Decomposition completes for this spec (regardless of task count) |
 | Reconciling | Verifying | All tasks for this spec reach Complete status |
-| Verifying | Synced | Verification agent confirms alignment |
+| Verifying | PendingIntegration | Verification agent confirms alignment and integration is submitted |
 | Verifying | OutOfSync | Verification agent reports misalignment |
+| PendingIntegration | Synced | Integration confirmed (PR merged or direct push succeeded) |
+| PendingIntegration | Verifying | Trunk merge conflict detected; delivery branch rebased successfully onto trunk |
+| PendingIntegration | OutOfSync | Trunk merge conflict detected; rebase failed (conflict too complex for automatic rebase) |
+| PendingIntegration | Failed | Integration retry limit exceeded |
 | OutOfSync, Reconciling, Verifying | Failed | Convergence bound exceeded |
-| Reconciling, Verifying | OutOfSync | Spec is superseded by a new blob SHA |
+| Reconciling, Verifying, PendingIntegration | OutOfSync | Spec is superseded by a new blob SHA |
 
 #### Scenario: OutOfSync to Reconciling
 
@@ -62,12 +67,41 @@ The system SHALL enforce the following state transitions. No other transitions a
 - THEN the condition is vacuously true
 - AND the spec SHALL transition to Verifying
 
-#### Scenario: Verifying to Synced
+#### Scenario: Verifying to PendingIntegration
 
 - GIVEN a spec with status Verifying
 - WHEN the verification agent confirms the implementation matches the spec
+- THEN the spec's status SHALL transition to PendingIntegration
+- AND integration SHALL be submitted to trunk via the WorkspaceManager port
+
+#### Scenario: PendingIntegration to Synced
+
+- GIVEN a spec with status PendingIntegration
+- WHEN the reconciler polls the integration and confirms it has been merged to trunk
 - THEN the spec's status SHALL transition to Synced
-- AND the verified implementation SHALL be integrated to trunk
+
+#### Scenario: PendingIntegration to Verifying on successful rebase
+
+- GIVEN a spec with status PendingIntegration
+- WHEN the reconciler polls the integration and detects a trunk merge conflict
+- AND the delivery branch is successfully rebased onto current trunk
+- THEN verification SHALL be re-launched with context about the rebase and what changed in trunk
+- AND the spec's status SHALL transition to Verifying
+- AND this re-verification is targeted — the verifier receives the rebase context and focuses on integration seams
+
+#### Scenario: PendingIntegration to OutOfSync on rebase failure
+
+- GIVEN a spec with status PendingIntegration
+- WHEN the reconciler polls the integration and detects a trunk merge conflict
+- AND rebasing the delivery branch fails (conflict too complex for automatic rebase)
+- THEN the spec's status SHALL transition to OutOfSync
+- AND the next decomposition cycle receives the rebase failure context
+
+#### Scenario: PendingIntegration to Failed on retry exhaustion
+
+- GIVEN a spec with status PendingIntegration
+- WHEN integration has failed and been retried up to the configured max_integration_retries
+- THEN the spec's status SHALL transition to Failed
 
 #### Scenario: Verifying to OutOfSync
 
@@ -82,7 +116,7 @@ The system SHALL enforce the following state transitions. No other transitions a
 - GIVEN a spec with status OutOfSync
 - WHEN any action is taken
 - THEN the spec MUST NOT transition directly to Synced
-- AND it MUST pass through Reconciling and Verifying
+- AND it MUST pass through Reconciling, Verifying, and PendingIntegration
 
 ### Requirement: No Self-Grading
 
@@ -104,7 +138,7 @@ Agent sessions MUST NOT assess their own transition criteria. A fresh agent sess
 
 The system SHALL enforce a configurable maximum number of reconciliation attempts per spec per blob SHA. When this limit is exceeded, the spec SHALL transition to Failed.
 
-A reconciliation attempt is counted each time a spec cycles from Verifying back to OutOfSync (verification failure), or when all tasks for a spec exhaust their retry and re-decomposition budget.
+A reconciliation attempt is counted each time a spec cycles from Verifying back to OutOfSync (verification failure), or when all tasks for a spec exhaust their retry and re-decomposition budget. The rebase-triggered re-verification cycle (PendingIntegration → Verifying) is bounded separately by max_integration_retries — each trunk merge conflict that triggers a rebase counts as an integration attempt, and exhausting this limit transitions the spec to Failed.
 
 #### Scenario: Verification retry limit exceeded
 
@@ -121,7 +155,7 @@ A reconciliation attempt is counted each time a spec cycles from Verifying back 
 
 ### Requirement: Superseding
 
-When a spec's blob SHA changes while it is in Reconciling or Verifying state, the old blob SHA's SpecPlan SHALL be marked as superseded and all in-flight work SHALL be cancelled.
+When a spec's blob SHA changes while it is in Reconciling, Verifying, or PendingIntegration state, the old blob SHA's SpecPlan SHALL be marked as superseded and all in-flight work SHALL be cancelled. Synced SpecPlans are never superseded — a new SpecPlan is created alongside them with status OutOfSync.
 
 #### Scenario: Spec changes during Reconciling
 

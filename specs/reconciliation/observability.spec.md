@@ -119,9 +119,13 @@ The probe protocol SHALL define methods for the following observation points. Ea
 | task_merge_conflict | Merge conflict detected | task_id: int, spec_blob_sha: str |
 | merge_resolution_launched | Merge resolution agent started | task_id: int, spec_blob_sha: str |
 | merge_resolution_completed | Merge resolution finished | task_id: int, spec_blob_sha: str, success: bool |
-| trunk_integration_started | PR opened for spec delivery | spec_path: str, spec_blob_sha: str, integration_id: str |
-| trunk_integration_completed | PR merged to trunk | spec_path: str, spec_blob_sha: str, integration_id: str |
-| trunk_integration_failed | PR merge to trunk failed | spec_path: str, spec_blob_sha: str, reason: str |
+| trunk_integration_started | Integration submitted for spec delivery | spec_path: str, spec_blob_sha: str, integration_id: str |
+| trunk_integration_completed | Integration confirmed (merged to trunk) | spec_path: str, spec_blob_sha: str, integration_id: str |
+| trunk_integration_failed | Integration attempt failed | spec_path: str, spec_blob_sha: str, reason: str |
+| trunk_integration_polled | Integration status polled | spec_path: str, spec_blob_sha: str, integration_id: str, status: str |
+| delivery_rebase_started | Delivery branch rebase onto trunk started | spec_path: str, spec_blob_sha: str |
+| delivery_rebase_completed | Delivery branch rebase succeeded | spec_path: str, spec_blob_sha: str |
+| delivery_rebase_conflict | Delivery branch rebase failed with conflict | spec_path: str, spec_blob_sha: str, reason: str |
 
 **Verification:**
 

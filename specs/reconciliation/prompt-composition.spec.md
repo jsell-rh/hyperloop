@@ -85,6 +85,7 @@ At compose time, the prompt composer SHALL inject runtime context as additional 
 |---|---|---|
 | Spec content | Task and verification prompts | The spec at the pinned blob SHA |
 | Events | Task prompts on retry | Prior failure events, verification failure rationale |
+| Rebase context | Verification prompts after delivery branch rebase | What changed in trunk, the fact that this is a targeted re-verification |
 | Epilogue | All prompts (when provided by the adapter) | Runtime-specific instructions |
 
 #### Scenario: First-round task prompt
@@ -119,6 +120,14 @@ At compose time, the prompt composer SHALL inject runtime context as additional 
 - WHEN the decomposition agent's prompt is composed
 - THEN it contains: base prompt + guidelines + spec references (path, current blob SHA, previous Synced blob SHA if any) + prior events (if any) + current task state across all specs (for cross-spec dependency awareness)
 - AND it does NOT embed spec content or diffs inline (the agent reads and diffs specs itself using the provided references)
+
+#### Scenario: Post-rebase verification prompt
+
+- GIVEN a spec that passed verification but was rebased due to a trunk merge conflict
+- WHEN the verification agent's prompt is composed for re-verification
+- THEN it contains: base prompt + guidelines + spec content + rebase context
+- AND the rebase context describes the trunk changes that necessitated the rebase
+- AND the rebase context instructs the verifier to focus on integration seams rather than re-checking all requirements from scratch
 
 #### Scenario: Integration summarizer prompt
 

@@ -113,6 +113,13 @@ The AgentRuntime port SHALL manage agent lifecycle for decomposition, implementa
 - AND a handle is returned for tracking (same as launch_task)
 - AND when polled to completion, the result includes a verdict (Pass or Fail) with rationale
 
+#### Scenario: Launch verification agent with rebase context
+
+- GIVEN a spec that was rebased onto trunk after a merge conflict during integration
+- WHEN launch_verification is called with rebase context describing the trunk changes
+- THEN a verification agent is started with the rebase context included
+- AND the verifier focuses on integration seams rather than re-checking all requirements
+
 #### Scenario: Launch merge resolution agent
 
 - GIVEN a merge conflict between a task workspace and the spec delivery workspace
@@ -182,6 +189,21 @@ The WorkspaceManager port SHALL manage isolated workspaces for task execution an
 - THEN a fresh workspace is created from the delivery workspace for verification
 - AND if a verification workspace already exists, it is replaced (fresh verification session)
 - AND the workspace identifier is returned
+
+#### Scenario: Poll integration status
+
+- GIVEN a spec in PendingIntegration with an integration identifier
+- WHEN poll_integration is called with the integration identifier
+- THEN it returns the current status: Pending, Merged, Conflict, or Failed
+- AND for Conflict, the result includes details about the conflicting changes
+
+#### Scenario: Rebase delivery workspace onto trunk
+
+- GIVEN a spec's delivery branch has diverged from trunk
+- WHEN rebase_delivery is called with the blob SHA
+- THEN the delivery branch is rebased onto the current trunk HEAD
+- AND returns Success if the rebase completes cleanly
+- AND returns Conflict if the rebase cannot be completed automatically
 
 #### Scenario: Clean up workspaces
 

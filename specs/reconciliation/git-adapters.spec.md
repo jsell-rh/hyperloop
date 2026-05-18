@@ -289,24 +289,92 @@ The AgentRuntime git adapter SHALL cancel an agent by deleting its branch. If th
 - WHEN cancel is called
 - THEN the verifier branch is deleted
 
-### Requirement: Trunk Integration via Pull Request
+### Requirement: Trunk Integration
 
-The git WorkspaceManager adapter SHALL integrate verified spec work to trunk by opening a pull request from the spec delivery branch. The pull request title and body are provided by the caller — the adapter SHALL NOT generate them.
+The git WorkspaceManager adapter SHALL integrate verified spec work to trunk using the configured integration strategy. The pull request title and body are provided by the caller — the adapter SHALL NOT generate them.
 
-#### Scenario: PR opened after verification pass
+#### Scenario: PR strategy integration
 
-- GIVEN spec "auth.spec.md" at SHA abc123 has passed verification
-- WHEN integrate is called with blob_sha "abc123", spec_path "specs/auth.spec.md", and an agent-generated title and body
-- THEN a pull request is opened from `hyperloop/spec/abc123/delivery` to trunk
+- GIVEN integration_strategy is "pr"
+- WHEN integrate is called with blob_sha, spec_path, title, and body
+- THEN a pull request is opened from `hyperloop/spec/{blob_sha}/delivery` to trunk
 - AND the PR uses the provided title and body
 - AND the PR URL is returned as the integration identifier
 
-#### Scenario: PR merge conflict
+#### Scenario: PR automerge strategy integration
 
-- GIVEN trunk has diverged from the delivery branch base
-- WHEN the PR cannot be merged cleanly
-- THEN integration returns failure
-- AND the reconciler handles this through the merge resolution path
+- GIVEN integration_strategy is "pr_automerge"
+- WHEN integrate is called
+- THEN a pull request is opened from the delivery branch to trunk with automerge enabled
+- AND the PR URL is returned as the integration identifier
+
+#### Scenario: Direct strategy integration
+
+- GIVEN integration_strategy is "direct"
+- WHEN integrate is called
+- THEN the delivery branch is merged into trunk locally
+- AND the merge commit is pushed to the remote
+- AND a synthetic integration identifier is returned
+
+#### Scenario: Direct merge conflict
+
+- GIVEN integration_strategy is "direct" and trunk has diverged
+- WHEN the local merge produces a conflict
+- THEN integrate returns failure
+- AND the reconciler handles this through the rebase and re-verification path
+
+### Requirement: Integration Status Polling
+
+The git WorkspaceManager adapter SHALL poll integration status by checking the state of the pull request or push result identified by the integration identifier.
+
+#### Scenario: Poll pending PR
+
+- GIVEN a PR is open and not yet merged
+- WHEN poll_integration is called with the PR URL
+- THEN it returns Pending
+
+#### Scenario: Poll merged PR
+
+- GIVEN a PR has been merged
+- WHEN poll_integration is called with the PR URL
+- THEN it returns Merged
+
+#### Scenario: Poll PR with merge conflict
+
+- GIVEN a PR cannot be merged due to conflicts
+- WHEN poll_integration is called
+- THEN it returns Conflict with details about the conflicting files
+
+#### Scenario: Poll closed PR (not merged)
+
+- GIVEN a PR was closed without merging
+- WHEN poll_integration is called
+- THEN it returns Failed
+
+#### Scenario: Poll after direct integration
+
+- GIVEN integration_strategy is "direct" and the push succeeded
+- WHEN poll_integration is called with the synthetic identifier
+- THEN it returns Merged (direct integration is synchronous)
+
+### Requirement: Delivery Branch Rebase
+
+The git WorkspaceManager adapter SHALL rebase a spec's delivery branch onto the current trunk HEAD when a trunk merge conflict is detected.
+
+#### Scenario: Clean rebase
+
+- GIVEN the delivery branch for blob SHA abc123 has diverged from trunk
+- WHEN rebase_delivery is called
+- THEN the adapter rebases `hyperloop/spec/abc123/delivery` onto the current trunk HEAD
+- AND pushes the rebased branch
+- AND returns Success
+
+#### Scenario: Rebase conflict
+
+- GIVEN the delivery branch and trunk have incompatible changes
+- WHEN rebase_delivery is called and the rebase cannot complete automatically
+- THEN the adapter aborts the rebase
+- AND returns Conflict with details about the conflicting files
 
 ### Requirement: Cleanup on Supersede
 

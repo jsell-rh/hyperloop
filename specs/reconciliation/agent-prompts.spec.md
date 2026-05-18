@@ -148,6 +148,15 @@ The prompt SHALL address these concerns:
 - THEN the rationale identifies which specific requirement failed and what is missing
 - AND a subsequent decomposer agent could produce a targeted corrective task from the rationale alone
 
+#### Scenario: Post-rebase targeted re-verification
+
+- GIVEN a spec passed verification but a trunk merge conflict was detected during integration
+- WHEN the delivery branch is rebased onto trunk and verification is re-launched
+- THEN the verifier receives context indicating this is a post-rebase re-verification
+- AND the context includes what changed in trunk since the original verification
+- AND the verifier focuses on integration seams — interactions between the spec's implementation and the rebased trunk changes
+- AND the verifier does not re-check requirements that are unaffected by the trunk changes
+
 ### Requirement: Merge Resolver Workflow
 
 The merge resolver base prompt SHALL instruct the agent to resolve conflicts while preserving the intent of both contributions.
