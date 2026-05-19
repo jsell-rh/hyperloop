@@ -101,6 +101,29 @@ def _setup_failing_gh(tmp_path: Path, stderr_message: str) -> None:
     os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
 
 
+def _setup_fake_gh_first_succeeds_then_fails(
+    tmp_path: Path, success_response: str
+) -> None:
+    bin_dir = tmp_path / "fakebin"
+    bin_dir.mkdir(exist_ok=True)
+    counter_file = tmp_path / "gh_call_count"
+    script = bin_dir / "gh"
+    script.write_text(
+        f"#!/bin/bash\n"
+        f'count=$(cat "{counter_file}" 2>/dev/null || echo 0)\n'
+        f"count=$((count + 1))\n"
+        f'echo $count > "{counter_file}"\n'
+        f'if [ "$count" -eq 1 ]; then\n'
+        f'    echo "{success_response}"\n'
+        f"    exit 0\n"
+        f"fi\n"
+        f'echo "GraphQL: Protected branch rules not configured" >&2\n'
+        f"exit 1\n"
+    )
+    script.chmod(0o755)
+    os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
+
+
 def _make_manager(
     repo_path: Path,
     *,
@@ -554,6 +577,38 @@ class TestIntegrateGhFailure:
         assert "Very long body" not in error_msg
         assert "not found" in error_msg
 
+    def test_existing_pr_returns_url_from_error(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        existing_url = "https://github.com/test/repo/pull/42"
+        _setup_failing_gh(
+            tmp_path,
+            f"a pull request already exists: {existing_url}",
+        )
+        url = manager.integrate(
+            BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+        )
+
+        assert url == existing_url
+
+    def test_already_exists_without_url_still_raises(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(local)
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        _setup_failing_gh(tmp_path, "pull request already exists for branch")
+
+        with pytest.raises(RuntimeError, match="pull request already exists"):
+            manager.integrate(
+                BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+            )
+
 
 class TestIntegratePrAutomerge:
     _PR_URL = "https://github.com/test/repo/pull/1"
@@ -611,6 +666,22 @@ class TestIntegratePrAutomerge:
         create_line = args_log.read_text().strip().splitlines()[0]
         assert "Implement auth" in create_line
         assert "Auth module" in create_line
+
+    def test_automerge_failure_still_returns_pr_url(
+        self, git_env: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        local, _ = git_env
+        manager = _make_manager(
+            local, integration_strategy=IntegrationStrategy.PR_AUTOMERGE
+        )
+        manager.create_delivery_workspace(BLOB_SHA)
+
+        _setup_fake_gh_first_succeeds_then_fails(tmp_path, self._PR_URL)
+        url = manager.integrate(
+            BLOB_SHA, "specs/auth.spec.md", "Implement auth", "Auth module"
+        )
+
+        assert url == self._PR_URL
 
 
 class TestIntegrateDirect:

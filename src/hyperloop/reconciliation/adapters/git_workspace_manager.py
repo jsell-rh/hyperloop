@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from enum import StrEnum
 from pathlib import Path
@@ -12,6 +13,9 @@ from hyperloop.reconciliation.models.integration_poll_result import (
 from hyperloop.reconciliation.models.integration_strategy import IntegrationStrategy
 from hyperloop.reconciliation.models.merge_result import MergeOutcome, MergeResult
 from hyperloop.reconciliation.models.rebase_result import RebaseOutcome, RebaseResult
+
+
+_EXISTING_PR_URL_RE = re.compile(r"(https?://\S+/pull/\d+)")
 
 
 class _PrState(StrEnum):
@@ -133,12 +137,25 @@ class GitWorkspaceManager:
             truncated_title,
             "--body",
             body,
+            check=False,
         )
-        return result.stdout.strip()
+        if result.returncode == 0:
+            return result.stdout.strip()
+
+        detail = result.stderr.strip() or result.stdout.strip()
+        if "already exists" in detail:
+            match = _EXISTING_PR_URL_RE.search(detail)
+            if match:
+                return match.group(1)
+
+        raise RuntimeError(f"gh pr create failed (exit {result.returncode}): {detail}")
 
     def _integrate_pr_automerge(self, blob_sha: str, title: str, body: str) -> str:
         pr_url = self._integrate_pr(blob_sha, title, body)
-        self._gh("pr", "merge", pr_url, "--auto", "--merge")
+        try:
+            self._gh("pr", "merge", pr_url, "--auto", "--merge")
+        except Exception:
+            pass
         return pr_url
 
     def _integrate_direct(self, blob_sha: str) -> str:
